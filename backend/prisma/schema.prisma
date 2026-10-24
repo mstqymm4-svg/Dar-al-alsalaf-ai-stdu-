@@ -1,0 +1,326 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Auth ─────────────────────────
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id                  String         @id @default(uuid())
+  email               String         @unique
+  passwordHash        String
+  fullName            String?
+  role                Role           @default(USER)
+  avatar              String?
+  isActive            Boolean        @default(true)
+  notificationsEnabled Boolean       @default(true)
+  preferredLanguage   String         @default("ar")
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  refreshTokens RefreshToken[]
+  favorites    Favorite[]
+  media        Media[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ───────────────────────── Library ──────────────────────
+enum BookStatus {
+  published
+  draft
+  hidden
+}
+
+enum BookLanguage {
+  ar
+  en
+  fr
+  ur
+  hi
+  other
+}
+
+model Author {
+  id        String   @id @default(uuid())
+  name      String
+  bio       String?
+  image     String?
+  books     Book[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  sortOrder    Int     @default(0)
+  books       Book[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Media {
+  id          String   @id @default(uuid())
+  filename     String
+  originalName String
+  mimeType     String
+  size         Int
+  url          String
+  disk         String   @default("local")
+  path         String?
+  uploaderId   String?
+  uploader     User?    @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([uploaderId])
+}
+
+model Book {
+  id           String       @id @default(uuid())
+  title        String
+  authorId     String?
+  author       Author?      @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  categoryId   String?
+  category     Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  // Denormalized fallbacks (mirror current Base44 schema where author/category are strings)
+  authorName   String?
+  categoryName String?
+  description  String?
+  coverImage   String?
+  coverMediaId String?
+  pagesCount   Int?
+  language     BookLanguage @default(ar)
+  pdfUrl       String?
+  pdfMediaId   String?
+  isFeatured   Boolean      @default(false)
+  rating       Float        @default(0)
+  status       BookStatus   @default(published)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  favorites Favorite[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([authorId])
+}
+
+// ───────────────────────── Media / Videos ──────────────
+enum VideoType {
+  normal
+  short
+  live
+}
+
+model VideoChannel {
+  id          String   @id @default(uuid())
+  name        String
+  channelLogo String?
+  description String?
+  youtubeUrl  String?
+  category    String?
+  sortOrder   Int      @default(0)
+  visible     Boolean  @default(true)
+  videos      Video[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Video {
+  id               String    @id @default(uuid())
+  title            String
+  description      String?
+  youtubeUrl       String?
+  videoUrl         String?
+  videoType        VideoType @default(normal)
+  videoChannelId   String?
+  channel          VideoChannel? @relation(fields: [videoChannelId], references: [id], onDelete: SetNull)
+  channelName      String?
+  category         String?
+  thumbnail        String?
+  thumbnailMediaId String?
+  duration         String?
+  isFeatured       Boolean   @default(false)
+  visible          Boolean   @default(true)
+  sortOrder        Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([visible])
+}
+
+// ───────────────────────── Social / Settings ────────────
+enum SocialType {
+  whatsapp
+  instagram
+  facebook
+  telegram
+  youtube
+  twitter
+  website
+  email
+  custom
+}
+
+model SocialChannel {
+  id          String     @id @default(uuid())
+  name        String
+  channelType SocialType @default(custom)
+  url         String
+  iconUrl     String?
+  description String?
+  sortOrder   Int        @default(0)
+  visible     Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Favorite {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookId    String
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, bookId])
+  @@index([userId])
+}
+
+enum AppSettingType {
+  color
+  font
+  text
+  boolean
+  url
+  json
+}
+
+model AppSetting {
+  id            String          @id @default(uuid())
+  key           String          @unique
+  value         String?
+  type          AppSettingType  @default(text)
+  changedBy     String?
+  previousValue String?
+  description   String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+// ───────────────────────── Translations ────────────────
+model TranslationLanguage {
+  id         String   @id @default(uuid())
+  code       String   @unique
+  name       String
+  nativeName String?
+  rtl        Boolean  @default(false)
+  active     Boolean  @default(true)
+  fontFamily String?
+  description String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TranslationGlossary {
+  id             String   @id @default(uuid())
+  term           String
+  translation    String
+  targetLanguage String   @default("all")
+  category       String   @default("general")
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([targetLanguage])
+}
+
+enum TranslationStatus {
+  pending
+  extracting
+  translating
+  completed
+  error
+  paused
+}
+
+enum ExtractionMethod {
+  text
+  ocr
+  mixed
+}
+
+model BookTranslation {
+  id                String            @id @default(uuid())
+  bookId            String
+  bookTitle         String?
+  sourceLanguage    String            @default("auto")
+  targetLanguage    String            @default("ar")
+  status            TranslationStatus @default(pending)
+  progress          Float             @default(0)
+  totalPages        Int?
+  translatedPages  Int               @default(0)
+  currentPage       Int               @default(0)
+  translatedPdfUrl String?
+  errorMessage      String?
+  errorLog          String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  isOcr             Boolean           @default(false)
+  translationEngine String            @default("ai_auto")
+  enabled           Boolean           @default(true)
+  description       String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([bookId])
+}
+
+model Translation {
+  id                String           @id @default(uuid())
+  bookId            String
+  bookTitle         String?
+  targetLanguage    String
+  sourceLanguage    String?
+  pageNumber        Int
+  originalText      String?
+  translatedText    String?
+  status            String           @default("pending")
+  translationMethod String?
+  extractionMethod  ExtractionMethod?
+  totalPages        Int?
+  chapterTitle      String?
+  errorMessage      String?
+  errorType         String?
+  qualityScore      String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([bookId, targetLanguage])
+}

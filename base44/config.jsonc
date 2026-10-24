@@ -1,0 +1,9 @@
+{
+  "name": " \u062f\u0627\u0631 \u0627\u0644\u0639\u0644\u0648\u0645  |  Dar Aleulum",
+  "site": {
+    "installCommand": "npm install",
+    "buildCommand": "npm run build",
+    "serveCommand": "npm run dev",
+    "outputDirectory": "./dist"
+  }
+}

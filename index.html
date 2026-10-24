@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/54dd14ec4_generated_image.png" />
+    <link rel="apple-touch-icon" href="https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/54dd14ec4_generated_image.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="preload" as="image" href="https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/679b37a0c_C06AC024-1230-4B65-91B9-B30DDE077171.png" fetchpriority="high" />
+
+    <!-- Dev-only: flush stale service workers + caches BEFORE the app loads so a
+         previously-registered worker can't serve an old/broken Vite bundle
+         (which causes "dispatcher.useState is null" hook errors). In prod this
+         is a no-op, so PWA offline caching is unaffected. -->
+    <script>
+      // Flush stale service workers + caches in DEV so a previously-registered
+      // worker can't keep cache-serving an old/broken Vite bundle (the root cause
+      // of "dispatcher.useState is null"). Runs if Vite flags dev OR if the page
+      // is detected to be a Vite dev build at runtime (loads /src/main.jsx).
+      function flushDevCaches() {
+        if (!("serviceWorker" in navigator)) return;
+        navigator.serviceWorker.getRegistrations()
+          .then(function (regs) { regs.forEach(function (r) { r.unregister(); }); })
+          .catch(function () {});
+        if (window.caches) {
+          caches.keys().then(function (keys) { keys.forEach(function (k) { caches.delete(k); }); }).catch(function () {});
+        }
+      }
+      var isDevFlag = "%MODE%" === "development";
+      if (isDevFlag) { flushDevCaches(); }
+      // Runtime fallback: if this is a Vite dev build (entry is /src/main.jsx),
+      // clear as well — covers cases where %MODE% isn't interpolated.
+      window.addEventListener("DOMContentLoaded", function () {
+        if (isDevFlag) return; // already cleared
+        var entry = document.querySelector('script[src="/src/main.jsx"]');
+        if (entry) { flushDevCaches(); }
+      });
+    </script>
+
+    <!-- PWA / Mobile Web App -->
+    <meta name="theme-color" content="#0d3b2e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="دار العلوم" />
+    <meta name="application-name" content="دار العلوم" />
+
+    <!-- SEO -->
+    <meta name="description" content="مكتبة إسلامية شاملة: كتب، فيديوهات، وترجمات القرآن والسنة" />
+    <meta property="og:title" content="دار العلوم - مكتبة إسلامية" />
+    <meta property="og:description" content="مكتبة إسلامية شاملة: كتب، فيديوهات، وترجمات القرآن والسنة" />
+
+    <title>دار العلوم - مكتبة إسلامية</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

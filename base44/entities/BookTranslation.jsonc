@@ -1,0 +1,128 @@
+{
+  "name": "BookTranslation",
+  "type": "object",
+  "properties": {
+    "book_id": {
+      "type": "string",
+      "title": "\u0645\u0639\u0631\u0641 \u0627\u0644\u0643\u062a\u0627\u0628"
+    },
+    "book_title": {
+      "type": "string",
+      "title": "\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0643\u062a\u0627\u0628"
+    },
+    "source_language": {
+      "type": "string",
+      "title": "\u0627\u0644\u0644\u063a\u0629 \u0627\u0644\u0623\u0635\u0644\u064a\u0629",
+      "default": "auto"
+    },
+    "target_language": {
+      "type": "string",
+      "title": "\u0644\u063a\u0629 \u0627\u0644\u062a\u0631\u062c\u0645\u0629",
+      "enum": [
+        "ar",
+        "ur",
+        "en",
+        "hi"
+      ],
+      "default": "ar"
+    },
+    "status": {
+      "type": "string",
+      "title": "\u0627\u0644\u062d\u0627\u0644\u0629",
+      "enum": [
+        "pending",
+        "extracting",
+        "translating",
+        "completed",
+        "error",
+        "paused"
+      ],
+      "default": "pending"
+    },
+    "progress": {
+      "type": "number",
+      "title": "\u0646\u0633\u0628\u0629 \u0627\u0644\u0625\u0646\u062c\u0627\u0632",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0
+    },
+    "total_pages": {
+      "type": "number",
+      "title": "\u0625\u062c\u0645\u0627\u0644\u064a \u0627\u0644\u0635\u0641\u062d\u0627\u062a"
+    },
+    "translated_pages": {
+      "type": "number",
+      "title": "\u0627\u0644\u0635\u0641\u062d\u0627\u062a \u0627\u0644\u0645\u062a\u0631\u062c\u0645\u0629",
+      "default": 0
+    },
+    "current_page": {
+      "type": "number",
+      "title": "\u0627\u0644\u0635\u0641\u062d\u0629 \u0627\u0644\u062d\u0627\u0644\u064a\u0629",
+      "default": 0
+    },
+    "translated_pdf_url": {
+      "type": "string",
+      "title": "\u0631\u0627\u0628\u0637 \u0627\u0644\u0646\u0633\u062e\u0629 \u0627\u0644\u0645\u062a\u0631\u062c\u0645\u0629"
+    },
+    "error_message": {
+      "type": "string",
+      "title": "\u0631\u0633\u0627\u0644\u0629 \u0627\u0644\u062e\u0637\u0623"
+    },
+    "error_log": {
+      "type": "string",
+      "title": "\u0633\u062c\u0644 \u0627\u0644\u0623\u062e\u0637\u0627\u0621"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u062a\u0627\u0631\u064a\u062e \u0627\u0644\u0628\u062f\u0621"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "\u062a\u0627\u0631\u064a\u062e \u0627\u0644\u0625\u0643\u0645\u0627\u0644"
+    },
+    "is_ocr": {
+      "type": "boolean",
+      "title": "\u064a\u0633\u062a\u062e\u062f\u0645 OCR",
+      "default": false
+    },
+    "translation_engine": {
+      "type": "string",
+      "title": "\u0645\u062d\u0631\u0643 \u0627\u0644\u062a\u0631\u062c\u0645\u0629",
+      "default": "ai_auto"
+    },
+    "enabled": {
+      "type": "boolean",
+      "title": "\u0645\u0641\u0639\u0651\u0644\u0629",
+      "default": true
+    },
+    "description": {
+      "type": "string",
+      "title": "\u0627\u0644\u0648\u0635\u0641",
+      "maxLength": 1000
+    }
+  },
+  "required": [
+    "book_id",
+    "target_language"
+  ],
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": {},
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

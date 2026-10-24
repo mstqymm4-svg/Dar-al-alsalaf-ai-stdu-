@@ -1,0 +1,2 @@
+# place Base44 export JSON here (books.json, videos.json, ...)
+# see scripts/migrateFromBase44.ts

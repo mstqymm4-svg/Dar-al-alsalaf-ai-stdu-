@@ -1,0 +1,40 @@
+{
+  "name": "New User Verification Email",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "app_user_auth",
+      "events": [
+        "signup"
+      ]
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "new_user_verification_email",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "send_verification_email": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "sendRegistrationVerification",
+            "args": {
+              "email": "${ .trigger.email }",
+              "full_name": "${ .trigger.full_name }"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Send verification email",
+            "description": "Via Dar Al Uloom Gmail"
+          }
+        }
+      }
+    ]
+  },
+  "description": "When a new user registers, send them a Gmail account verification email"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "دار العلوم - مكتبة إسلامية",
+  "description": "مكتبة إسلامية شاملة: كتب، فيديوهات، وترجمات القرآن والسنة",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
