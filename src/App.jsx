@@ -39,6 +39,7 @@ const ReadBook = lazy(() => import('./pages/ReadBook'));
 const Videos = lazy(() => import('./pages/Videos'));
 const About = lazy(() => import('./pages/About'));
 const Contact = lazy(() => import('./pages/Contact'));
+const GmailPage = lazy(() => import('./pages/GmailPage'));
 const SplashPreview = lazy(() => import('./pages/SplashPreview'));
 import DarAlUloomSplash from './components/splash/DarAlUloomSplash';
 
@@ -129,6 +130,7 @@ const AuthenticatedApp = () => {
           <Route path="/videos" element={<Videos />} />
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/gmail" element={<GmailPage />} />
           <Route path="/splash-preview" element={<SplashPreview />} />
           <Route path="*" element={<PageNotFound />} />
         </Route>
