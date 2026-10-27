@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "Book": {
+      "title": "Book",
+      "description": "Islamic library book metadata and file links.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 500 },
+        "author": { "type": "string", "maxLength": 300 },
+        "category": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 5000 },
+        "cover_image": { "type": "string", "maxLength": 500000 },
+        "pdf_url": { "type": "string", "maxLength": 500000 },
+        "pages_count": { "type": "number" },
+        "language": { "type": "string", "maxLength": 100 },
+        "is_featured": { "type": "boolean" },
+        "rating": { "type": "number" },
+        "status": { "type": "string", "maxLength": 50 },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 },
+        "created_by": { "type": "string", "maxLength": 256 }
+      },
+      "required": ["id", "title", "author", "category", "created_date", "updated_date"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "Islamic lecture or educational video record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 500 },
+        "description": { "type": "string", "maxLength": 5000 },
+        "youtube_url": { "type": "string", "maxLength": 2000 },
+        "video_url": { "type": "string", "maxLength": 500000 },
+        "video_type": { "type": "string", "maxLength": 50 },
+        "channel_id": { "type": "string", "maxLength": 128 },
+        "channel_name": { "type": "string", "maxLength": 300 },
+        "category": { "type": "string", "maxLength": 200 },
+        "thumbnail": { "type": "string", "maxLength": 500000 },
+        "duration": { "type": "string", "maxLength": 50 },
+        "is_featured": { "type": "boolean" },
+        "visible": { "type": "boolean" },
+        "sort_order": { "type": "number" },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "created_date", "updated_date"]
+    },
+    "VideoChannel": {
+      "title": "VideoChannel",
+      "description": "Curated YouTube or video channel.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 300 },
+        "channel_logo": { "type": "string", "maxLength": 500000 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "youtube_url": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 200 },
+        "sort_order": { "type": "number" },
+        "visible": { "type": "boolean" },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "created_date", "updated_date"]
+    },
+    "SocialChannel": {
+      "title": "SocialChannel",
+      "description": "Social media channel link and icon.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 300 },
+        "channel_type": { "type": "string", "maxLength": 100 },
+        "url": { "type": "string", "maxLength": 2000 },
+        "icon_url": { "type": "string", "maxLength": 500000 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "sort_order": { "type": "number" },
+        "visible": { "type": "boolean" },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "url", "created_date", "updated_date"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Key-value application configuration and theme settings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "setting_key": { "type": "string", "maxLength": 128 },
+        "setting_value": { "type": "string", "maxLength": 500000 },
+        "setting_type": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "changed_by": { "type": "string", "maxLength": 256 },
+        "previous_value": { "type": "string", "maxLength": 500000 },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "setting_key", "setting_value", "created_date", "updated_date"]
+    },
+    "Favorite": {
+      "title": "Favorite",
+      "description": "User favorite book association.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "book_id": { "type": "string", "maxLength": 128 },
+        "user_email": { "type": "string", "maxLength": 256 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "created_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "book_id", "user_email", "ownerUid", "created_date"]
+    },
+    "AccountData": {
+      "title": "AccountData",
+      "description": "Cloud backup of user reading progress, bookmarks, and preferences.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "account_email": { "type": "string", "maxLength": 256 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "data": { "type": "string", "maxLength": 800000 },
+        "data_version": { "type": "number" },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "account_email", "ownerUid", "data", "created_date", "updated_date"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "full_name": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["user", "admin"], "maxLength": 32 },
+        "notifications_enabled": { "type": "boolean" },
+        "preferred_language": { "type": "string", "maxLength": 64 },
+        "avatar_url": { "type": "string", "maxLength": 500000 },
+        "created_date": { "type": "string", "maxLength": 64 },
+        "updated_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "uid", "email", "role", "created_date", "updated_date"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Trusted administrator lookup document.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 256 },
+        "created_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email", "created_date"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Contact form message submitted by a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 200 },
+        "email": { "type": "string", "maxLength": 256 },
+        "message": { "type": "string", "maxLength": 5000 },
+        "ownerUid": { "type": "string", "maxLength": 128 },
+        "created_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "email", "message", "ownerUid", "created_date"]
+    }
+  },
+  "firestore": {
+    "/books/{bookId}": {
+      "schema": "Book",
+      "description": "Public library books managed by admins."
+    },
+    "/videos/{videoId}": {
+      "schema": "Video",
+      "description": "Public library videos managed by admins."
+    },
+    "/video_channels/{channelId}": {
+      "schema": "VideoChannel",
+      "description": "Curated YouTube/video channels managed by admins."
+    },
+    "/social_channels/{socialId}": {
+      "schema": "SocialChannel",
+      "description": "Social media channels managed by admins."
+    },
+    "/app_settings/{settingId}": {
+      "schema": "AppSettings",
+      "description": "Application theme and UI settings managed by admins."
+    },
+    "/favorites/{favId}": {
+      "schema": "Favorite",
+      "description": "Per-user favorite book records."
+    },
+    "/account_data/{accountId}": {
+      "schema": "AccountData",
+      "description": "Per-user cloud backup of reading progress and settings."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Authenticated user profile documents."
+    },
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Administrator registry keyed by user UID."
+    },
+    "/contact_messages/{messageId}": {
+      "schema": "ContactMessage",
+      "description": "Contact form submissions."
+    }
+  }
+}

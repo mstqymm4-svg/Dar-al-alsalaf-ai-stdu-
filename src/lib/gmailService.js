@@ -23,8 +23,16 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-SCOPES.forEach((scope) => provider.addScope(scope));
-provider.setCustomParameters({ prompt: 'consent' });
+// Filter out Workspace Add-on manifest-only scopes (.addons.current.) and conflicting
+// metadata/admin-only scopes when building the web OAuth popup request so Google OAuth
+// does not reject the popup with Error 400: invalid_scope.
+SCOPES.filter(
+  (scope) =>
+    !scope.includes('.addons.current.') &&
+    !scope.includes('.settings.') &&
+    !scope.endsWith('/gmail.metadata')
+).forEach((scope) => provider.addScope(scope));
+provider.setCustomParameters({ prompt: 'select_account' });
 
 // Flag to indicate if we are in the middle of a sign-in flow.
 let isSigningIn = false;
@@ -33,12 +41,18 @@ let cachedAccessToken = null;
 let currentGoogleUser = null;
 const authListeners = new Set();
 
-function notifyListeners() {
-  const snapshot = {
+function getSnapshot() {
+  const isAuthenticated = Boolean(currentGoogleUser && cachedAccessToken);
+  return {
     user: currentGoogleUser,
     accessToken: cachedAccessToken,
-    isAuthenticated: Boolean(currentGoogleUser && cachedAccessToken),
+    isAuthenticated,
+    hasToken: isAuthenticated,
   };
+}
+
+function notifyListeners() {
+  const snapshot = getSnapshot();
   authListeners.forEach((fn) => {
     try {
       fn(snapshot);
@@ -50,11 +64,7 @@ function notifyListeners() {
 
 export const subscribeToGmailAuth = (listener) => {
   authListeners.add(listener);
-  listener({
-    user: currentGoogleUser,
-    accessToken: cachedAccessToken,
-    isAuthenticated: Boolean(currentGoogleUser && cachedAccessToken),
-  });
+  listener(getSnapshot());
   return () => authListeners.delete(listener);
 };
 
@@ -84,7 +94,7 @@ export const googleSignIn = async () => {
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
+      throw new Error('تعذر الحصول على صلاحية الوصول إلى Gmail من حساب Google');
     }
 
     cachedAccessToken = credential.accessToken;
@@ -103,6 +113,10 @@ export const getAccessToken = async () => {
   return cachedAccessToken;
 };
 
+export const hasCachedAccessToken = () => {
+  return Boolean(cachedAccessToken);
+};
+
 export const getCurrentGoogleUser = () => {
   return currentGoogleUser;
 };
@@ -117,8 +131,8 @@ export const logout = async () => {
 // ─── Gmail REST API Helpers ───────────────────────────────────────────────────
 const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
-async function gmailFetch(endpoint, options = {}) {
-  const token = await getAccessToken();
+async function gmailFetch(endpoint, options = {}, explicitToken = null) {
+  const token = explicitToken || cachedAccessToken;
   if (!token) {
     const err = new Error('AUTH_REQUIRED');
     err.code = 'AUTH_REQUIRED';
@@ -142,7 +156,9 @@ async function gmailFetch(endpoint, options = {}) {
       notifyListeners();
     }
     const errBody = await res.json().catch(() => ({}));
-    const err = new Error(errBody?.error?.message || 'Gmail authentication expired or insufficient permissions');
+    const err = new Error(
+      errBody?.error?.message || 'انتهت صلاحية الجلسة أو لا توجد صلاحية كافية لإرسال البريد عبر Gmail'
+    );
     err.code = res.status === 401 ? 'AUTH_REQUIRED' : 'PERMISSION_DENIED';
     throw err;
   }
@@ -153,195 +169,142 @@ async function gmailFetch(endpoint, options = {}) {
 
   const data = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(data?.error?.message || `Gmail API error (${res.status})`);
+    throw new Error(data?.error?.message || `خطأ في خدمة Gmail (${res.status})`);
   }
   return data;
 }
 
-export async function fetchGmailProfile() {
-  return gmailFetch('/profile');
-}
-
-export async function fetchGmailLabels() {
-  const data = await gmailFetch('/labels');
-  return data?.labels || [];
-}
-
-function decodeBase64Url(base64Url) {
-  if (!base64Url) return '';
-  try {
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const pad = base64.length % 4;
-    const padded = pad ? base64 + '='.repeat(4 - pad) : base64;
-    const binary = atob(padded);
-    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    return new TextDecoder('utf-8').decode(bytes);
-  } catch {
-    return '';
+function toBase64Utf8(str) {
+  const bytes = new TextEncoder().encode(str || '');
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
+  return btoa(binary);
 }
 
-export function encodeMimeMessage({ to, subject, body, fromName, fromEmail, cc, bcc }) {
-  const utf8Subject = `=?utf-8?B?${btoa(
-    Array.from(new TextEncoder().encode(subject || ''), (b) => String.fromCharCode(b)).join('')
-  )}?=`;
+function wrapBase64Lines(b64) {
+  return b64.replace(/(.{76})/g, '$1\r\n');
+}
+
+export function encodeMimeMessage({ to, subject, body, html, fromName, fromEmail, cc, bcc }) {
+  const utf8Subject = `=?utf-8?B?${toBase64Utf8(subject || '')}?=`;
+  const encodedFromName = fromName ? `=?utf-8?B?${toBase64Utf8(fromName)}?=` : '';
 
   const headers = [];
   if (fromEmail) {
-    headers.push(fromName ? `From: "${fromName}" <${fromEmail}>` : `From: ${fromEmail}`);
+    headers.push(encodedFromName ? `From: ${encodedFromName} <${fromEmail}>` : `From: ${fromEmail}`);
   }
   headers.push(`To: ${to}`);
   if (cc) headers.push(`Cc: ${cc}`);
   if (bcc) headers.push(`Bcc: ${bcc}`);
   headers.push(`Subject: ${utf8Subject}`);
   headers.push('MIME-Version: 1.0');
-  headers.push('Content-Type: text/plain; charset="UTF-8"');
-  headers.push('Content-Transfer-Encoding: 8bit');
 
-  const rawMessage = `${headers.join('\r\n')}\r\n\r\n${body || ''}`;
-  const bytes = new TextEncoder().encode(rawMessage);
-  let binary = '';
-  bytes.forEach((b) => {
-    binary += String.fromCharCode(b);
-  });
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function extractMessageBody(payload) {
-  if (!payload) return { text: '', html: '' };
-
-  let text = '';
-  let html = '';
-
-  const walk = (part) => {
-    if (!part) return;
-    const mime = part.mimeType || '';
-    if (mime === 'text/plain' && part.body?.data && !text) {
-      text = decodeBase64Url(part.body.data);
-    } else if (mime === 'text/html' && part.body?.data && !html) {
-      html = decodeBase64Url(part.body.data);
-    }
-    if (Array.isArray(part.parts)) {
-      part.parts.forEach(walk);
-    }
-  };
-
-  walk(payload);
-
-  if (!text && !html && payload.body?.data) {
-    text = decodeBase64Url(payload.body.data);
+  let rawMessage = '';
+  if (html) {
+    const boundary = `dau_boundary_${Date.now().toString(36)}`;
+    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    const parts = [
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrapBase64Lines(toBase64Utf8(body || '')),
+      `--${boundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      wrapBase64Lines(toBase64Utf8(html)),
+      `--${boundary}--`,
+    ];
+    rawMessage = `${headers.join('\r\n')}\r\n\r\n${parts.join('\r\n')}`;
+  } else {
+    headers.push('Content-Type: text/plain; charset="UTF-8"');
+    headers.push('Content-Transfer-Encoding: base64');
+    rawMessage = `${headers.join('\r\n')}\r\n\r\n${wrapBase64Lines(toBase64Utf8(body || ''))}`;
   }
 
-  return { text, html };
+  return toBase64Utf8(rawMessage).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export function parseGmailMessage(msg) {
-  if (!msg) return null;
-  const headers = msg.payload?.headers || [];
-  const getHeader = (name) =>
-    headers.find((h) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
-
-  const { text, html } = extractMessageBody(msg.payload);
-  const labelIds = msg.labelIds || [];
-
-  return {
-    id: msg.id,
-    threadId: msg.threadId,
-    snippet: msg.snippet || '',
-    internalDate: msg.internalDate ? Number(msg.internalDate) : Date.now(),
-    subject: getHeader('Subject') || '(بدون عنوان)',
-    from: getHeader('From') || '',
-    to: getHeader('To') || '',
-    date: getHeader('Date') || '',
-    labelIds,
-    isUnread: labelIds.includes('UNREAD'),
-    isStarred: labelIds.includes('STARRED'),
-    isTrash: labelIds.includes('TRASH'),
-    bodyText: text,
-    bodyHtml: html,
-  };
-}
-
-export async function fetchGmailMessageDetail(id) {
-  const raw = await gmailFetch(`/messages/${encodeURIComponent(id)}?format=full`);
-  return parseGmailMessage(raw);
-}
-
-export async function fetchGmailMessages({ maxResults = 15, q = '', labelIds = [] } = {}) {
-  const params = new URLSearchParams();
-  params.set('maxResults', String(maxResults));
-  if (q && q.trim()) params.set('q', q.trim());
-  labelIds.forEach((l) => {
-    if (l) params.append('labelIds', l);
+export async function sendGmailMessage({ to, subject, body, html, cc, bcc, token = null }) {
+  const raw = encodeMimeMessage({
+    to,
+    subject,
+    body,
+    html,
+    fromName: currentGoogleUser?.displayName || 'دار العلوم | Dar Al Uloom',
+    fromEmail: currentGoogleUser?.email || '',
+    cc,
+    bcc,
   });
 
-  const listData = await gmailFetch(`/messages?${params.toString()}`);
-  const items = listData?.messages || [];
-  if (items.length === 0) return [];
-
-  const details = await Promise.all(
-    items.map((item) => fetchGmailMessageDetail(item.id).catch(() => null))
+  return gmailFetch(
+    '/messages/send',
+    {
+      method: 'POST',
+      body: JSON.stringify({ raw }),
+    },
+    token
   );
-  return details.filter(Boolean);
 }
 
-export async function sendGmailMessage({ to, subject, body, cc, bcc }) {
-  const raw = encodeMimeMessage({
-    to,
+export async function sendVerificationEmailViaGmail(recipientEmail, code) {
+  // Check cachedAccessToken synchronously so signInWithPopup is invoked directly
+  // within the user's click gesture without any preceding await.
+  let token = cachedAccessToken;
+  if (!token) {
+    const authRes = await googleSignIn();
+    token = authRes?.accessToken;
+  }
+  if (!token) {
+    const err = new Error('يرجى تسجيل الدخول بحساب Google لإرسال رمز التحقق');
+    err.code = 'AUTH_REQUIRED';
+    throw err;
+  }
+
+  const subject = 'رمز التحقق — دار العلوم | Verification code';
+  const plain = [
+    'السلام عليكم ورحمة الله وبركاته',
+    '',
+    'رمز التحقق الخاص بك هو:',
+    '',
+    code,
+    '',
+    'الرمز صالح لمدة 10 دقائق. لا تشاركه مع أحد.',
+    '',
+    '---',
+    '',
+    'Your verification code is: ' + code,
+    'Valid for 10 minutes. Do not share it with anyone.',
+    '',
+    'دار العلوم | Dar Al Uloom',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<body style="margin:0;padding:24px;background:#f7f5f0;font-family:Tahoma,Arial,sans-serif;">
+  <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e8e2d5;">
+    <div style="background:linear-gradient(135deg,#1c5c46,#2e7d5b);padding:24px;text-align:center;">
+      <h1 style="color:#fdfaf2;margin:0;font-size:20px;">دار العلوم</h1>
+      <p style="color:#cfe6d9;margin:6px 0 0;font-size:13px;">رمز التحقق من البريد الإلكتروني</p>
+    </div>
+    <div style="padding:28px 24px;color:#24312b;font-size:14px;line-height:2;text-align:center;">
+      <p style="margin:0 0 16px;">رمز التحقق الخاص بك هو:</p>
+      <div dir="ltr" style="font-size:34px;font-weight:bold;letter-spacing:8px;color:#1c5c46;background:#f7f5f0;border:1px solid #e8e2d5;border-radius:8px;padding:14px 0;margin:0 0 16px;">${code}</div>
+      <p style="margin:0 0 8px;color:#4a6357;font-size:13px;">الرمز صالح لمدة 10 دقائق، ولا تشاركه مع أحد.</p>
+      <p dir="ltr" style="margin:16px 0 0;color:#7a8a82;font-size:12px;">Your code is valid for 10 minutes. Do not share it with anyone.</p>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  return sendGmailMessage({
+    to: recipientEmail,
     subject,
-    body,
-    fromName: currentGoogleUser?.displayName || 'دار العلوم',
-    fromEmail: currentGoogleUser?.email || '',
-    cc,
-    bcc,
-  });
-
-  return gmailFetch('/messages/send', {
-    method: 'POST',
-    body: JSON.stringify({ raw }),
-  });
-}
-
-export async function createGmailDraft({ to, subject, body, cc, bcc }) {
-  const raw = encodeMimeMessage({
-    to,
-    subject,
-    body,
-    fromName: currentGoogleUser?.displayName || 'دار العلوم',
-    fromEmail: currentGoogleUser?.email || '',
-    cc,
-    bcc,
-  });
-
-  return gmailFetch('/drafts', {
-    method: 'POST',
-    body: JSON.stringify({
-      message: { raw },
-    }),
-  });
-}
-
-export async function trashGmailMessage(messageId) {
-  return gmailFetch(`/messages/${encodeURIComponent(messageId)}/trash`, {
-    method: 'POST',
-  });
-}
-
-export async function untrashGmailMessage(messageId) {
-  return gmailFetch(`/messages/${encodeURIComponent(messageId)}/untrash`, {
-    method: 'POST',
-  });
-}
-
-export async function deleteGmailMessagePermanently(messageId) {
-  return gmailFetch(`/messages/${encodeURIComponent(messageId)}`, {
-    method: 'DELETE',
-  });
-}
-
-export async function modifyGmailMessageLabels(messageId, { addLabelIds = [], removeLabelIds = [] } = {}) {
-  return gmailFetch(`/messages/${encodeURIComponent(messageId)}/modify`, {
-    method: 'POST',
-    body: JSON.stringify({ addLabelIds, removeLabelIds }),
+    body: plain,
+    html,
+    token,
   });
 }

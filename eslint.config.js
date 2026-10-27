@@ -3,8 +3,13 @@ import pluginJs from "@eslint/js";
 import pluginReact from "eslint-plugin-react";
 import pluginReactHooks from "eslint-plugin-react-hooks";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
+import firebaseRulesPlugin from "@firebase/eslint-plugin-security-rules";
 
 export default [
+  {
+    ignores: ["dist/**/*", "node_modules/**/*", "backend/**/*"],
+  },
+  firebaseRulesPlugin.configs["flat/recommended"],
   {
     files: [
       "src/components/**/*.{js,mjs,cjs,jsx}",

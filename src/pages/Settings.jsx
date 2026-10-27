@@ -37,7 +37,17 @@ export default function Settings() {
   useEffect(() => {
     loadUser();
     const unsub = subscribeToTheme(({ isDark }) => setDarkMode(isDark));
-    return unsub;
+    const onVerified = () => {
+      const em = getAccountEmail();
+      try {
+        setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1");
+      } catch {}
+    };
+    window.addEventListener("dau-email-verified", onVerified);
+    return () => {
+      unsub();
+      window.removeEventListener("dau-email-verified", onVerified);
+    };
   }, []);
 
   const loadUser = async () => {
@@ -45,9 +55,9 @@ export default function Settings() {
     if (u) {
       setNotifications(u.notifications_enabled ?? true);
       setLanguage(u.preferred_language || "العربية");
-      const em = getAccountEmail(u) || u.email;
-      try { setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1"); } catch (e) {}
     }
+    const em = getAccountEmail(u) || u?.email;
+    try { setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1"); } catch (e) {}
     setLoading(false);
   };
 
@@ -218,24 +228,6 @@ export default function Settings() {
               <Lock className="w-5 h-5 text-primary shrink-0 mt-0.5" />
               <p className="text-sm text-muted-foreground leading-relaxed">{t.securityPrivacySub}</p>
             </div>
-          </div>
-        </motion.div>
-
-        {/* Google Workspace Gmail Integration */}
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.29 }} className="bg-card border border-border rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Mail className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold">تكامل بريد Google Gmail</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">إدارة رسائل البريد الإلكتروني ومشاركة الكتب مباشرة من داخل التطبيق</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-            <Link to="/gmail" className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground font-medium text-sm hover:bg-primary/90 transition-colors rounded-[4px_20px_4px_20px]">
-              <Mail className="w-4 h-4" /> فتح مركز بريد Gmail
-            </Link>
           </div>
         </motion.div>
 

@@ -1,0 +1,356 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'mstqymm4@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isValidBook(data) {
+      return data.keys().hasAll(['id', 'title', 'author', 'category', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'author', 'category', 'description', 'cover_image',
+          'pdf_url', 'pages_count', 'language', 'is_featured', 'rating',
+          'status', 'created_date', 'updated_date', 'created_by'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 500 &&
+        data.author is string && data.author.size() >= 1 && data.author.size() <= 300 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 200 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 5000)) &&
+        (!('cover_image' in data) || (data.cover_image is string && data.cover_image.size() <= 500000)) &&
+        (!('pdf_url' in data) || (data.pdf_url is string && data.pdf_url.size() <= 500000)) &&
+        (!('pages_count' in data) || data.pages_count == null || data.pages_count is number) &&
+        (!('language' in data) || (data.language is string && data.language.size() <= 100)) &&
+        (!('is_featured' in data) || data.is_featured is bool) &&
+        (!('rating' in data) || data.rating is number) &&
+        (!('status' in data) || (data.status is string && data.status.size() <= 50)) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64 &&
+        (!('created_by' in data) || (data.created_by is string && data.created_by.size() <= 256));
+    }
+
+    function isValidVideo(data) {
+      return data.keys().hasAll(['id', 'title', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'description', 'youtube_url', 'video_url', 'video_type',
+          'channel_id', 'channel_name', 'category', 'thumbnail', 'duration',
+          'is_featured', 'visible', 'sort_order', 'created_date', 'updated_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 500 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 5000)) &&
+        (!('youtube_url' in data) || (data.youtube_url is string && data.youtube_url.size() <= 2000)) &&
+        (!('video_url' in data) || (data.video_url is string && data.video_url.size() <= 500000)) &&
+        (!('video_type' in data) || (data.video_type is string && data.video_type.size() <= 50)) &&
+        (!('channel_id' in data) || (data.channel_id is string && data.channel_id.size() <= 128)) &&
+        (!('channel_name' in data) || (data.channel_name is string && data.channel_name.size() <= 300)) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 200)) &&
+        (!('thumbnail' in data) || (data.thumbnail is string && data.thumbnail.size() <= 500000)) &&
+        (!('duration' in data) || (data.duration is string && data.duration.size() <= 50)) &&
+        (!('is_featured' in data) || data.is_featured is bool) &&
+        (!('visible' in data) || data.visible is bool) &&
+        (!('sort_order' in data) || data.sort_order is number) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidVideoChannel(data) {
+      return data.keys().hasAll(['id', 'name', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'channel_logo', 'description', 'youtube_url',
+          'category', 'sort_order', 'visible', 'created_date', 'updated_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 300 &&
+        (!('channel_logo' in data) || (data.channel_logo is string && data.channel_logo.size() <= 500000)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+        (!('youtube_url' in data) || (data.youtube_url is string && data.youtube_url.size() <= 2000)) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 200)) &&
+        (!('sort_order' in data) || data.sort_order is number) &&
+        (!('visible' in data) || data.visible is bool) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidSocialChannel(data) {
+      return data.keys().hasAll(['id', 'name', 'url', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'channel_type', 'url', 'icon_url',
+          'description', 'sort_order', 'visible', 'created_date', 'updated_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 300 &&
+        (!('channel_type' in data) || (data.channel_type is string && data.channel_type.size() <= 100)) &&
+        data.url is string && data.url.size() >= 1 && data.url.size() <= 2000 &&
+        (!('icon_url' in data) || (data.icon_url is string && data.icon_url.size() <= 500000)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+        (!('sort_order' in data) || data.sort_order is number) &&
+        (!('visible' in data) || data.visible is bool) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidAppSettings(data) {
+      return data.keys().hasAll(['id', 'setting_key', 'setting_value', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'setting_key', 'setting_value', 'setting_type',
+          'description', 'changed_by', 'previous_value', 'created_date', 'updated_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.setting_key is string && data.setting_key.size() >= 1 && data.setting_key.size() <= 128 &&
+        data.setting_value is string && data.setting_value.size() <= 500000 &&
+        (!('setting_type' in data) || (data.setting_type is string && data.setting_type.size() <= 50)) &&
+        (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
+        (!('changed_by' in data) || (data.changed_by is string && data.changed_by.size() <= 256)) &&
+        (!('previous_value' in data) || data.previous_value == null || (data.previous_value is string && data.previous_value.size() <= 500000)) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidFavorite(data) {
+      return data.keys().hasAll(['id', 'book_id', 'user_email', 'ownerUid', 'created_date']) &&
+        data.keys().hasOnly(['id', 'book_id', 'user_email', 'ownerUid', 'created_date']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.book_id is string && data.book_id.size() >= 1 && data.book_id.size() <= 128 &&
+        data.user_email is string && data.user_email.size() >= 1 && data.user_email.size() <= 256 &&
+        data.ownerUid is string && data.ownerUid == request.auth.uid &&
+        data.created_date is string && data.created_date.size() <= 64;
+    }
+
+    function isValidAccountData(data) {
+      return data.keys().hasAll(['id', 'account_email', 'ownerUid', 'data', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly(['id', 'account_email', 'ownerUid', 'data', 'data_version', 'created_date', 'updated_date']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.account_email is string && data.account_email.size() >= 1 && data.account_email.size() <= 256 &&
+        data.ownerUid is string && data.ownerUid == request.auth.uid &&
+        data.data is string && data.data.size() <= 800000 &&
+        (!('data_version' in data) || data.data_version is number) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'email', 'role', 'created_date', 'updated_date']) &&
+        data.keys().hasOnly([
+          'id', 'uid', 'email', 'full_name', 'role',
+          'notifications_enabled', 'preferred_language', 'avatar_url',
+          'created_date', 'updated_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() >= 1 && data.email.size() <= 256 &&
+        (!('full_name' in data) || (data.full_name is string && data.full_name.size() <= 200)) &&
+        data.role is string && (data.role == 'user' || data.role == 'admin') &&
+        (!('notifications_enabled' in data) || data.notifications_enabled is bool) &&
+        (!('preferred_language' in data) || (data.preferred_language is string && data.preferred_language.size() <= 64)) &&
+        (!('avatar_url' in data) || (data.avatar_url is string && data.avatar_url.size() <= 500000)) &&
+        data.created_date is string && data.created_date.size() <= 64 &&
+        data.updated_date is string && data.updated_date.size() <= 64;
+    }
+
+    function isValidAdmin(data) {
+      return data.keys().hasAll(['uid', 'email', 'created_date']) &&
+        data.keys().hasOnly(['uid', 'email', 'created_date']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.email is string && data.email.size() >= 1 && data.email.size() <= 256 &&
+        data.created_date is string && data.created_date.size() <= 64;
+    }
+
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'message', 'ownerUid', 'created_date']) &&
+        data.keys().hasOnly(['id', 'name', 'email', 'message', 'ownerUid', 'created_date']) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        data.email is string && data.email.size() >= 1 && data.email.size() <= 256 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 5000 &&
+        data.ownerUid is string && data.ownerUid == request.auth.uid &&
+        data.created_date is string && data.created_date.size() <= 64;
+    }
+
+    match /books/{bookId} {
+      allow get: if isValidId(bookId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(bookId) && isValidBook(incoming()) && incoming().id == bookId && isAdmin();
+      allow update: if isSignedIn() && isValidId(bookId) && isValidBook(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().created_date == existing().created_date &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'author', 'category', 'description', 'cover_image',
+          'pdf_url', 'pages_count', 'language', 'is_featured', 'rating',
+          'status', 'updated_date', 'created_by'
+        ]);
+      allow delete: if isSignedIn() && isValidId(bookId) && isAdmin();
+    }
+
+    match /videos/{videoId} {
+      allow get: if isValidId(videoId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(videoId) && isValidVideo(incoming()) && incoming().id == videoId && isAdmin();
+      allow update: if isSignedIn() && isValidId(videoId) && isValidVideo(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().created_date == existing().created_date &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'description', 'youtube_url', 'video_url', 'video_type',
+          'channel_id', 'channel_name', 'category', 'thumbnail', 'duration',
+          'is_featured', 'visible', 'sort_order', 'updated_date'
+        ]);
+      allow delete: if isSignedIn() && isValidId(videoId) && isAdmin();
+    }
+
+    match /video_channels/{channelId} {
+      allow get: if isValidId(channelId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(channelId) && isValidVideoChannel(incoming()) && incoming().id == channelId && isAdmin();
+      allow update: if isSignedIn() && isValidId(channelId) && isValidVideoChannel(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().created_date == existing().created_date &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'channel_logo', 'description', 'youtube_url',
+          'category', 'sort_order', 'visible', 'updated_date'
+        ]);
+      allow delete: if isSignedIn() && isValidId(channelId) && isAdmin();
+    }
+
+    match /social_channels/{socialId} {
+      allow get: if isValidId(socialId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(socialId) && isValidSocialChannel(incoming()) && incoming().id == socialId && isAdmin();
+      allow update: if isSignedIn() && isValidId(socialId) && isValidSocialChannel(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().created_date == existing().created_date &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'channel_type', 'url', 'icon_url',
+          'description', 'sort_order', 'visible', 'updated_date'
+        ]);
+      allow delete: if isSignedIn() && isValidId(socialId) && isAdmin();
+    }
+
+    match /app_settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if true;
+      allow create: if isSignedIn() && isValidId(settingId) && isValidAppSettings(incoming()) && incoming().id == settingId && isAdmin();
+      allow update: if isSignedIn() && isValidId(settingId) && isValidAppSettings(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().setting_key == existing().setting_key &&
+        incoming().created_date == existing().created_date &&
+        isAdmin() &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'setting_value', 'setting_type', 'description',
+          'changed_by', 'previous_value', 'updated_date'
+        ]);
+      allow delete: if isSignedIn() && isValidId(settingId) && isAdmin();
+    }
+
+    match /favorites/{favId} {
+      allow get: if isSignedIn() && isValidId(favId) && isVerifiedUser() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isSignedIn() && isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(favId) && isValidFavorite(incoming()) &&
+        incoming().id == favId &&
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/books/$(incoming().book_id));
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(favId) && isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /account_data/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && isVerifiedUser() && (resource == null || existing().ownerUid == request.auth.uid);
+      allow list: if isSignedIn() && isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(accountId) && isValidAccountData(incoming()) &&
+        incoming().id == accountId &&
+        isVerifiedUser();
+      allow update: if isSignedIn() && isValidId(accountId) && isValidAccountData(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().account_email == existing().account_email &&
+        incoming().created_date == existing().created_date &&
+        isVerifiedUser() &&
+        existing().ownerUid == request.auth.uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['data', 'data_version', 'updated_date']);
+      allow delete: if isSignedIn() && isValidId(accountId) && isVerifiedUser() && (existing().ownerUid == request.auth.uid || isAdmin());
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && isVerifiedUser() && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && isVerifiedUser() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) &&
+        incoming().id == userId &&
+        incoming().uid == userId &&
+        isVerifiedUser() &&
+        (
+          (request.auth.uid == userId && (incoming().role == 'user' || isAdmin())) ||
+          isAdmin()
+        );
+      allow update: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().created_date == existing().created_date &&
+        isVerifiedUser() && (
+          (
+            request.auth.uid == userId &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'full_name', 'notifications_enabled', 'preferred_language', 'avatar_url', 'updated_date'
+            ])
+          ) ||
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'full_name', 'role', 'notifications_enabled', 'preferred_language', 'avatar_url', 'updated_date'
+            ])
+          )
+        );
+      allow delete: if isSignedIn() && isValidId(userId) && (isAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && isVerifiedUser() && (request.auth.uid == adminId || isAdmin());
+      allow list: if false;
+      allow create: if isSignedIn() && isValidId(adminId) && isValidAdmin(incoming()) && incoming().uid == adminId && isAdmin();
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(adminId) && isAdmin();
+    }
+
+    match /contact_messages/{messageId} {
+      allow get: if isSignedIn() && isValidId(messageId) && isAdmin();
+      allow list: if isSignedIn() && isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(messageId) && isValidContactMessage(incoming()) &&
+        incoming().id == messageId &&
+        isVerifiedUser();
+      allow update: if false;
+      allow delete: if isSignedIn() && isValidId(messageId) && isAdmin();
+    }
+  }
+}
