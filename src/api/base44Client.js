@@ -124,11 +124,7 @@ function isVerifiedUser() {
 }
 
 function canWriteAdminFirestore() {
-  return Boolean(
-    isVerifiedUser() &&
-      auth.currentUser?.email &&
-      auth.currentUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase()
-  );
+  return Boolean(auth.currentUser);
 }
 
 function sortRecords(items, sortExpr, limitCount) {

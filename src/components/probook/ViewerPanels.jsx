@@ -481,23 +481,31 @@ export function ThemeComfortPanel({
       {show && (
         <motion.div
           data-viewer-ui
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 14 }}
-          className={`absolute bottom-16 left-1/2 -translate-x-1/2 w-80 sm:w-96 max-w-[94%] border rounded-2xl shadow-2xl p-4 z-30 space-y-4 ${surfaceCls}`}
-          onClick={(e) => e.stopPropagation()}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 z-30 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-[2px]"
+          onClick={onClose}
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold">
-              {t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
-            </span>
-            <button
-              onClick={onClose}
-              className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <motion.div
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 40 }}
+            transition={{ type: "spring", stiffness: 320, damping: 32 }}
+            className={`w-full sm:w-96 max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[85vh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4 border ${surfaceCls}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-border/40">
+              <span className="text-sm font-bold">
+                {t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
+              </span>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
           {/* Theme Swatches */}
           <div className="space-y-1.5">
@@ -608,6 +616,7 @@ export function ThemeComfortPanel({
               className="w-full accent-primary cursor-pointer"
             />
           </div>
+          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>

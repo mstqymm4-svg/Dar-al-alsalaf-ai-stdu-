@@ -4,7 +4,7 @@ import { useT } from "@/lib/i18n";
 
 // In-memory LRU cache of rendered page images for instant re-display without worker lag
 const renderedImageCache = new Map();
-const MAX_IMAGE_CACHE = 24;
+const MAX_IMAGE_CACHE = 32;
 
 function getCachedPageImage(key) {
   return renderedImageCache.get(key) || null;
@@ -18,13 +18,26 @@ function setCachedPageImage(key, dataUrl) {
   renderedImageCache.set(key, dataUrl);
 }
 
+const getCanvasFilter = (th) => {
+  if (th === "dark") return "invert(0.92) hue-rotate(180deg) contrast(1.05)";
+  if (th === "dusk") return "invert(0.86) hue-rotate(180deg) sepia(0.12)";
+  if (th === "sepia") return "sepia(0.35) saturate(1.05) contrast(1.01)";
+  return "none";
+};
+
+const getCanvasBg = (th) => {
+  if (th === "dark") return "bg-[#121418]";
+  if (th === "dusk") return "bg-[#181C22]";
+  if (th === "sepia") return "bg-[#EFE5D3]";
+  return "bg-white";
+};
+
 /**
  * Ultra-performant PDF Page Renderer:
  * - Instant display from in-memory cache when revisiting pages
  * - Direct hardware-accelerated canvas rasterization
- * - Capped DPR (1.5x) to eliminate GPU memory exhaustion and frame drops
- * - Smooth fade-in without layout shift
- * - Immediate render task cancellation on unmount or fast turn
+ * - Crisp 4K canvas buffer (capped at 4096px) for razor-sharp text when zooming in up to 3x
+ * - Clean per-canvas filter inversion for mobile Dark Mode without WebKit compositing bugs
  */
 function PdfPageRenderer({
   pdf,
@@ -32,19 +45,19 @@ function PdfPageRenderer({
   zoom = 1,
   targetWidth = 0,
   targetHeight = 0,
+  theme = "light",
   onAspectRatio,
 }) {
   const t = useT();
   const canvasRef = useRef(null);
-  const imgRef = useRef(null);
   const renderTaskRef = useRef(null);
   const [rendering, setRendering] = useState(true);
   const [hasRenderedOnce, setHasRenderedOnce] = useState(false);
   const [cachedUrl, setCachedUrl] = useState(null);
   const [error, setError] = useState(false);
 
-  // Unique cache key per page and zoom
-  const cacheKey = `${pdf?.fingerprint || "pdf"}_${pageNumber}_${Math.round(zoom * 10)}`;
+  // Unique cache key per page, zoom and theme
+  const cacheKey = `${pdf?.fingerprint || "pdf"}_${pageNumber}_${Math.round(zoom * 10)}_${theme}`;
 
   useEffect(() => {
     // Check if we already have this page in memory
@@ -86,9 +99,9 @@ function PdfPageRenderer({
           cssScale = targetHeight / baseVp.height;
         }
 
-        // Capped DPR for super sharp fonts without GPU memory bloat or lag
-        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-        const maxPixelDim = 2400;
+        // Crisp DPR and max 4096px canvas buffer for vector-sharp text when zoomed in
+        const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
+        const maxPixelDim = 4096;
         const rawRenderScale = cssScale * dpr;
         const maxAllowedScale = Math.min(
           maxPixelDim / baseVp.width,
@@ -106,7 +119,7 @@ function PdfPageRenderer({
         if (!ctx) return;
 
         ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "medium";
+        ctx.imageSmoothingQuality = "high";
 
         const pxWidth = Math.floor(viewport.width);
         const pxHeight = Math.floor(viewport.height);
@@ -127,7 +140,7 @@ function PdfPageRenderer({
           setRendering(false);
           setHasRenderedOnce(true);
 
-          // Save small preview snapshot to memory cache asynchronously
+          // Save snapshot to memory cache asynchronously
           setTimeout(() => {
             if (!cancelled && canvas) {
               try {
@@ -161,35 +174,40 @@ function PdfPageRenderer({
     };
   }, [pdf, pageNumber, zoom, targetWidth, targetHeight, cacheKey]);
 
+  const canvasFilter = getCanvasFilter(theme);
+  const containerBg = getCanvasBg(theme);
+
   return (
-    <div className="relative w-full h-full flex items-center justify-center bg-white overflow-hidden select-none">
-      {/* If cached image exists, display it instantly to prevent flash */}
+    <div className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${containerBg}`}>
+      {/* If cached image exists, display it instantly */}
       {cachedUrl && !hasRenderedOnce && (
         <img
           src={cachedUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          style={{ filter: canvasFilter }}
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${containerBg}`}
         />
       )}
 
       <canvas
         ref={canvasRef}
-        className={`block bg-white transition-opacity duration-150 ${
+        style={{ filter: canvasFilter }}
+        className={`block transition-opacity duration-150 ${containerBg} ${
           hasRenderedOnce ? "opacity-100" : "opacity-0"
         }`}
       />
 
       {rendering && !hasRenderedOnce && !cachedUrl && !error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-stone-50/90">
+        <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 ${containerBg} text-stone-400`}>
           <Loader2 className="w-5 h-5 text-primary animate-spin" />
-          <span className="text-xs font-mono tabular-nums text-stone-500">
+          <span className="text-xs font-mono tabular-nums">
             {t.pageNo || "ص"} {pageNumber}
           </span>
         </div>
       )}
 
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-stone-50 px-4 text-center">
+        <div className={`absolute inset-0 flex items-center justify-center ${containerBg} px-4 text-center`}>
           <span className="text-xs text-destructive font-medium">
             {t.renderPageFail || "فشل عرض الصفحة"} {pageNumber}
           </span>
@@ -204,6 +222,7 @@ export default memo(PdfPageRenderer, (prev, next) => {
     prev.pdf === next.pdf &&
     prev.pageNumber === next.pageNumber &&
     prev.zoom === next.zoom &&
+    prev.theme === next.theme &&
     Math.round(prev.targetWidth) === Math.round(next.targetWidth) &&
     Math.round(prev.targetHeight) === Math.round(next.targetHeight)
   );

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Bookmark, ChevronLeft, ChevronRight, FileText, ScrollText } from "lucide-react";
+import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import PdfPageRenderer from "./PdfPageRenderer";
 import { motion, AnimatePresence } from "framer-motion";
 
 const DEFAULT_RATIO = 0.707; // Standard portrait aspect ratio (width / height)
-const RENDER_BUFFER = 2; // Pre-render currentPage ± 2 pages (5 pages max active)
+const RENDER_BUFFER = 2; // Pre-render currentPage ± 2 pages
 const GAP = 16; // 1rem gap between pages
 
 const clampZoom = (z) => Math.max(0.5, Math.min(3, +Number(z).toFixed(2)));
@@ -13,29 +13,29 @@ export const READER_THEMES = {
   light: {
     id: "light",
     canvasBg: "bg-[#F5F2EB]",
+    pageBg: "bg-white",
     pageShadow: "shadow-[0_4px_24px_rgba(28,25,23,0.12)] ring-1 ring-stone-300/80",
-    filter: "none",
     badgeBg: "bg-stone-900/80 text-stone-100",
   },
   sepia: {
     id: "sepia",
     canvasBg: "bg-[#EFE5D3]",
+    pageBg: "bg-[#EFE5D3]",
     pageShadow: "shadow-[0_6px_26px_rgba(68,51,28,0.15)] ring-1 ring-[#D8CAAE]",
-    filter: "sepia(0.35) saturate(1.05) contrast(1.01) brightness(0.98)",
     badgeBg: "bg-[#3D2E1E]/85 text-[#F7EFE2]",
   },
   dusk: {
     id: "dusk",
     canvasBg: "bg-[#181C22]",
+    pageBg: "bg-[#181C22]",
     pageShadow: "shadow-[0_8px_32px_rgba(0,0,0,0.55)] ring-1 ring-slate-700/60",
-    filter: "invert(0.86) hue-rotate(180deg) sepia(0.12) contrast(0.96)",
     badgeBg: "bg-slate-800/90 text-slate-200",
   },
   dark: {
     id: "dark",
     canvasBg: "bg-[#0B0D11]",
+    pageBg: "bg-[#121418]",
     pageShadow: "shadow-[0_8px_35px_rgba(0,0,0,0.75)] ring-1 ring-neutral-800",
-    filter: "invert(0.92) hue-rotate(180deg) contrast(1.02)",
     badgeBg: "bg-neutral-800/90 text-neutral-200",
   },
 };
@@ -141,7 +141,7 @@ export default function VerticalPageStream({
       finishPinch();
       return;
     }
-    // Horizontal swipe in single/spread mode
+    // Horizontal swipe in single/spread mode (only when not zoomed in)
     if (
       st.mode === "single" &&
       viewMode !== "scroll" &&
@@ -164,6 +164,7 @@ export default function VerticalPageStream({
   };
 
   const effZoom = pinchZoom ?? zoom;
+  const isZoomed = effZoom > 1.05;
 
   // ── Calculate dimensions efficiently ──
   const { pageWidth, pageHeight } = useMemo(() => {
@@ -250,13 +251,9 @@ export default function VerticalPageStream({
   }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange]);
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
-  const brightnessFilter = brightness !== 100 ? `brightness(${Number(brightness) / 100})` : "";
-  const combinedFilter =
-    [themeConfig.filter !== "none" ? themeConfig.filter : "", brightnessFilter]
-      .filter(Boolean)
-      .join(" ") || "none";
+  const brightnessFilter = brightness !== 100 ? `brightness(${Number(brightness) / 100})` : "none";
 
-  // ── Mode 1: Single Page or Two-Page Spread (Kindle/iBooks style with tap zones) ──
+  // ── Mode 1: Single Page or Two-Page Spread ──
   if (viewMode === "single" || viewMode === "spread") {
     const isSpread = viewMode === "spread" && containerSize.width >= 768 && totalPages > 1;
     const primaryPage = isSpread
@@ -281,8 +278,10 @@ export default function VerticalPageStream({
     return (
       <div
         ref={scrollRef}
-        className={`flex-1 overflow-hidden transition-colors duration-200 select-none relative flex flex-col items-center justify-center ${themeConfig.canvasBg}`}
-        style={{ touchAction: "pan-x pan-y" }}
+        className={`flex-1 transition-colors duration-200 select-none relative ${themeConfig.canvasBg} ${
+          isZoomed ? "overflow-auto p-4 flex items-start justify-start sm:justify-center" : "overflow-hidden flex flex-col items-center justify-center"
+        }`}
+        style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -291,13 +290,13 @@ export default function VerticalPageStream({
         {/* Animated Page Container */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={`${primaryPage}_${isSpread}`}
+            key={`${primaryPage}_${isSpread}_${zoom}`}
             initial={{ opacity: 0.85, scale: 0.99 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0.85, scale: 0.99 }}
             transition={{ duration: 0.15 }}
             dir={isRTL ? "rtl" : "ltr"}
-            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2]"
+            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto"
           >
             {pagesToShow.map((p) => {
               const isBookmarked = bookmarks.includes(p);
@@ -305,11 +304,10 @@ export default function VerticalPageStream({
                 <div
                   key={p}
                   data-page={p}
-                  className={`relative bg-white rounded-sm shrink-0 overflow-hidden transition-shadow ${themeConfig.pageShadow}`}
+                  className={`relative rounded-sm shrink-0 overflow-hidden transition-shadow ${themeConfig.pageBg} ${themeConfig.pageShadow}`}
                   style={{
                     width: pageWidth,
                     height: pageHeight,
-                    filter: combinedFilter,
                   }}
                 >
                   {isBookmarked && (
@@ -330,13 +328,14 @@ export default function VerticalPageStream({
                         pdf={pdf}
                         pageNumber={p}
                         zoom={zoom}
+                        theme={theme}
                         targetWidth={committedDim.width}
                         targetHeight={committedDim.height}
                       />
                     )}
                   </div>
                   <div
-                    className={`absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded text-[11px] font-mono tabular-nums pointer-events-none ${themeConfig.badgeBg}`}
+                    className={`absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded text-[11px] font-mono tabular-nums pointer-events-none z-10 ${themeConfig.badgeBg}`}
                   >
                     {p} / {totalPages}
                   </div>
@@ -346,47 +345,49 @@ export default function VerticalPageStream({
           </motion.div>
         </AnimatePresence>
 
-        {/* Kindle/iBooks-style Tap Zones (Invisible overlay on top of page for thumb-turning) */}
-        <div className="absolute inset-0 z-[5] grid grid-cols-5 pointer-events-auto">
-          {/* Left Zone (20%): Prev or Next depending on RTL */}
-          <div
-            onClick={(e) => { e.stopPropagation(); handleZoneClick("prev"); }}
-            className="cursor-pointer group flex items-center justify-start ps-3"
-            title={isRTL ? "الصفحة التالية" : "الصفحة السابقة"}
-          >
-            <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
-              <ChevronLeft className="w-5 h-5" />
+        {/* Tap Zones for turning pages (Only active when NOT zoomed in) */}
+        {!isZoomed && (
+          <div className="absolute inset-0 z-[5] grid grid-cols-5 pointer-events-auto">
+            {/* Left Zone (20%) */}
+            <div
+              onClick={(e) => { e.stopPropagation(); handleZoneClick("prev"); }}
+              className="cursor-pointer group flex items-center justify-start ps-3"
+              title={isRTL ? "الصفحة التالية" : "الصفحة السابقة"}
+            >
+              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
+                <ChevronLeft className="w-5 h-5" />
+              </div>
+            </div>
+
+            {/* Center Zone (60%) */}
+            <div
+              onClick={(e) => { e.stopPropagation(); handleZoneClick("center"); }}
+              className="col-span-3 cursor-pointer"
+            />
+
+            {/* Right Zone (20%) */}
+            <div
+              onClick={(e) => { e.stopPropagation(); handleZoneClick("next"); }}
+              className="cursor-pointer group flex items-center justify-end pe-3"
+              title={isRTL ? "الصفحة السابقة" : "الصفحة التالية"}
+            >
+              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
+                <ChevronRight className="w-5 h-5" />
+              </div>
             </div>
           </div>
-
-          {/* Center Zone (60%): Toggle toolbar and controls */}
-          <div
-            onClick={(e) => { e.stopPropagation(); handleZoneClick("center"); }}
-            className="col-span-3 cursor-pointer"
-          />
-
-          {/* Right Zone (20%): Next or Prev depending on RTL */}
-          <div
-            onClick={(e) => { e.stopPropagation(); handleZoneClick("next"); }}
-            className="cursor-pointer group flex items-center justify-end pe-3"
-            title={isRTL ? "الصفحة السابقة" : "الصفحة التالية"}
-          >
-            <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
-              <ChevronRight className="w-5 h-5" />
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     );
   }
 
-  // ── Mode 2: Continuous Vertical Scroll Stream (Virtualized with stable placeholders) ──
+  // ── Mode 2: Continuous Vertical Scroll Stream ──
   return (
     <div
       ref={scrollRef}
       onScroll={handleScroll}
       className={`flex-1 overflow-auto overscroll-contain transition-colors duration-200 select-none ${themeConfig.canvasBg}`}
-      style={{ touchAction: "pan-x pan-y" }}
+      style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -402,11 +403,10 @@ export default function VerticalPageStream({
             <div
               key={p}
               data-page={p}
-              className={`relative bg-white rounded-sm shrink-0 mx-auto overflow-hidden my-2 ${themeConfig.pageShadow}`}
+              className={`relative rounded-sm shrink-0 mx-auto overflow-hidden my-2 ${themeConfig.pageBg} ${themeConfig.pageShadow}`}
               style={{
                 width: pageWidth,
                 height: pageHeight,
-                filter: shouldRender ? combinedFilter : "none",
               }}
             >
               {isBookmarked && (
@@ -429,20 +429,21 @@ export default function VerticalPageStream({
                       pdf={pdf}
                       pageNumber={p}
                       zoom={zoom}
+                      theme={theme}
                       targetWidth={committedDim.width}
                       targetHeight={committedDim.height}
                     />
                   )}
                 </div>
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 bg-stone-100/60 text-stone-400 font-mono text-xs select-none">
-                  <span className="text-sm font-bold opacity-60">{p}</span>
-                  <span className="text-[10px] opacity-40">/ {totalPages}</span>
+                <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 opacity-40 font-mono text-xs select-none">
+                  <span className="text-sm font-bold">{p}</span>
+                  <span className="text-[10px]">/ {totalPages}</span>
                 </div>
               )}
 
               <div
-                className={`absolute bottom-2 left-3 px-2 py-0.5 rounded text-[10px] font-mono tabular-nums opacity-75 pointer-events-none ${themeConfig.badgeBg}`}
+                className={`absolute bottom-2 left-3 px-2 py-0.5 rounded text-[10px] font-mono tabular-nums opacity-85 pointer-events-none z-10 ${themeConfig.badgeBg}`}
               >
                 {p} / {totalPages}
               </div>
