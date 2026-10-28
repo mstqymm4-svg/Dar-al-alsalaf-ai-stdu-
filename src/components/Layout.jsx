@@ -6,7 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { useT } from "@/lib/i18n";
 import { getSetting, subscribeToSettings } from "@/lib/settingsStore";
 import { getAccountEmail, getAvatarUrl } from "@/lib/activeUser";
-import { NAV_ICONS, readNavItems } from "@/lib/navConfig";
+import { NAV_ICONS, DEFAULT_NAV_ITEMS, readNavItems } from "@/lib/navConfig";
 
 export default function Layout() {
   const location = useLocation();
@@ -36,13 +36,24 @@ export default function Layout() {
   }, []);
 
   // Order, labels and visibility come from the developer panel (إدارة التنقل)
+  // When a standard labelKey exists, we respect the current active language translation
   const navItems = [
-  ...navConfig.filter((item) => item.visible !== false).map((item) => ({
-    path: item.path,
-    icon: NAV_ICONS[item.icon] || Home,
-    label: item.label || t[item.labelKey] || item.id
-  })),
-  ...(showDevNav ? [{ path: "/dev", icon: Code, label: "Dev" }] : [])];
+    ...navConfig
+      .filter((item) => item.visible !== false)
+      .map((item) => {
+        const defaultMatch = DEFAULT_NAV_ITEMS.find((d) => d.id === item.id);
+        const isDefaultLabel = !item.label || (defaultMatch && defaultMatch.label === item.label);
+        const label = isDefaultLabel && item.labelKey && t[item.labelKey]
+          ? t[item.labelKey]
+          : (t[item.labelKey] || item.label || item.id);
+        return {
+          path: item.path,
+          icon: NAV_ICONS[item.icon] || Home,
+          label,
+        };
+      }),
+    ...(showDevNav ? [{ path: "/dev", icon: Code, label: "Dev" }] : []),
+  ];
 
 
   useEffect(() => {

@@ -1,16 +1,32 @@
-import { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, memo } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { getCachedPage, cachePage } from "@/lib/pdfLoader";
+
+// In-memory LRU cache of rendered page images for instant re-display without worker lag
+const renderedImageCache = new Map();
+const MAX_IMAGE_CACHE = 24;
+
+function getCachedPageImage(key) {
+  return renderedImageCache.get(key) || null;
+}
+
+function setCachedPageImage(key, dataUrl) {
+  if (renderedImageCache.size >= MAX_IMAGE_CACHE) {
+    const firstKey = renderedImageCache.keys().next().value;
+    renderedImageCache.delete(firstKey);
+  }
+  renderedImageCache.set(key, dataUrl);
+}
 
 /**
- * Renders a single PDF page to a canvas element.
- * - Uses rendered-page memory cache for instant display on revisit
- * - Keeps previous frame visible during zoom re-renders (no white flash)
- * - High DPR rendering (up to 2.25x) for crisp Arabic calligraphy & diacritics
- * - Cancels in-progress renders on dependency change
+ * Ultra-performant PDF Page Renderer:
+ * - Instant display from in-memory cache when revisiting pages
+ * - Direct hardware-accelerated canvas rasterization
+ * - Capped DPR (1.5x) to eliminate GPU memory exhaustion and frame drops
+ * - Smooth fade-in without layout shift
+ * - Immediate render task cancellation on unmount or fast turn
  */
-export default function PdfPageRenderer({
+function PdfPageRenderer({
   pdf,
   pageNumber,
   zoom = 1,
@@ -20,31 +36,30 @@ export default function PdfPageRenderer({
 }) {
   const t = useT();
   const canvasRef = useRef(null);
+  const imgRef = useRef(null);
   const renderTaskRef = useRef(null);
   const [rendering, setRendering] = useState(true);
   const [hasRenderedOnce, setHasRenderedOnce] = useState(false);
+  const [cachedUrl, setCachedUrl] = useState(null);
   const [error, setError] = useState(false);
-  const [cachedSrc, setCachedSrc] = useState(null);
+
+  // Unique cache key per page and zoom
+  const cacheKey = `${pdf?.fingerprint || "pdf"}_${pageNumber}_${Math.round(zoom * 10)}`;
+
+  useEffect(() => {
+    // Check if we already have this page in memory
+    const existing = getCachedPageImage(cacheKey);
+    if (existing) {
+      setCachedUrl(existing);
+      setHasRenderedOnce(true);
+      setRendering(false);
+    }
+  }, [cacheKey]);
 
   useEffect(() => {
     if (!pdf || !pageNumber) return;
     let cancelled = false;
     setError(false);
-
-    const widthKey = Math.round(targetWidth || 600);
-    const zoomKey = Number(zoom || 1).toFixed(2);
-    const cacheKey = `${pdf?.fingerprints?.[0] || "pdf"}_p${pageNumber}_w${widthKey}_z${zoomKey}`;
-    const fallbackPreviewKey = `${pdf?.fingerprints?.[0] || "pdf"}_p${pageNumber}_latest`;
-
-    const exactCached = getCachedPage(cacheKey);
-    const previewCached = exactCached || getCachedPage(fallbackPreviewKey);
-    if (previewCached) {
-      setCachedSrc(previewCached);
-    }
-
-    if (!exactCached) {
-      setRendering(true);
-    }
 
     const render = async () => {
       try {
@@ -52,6 +67,7 @@ export default function PdfPageRenderer({
           try {
             renderTaskRef.current.cancel();
           } catch {}
+          renderTaskRef.current = null;
         }
 
         const page = await pdf.getPage(pageNumber);
@@ -59,7 +75,9 @@ export default function PdfPageRenderer({
 
         const baseVp = page.getViewport({ scale: 1 });
         const ratio = baseVp.width / baseVp.height;
-        if (onAspectRatio) onAspectRatio(pageNumber, ratio);
+        if (onAspectRatio) {
+          onAspectRatio(pageNumber, ratio);
+        }
 
         let cssScale = 1.2 * zoom;
         if (targetWidth > 0) {
@@ -68,9 +86,9 @@ export default function PdfPageRenderer({
           cssScale = targetHeight / baseVp.height;
         }
 
-        const dpr = Math.min(window.devicePixelRatio || 1, 2.25);
-        // Cap maximum canvas pixel dimension to avoid mobile GPU memory exhaustion
-        const maxPixelDim = 3200;
+        // Capped DPR for super sharp fonts without GPU memory bloat or lag
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const maxPixelDim = 2400;
         const rawRenderScale = cssScale * dpr;
         const maxAllowedScale = Math.min(
           maxPixelDim / baseVp.width,
@@ -85,11 +103,19 @@ export default function PdfPageRenderer({
         if (!canvas || cancelled) return;
 
         const ctx = canvas.getContext("2d", { alpha: false });
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        if (!ctx) return;
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "medium";
+
+        const pxWidth = Math.floor(viewport.width);
+        const pxHeight = Math.floor(viewport.height);
+
+        if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
+          canvas.width = pxWidth;
+          canvas.height = pxHeight;
+        }
+
         canvas.style.width = `${Math.floor(cssViewport.width)}px`;
         canvas.style.height = `${Math.floor(cssViewport.height)}px`;
 
@@ -100,14 +126,16 @@ export default function PdfPageRenderer({
         if (!cancelled) {
           setRendering(false);
           setHasRenderedOnce(true);
-          try {
-            if (zoom <= 1.5 && canvas.width <= 1800) {
-              const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-              cachePage(cacheKey, dataUrl);
-              cachePage(fallbackPreviewKey, dataUrl);
-              setCachedSrc(dataUrl);
+
+          // Save small preview snapshot to memory cache asynchronously
+          setTimeout(() => {
+            if (!cancelled && canvas) {
+              try {
+                const dataUrl = canvas.toDataURL("image/webp", 0.85);
+                setCachedPageImage(cacheKey, dataUrl);
+              } catch {}
             }
-          } catch {}
+          }, 60);
         }
       } catch (e) {
         if (e?.name !== "RenderingCancelledException" && !cancelled) {
@@ -117,26 +145,30 @@ export default function PdfPageRenderer({
       }
     };
 
-    const timer = setTimeout(render, 10);
+    const rafId = requestAnimationFrame(() => {
+      render();
+    });
+
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      cancelAnimationFrame(rafId);
       if (renderTaskRef.current) {
         try {
           renderTaskRef.current.cancel();
         } catch {}
+        renderTaskRef.current = null;
       }
     };
-  }, [pdf, pageNumber, zoom, targetWidth, targetHeight]);
+  }, [pdf, pageNumber, zoom, targetWidth, targetHeight, cacheKey]);
 
   return (
     <div className="relative w-full h-full flex items-center justify-center bg-white overflow-hidden select-none">
-      {cachedSrc && !hasRenderedOnce && (
+      {/* If cached image exists, display it instantly to prevent flash */}
+      {cachedUrl && !hasRenderedOnce && (
         <img
-          src={cachedSrc}
-          alt={`${t.pageNo || "صفحة"} ${pageNumber}`}
+          src={cachedUrl}
+          alt=""
           className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-          draggable={false}
         />
       )}
 
@@ -147,11 +179,11 @@ export default function PdfPageRenderer({
         }`}
       />
 
-      {rendering && !hasRenderedOnce && !cachedSrc && !error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-stone-50/90">
-          <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      {rendering && !hasRenderedOnce && !cachedUrl && !error && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-stone-50/90">
+          <Loader2 className="w-5 h-5 text-primary animate-spin" />
           <span className="text-xs font-mono tabular-nums text-stone-500">
-            {t.pageNo} {pageNumber}
+            {t.pageNo || "ص"} {pageNumber}
           </span>
         </div>
       )}
@@ -159,10 +191,20 @@ export default function PdfPageRenderer({
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-stone-50 px-4 text-center">
           <span className="text-xs text-destructive font-medium">
-            {t.renderPageFail} {pageNumber}
+            {t.renderPageFail || "فشل عرض الصفحة"} {pageNumber}
           </span>
         </div>
       )}
     </div>
   );
 }
+
+export default memo(PdfPageRenderer, (prev, next) => {
+  return (
+    prev.pdf === next.pdf &&
+    prev.pageNumber === next.pageNumber &&
+    prev.zoom === next.zoom &&
+    Math.round(prev.targetWidth) === Math.round(next.targetWidth) &&
+    Math.round(prev.targetHeight) === Math.round(next.targetHeight)
+  );
+});

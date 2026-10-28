@@ -25,9 +25,10 @@ import { useT } from "@/lib/i18n";
 
 /**
  * Multi-tab side drawer:
- * 1. الفهرس (Table of Contents)
- * 2. العلامات (Saved Bookmarks)
- * 3. الصفحات (Quick Page Grid)
+ * 1. Table of Contents (TOC)
+ * 2. Bookmarks
+ * 3. Page Grid
+ * Fully translated and localized across all supported languages.
  */
 export function TocPanel({
   show,
@@ -77,7 +78,7 @@ export function TocPanel({
             >
               <h3 className="text-sm font-bold flex items-center gap-2">
                 <BookOpen className="w-4 h-4 text-primary" />
-                <span>{t.idxTitle || "فهرس وأدوات الكتاب"}</span>
+                <span>{t.tocAndBookmarks || t.idxTitle || "الفهرس والعلامات"}</span>
               </h3>
               <button
                 onClick={onClose}
@@ -104,7 +105,7 @@ export function TocPanel({
                 }`}
               >
                 <List className="w-3.5 h-3.5" />
-                <span>الفهرس</span>
+                <span>{t.tabToc || "الفهرس"}</span>
               </button>
 
               <button
@@ -118,7 +119,9 @@ export function TocPanel({
                 }`}
               >
                 <Bookmark className="w-3.5 h-3.5" />
-                <span>العلامات ({bookmarks.length})</span>
+                <span>
+                  {t.tabBookmarks || "العلامات"} ({bookmarks.length})
+                </span>
               </button>
 
               <button
@@ -132,7 +135,7 @@ export function TocPanel({
                 }`}
               >
                 <LayoutGrid className="w-3.5 h-3.5" />
-                <span>الصفحات</span>
+                <span>{t.tabPages || "الصفحات"}</span>
               </button>
             </div>
 
@@ -150,7 +153,7 @@ export function TocPanel({
                         onClick={() => setActiveTab("pages")}
                         className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/15 transition-colors"
                       >
-                        تصفح شبكة الصفحات ({totalPages})
+                        {t.browsePageGrid || "تصفح شبكة الصفحات"} ({totalPages})
                       </button>
                     </div>
                   ) : (
@@ -187,8 +190,8 @@ export function TocPanel({
                       )}
                       <span>
                         {bookmarks.includes(currentPage)
-                          ? `إزالة علامة الصفحة الحالية (${currentPage})`
-                          : `حفظ الصفحة الحالية (${currentPage}) في العلامات`}
+                          ? `${t.removeBookmarkCurrent || "إزالة علامة الصفحة الحالية"} (${currentPage})`
+                          : `${t.addBookmarkCurrent || "حفظ الصفحة الحالية في العلامات"} (${currentPage})`}
                       </span>
                     </span>
                   </button>
@@ -197,7 +200,7 @@ export function TocPanel({
                     <div className="text-center py-10 px-4">
                       <Bookmark className="w-9 h-9 mx-auto mb-2 text-muted-foreground/35" />
                       <p className="text-xs text-muted-foreground">
-                        لم تقم بحفظ أي علامات مرجعية في هذا الكتاب بعد.
+                        {t.noBookmarksYet || "لم تقم بحفظ أي علامات مرجعية في هذا الكتاب بعد."}
                       </p>
                     </div>
                   ) : (
@@ -221,7 +224,9 @@ export function TocPanel({
                             className="flex-1 flex items-center gap-2.5 text-start text-xs font-medium"
                           >
                             <Bookmark className="w-3.5 h-3.5 fill-amber-500 text-amber-500 shrink-0" />
-                            <span>الصفحة {pageNum}</span>
+                            <span>
+                              {t.pageNo || "الصفحة"} {pageNum}
+                            </span>
                             <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
                               ({Math.round((pageNum / Math.max(1, totalPages)) * 100)}%)
                             </span>
@@ -229,7 +234,7 @@ export function TocPanel({
                           <button
                             onClick={() => onRemoveBookmark?.(pageNum)}
                             className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            title="حذف العلامة"
+                            title={t.deleteBookmark || "حذف العلامة"}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -351,7 +356,7 @@ export function SearchPanel({
           {searching && (
             <div className="mt-2.5 space-y-1">
               <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>جاري البحث في صفحات الكتاب...</span>
+                <span>{t.searchingPages || "جاري البحث في صفحات الكتاب..."}</span>
                 <span className="font-mono tabular-nums">{searchProgress}%</span>
               </div>
               <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
@@ -367,7 +372,8 @@ export function SearchPanel({
             <div className="mt-2.5 space-y-2">
               <div className="flex items-center justify-between text-xs px-1">
                 <span className="text-muted-foreground font-mono tabular-nums">
-                  النتيجة {resultIdx + 1} من {results.length}
+                  {t.searchResultOf || "النتيجة"} {resultIdx + 1} {t.ofTotal || "من"}{" "}
+                  {results.length}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
@@ -375,13 +381,13 @@ export function SearchPanel({
                     className="px-2 py-1 rounded hover:bg-muted text-xs font-medium flex items-center gap-1"
                   >
                     <ChevronRight className="w-3.5 h-3.5" />
-                    السابق
+                    {t.searchPrev || "السابق"}
                   </button>
                   <button
                     onClick={onNextResult}
                     className="px-2 py-1 rounded hover:bg-muted text-xs font-medium text-primary flex items-center gap-1"
                   >
-                    التالي
+                    {t.searchNext || "التالي"}
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -403,10 +409,10 @@ export function SearchPanel({
                       }`}
                     >
                       <span className="line-clamp-1 flex-1">
-                        {snippet || `تطابق في الصفحة ${pageNum}`}
+                        {snippet || `${t.matchOnPage || "تطابق في الصفحة"} ${pageNum}`}
                       </span>
                       <span className="font-mono tabular-nums text-[11px] text-muted-foreground shrink-0">
-                        ص {pageNum}
+                        {t.pageNo || "ص"} {pageNum}
                       </span>
                     </button>
                   );
@@ -435,22 +441,39 @@ export function ThemeComfortPanel({
   onChangeBrightness,
   onClose,
 }) {
+  const t = useT();
   const darkMode = theme === "dark" || theme === "dusk";
   const surfaceCls = darkMode
     ? "bg-[#161920] text-stone-100 border-neutral-800"
     : "bg-[#FBF9F5] text-stone-900 border-stone-200";
 
   const themes = [
-    { id: "light", label: "نهاري ورقي", swatch: "bg-[#F4F1EA] border-stone-300 text-stone-900" },
-    { id: "sepia", label: "قرطاس تراثي", swatch: "bg-[#EAE0CE] border-[#C9B79C] text-[#3D2E1E]" },
-    { id: "dusk", label: "مسائي هادئ", swatch: "bg-[#1C2026] border-slate-700 text-slate-100" },
-    { id: "dark", label: "ليلي داكن", swatch: "bg-[#0D0F12] border-neutral-700 text-neutral-100" },
+    {
+      id: "light",
+      label: t.themeLightLabel || "نهاري ورقي",
+      swatch: "bg-[#F4F1EA] border-stone-300 text-stone-900",
+    },
+    {
+      id: "sepia",
+      label: t.themeSepiaLabel || "قرطاس تراثي",
+      swatch: "bg-[#EAE0CE] border-[#C9B79C] text-[#3D2E1E]",
+    },
+    {
+      id: "dusk",
+      label: t.themeDuskLabel || "مسائي هادئ",
+      swatch: "bg-[#1C2026] border-slate-700 text-slate-100",
+    },
+    {
+      id: "dark",
+      label: t.themeDarkLabel || "ليلي داكن",
+      swatch: "bg-[#0D0F12] border-neutral-700 text-neutral-100",
+    },
   ];
 
   const viewModes = [
-    { id: "scroll", label: "تمرير عمودي", icon: ScrollText },
-    { id: "single", label: "صفحة مفردة", icon: FileText },
-    { id: "spread", label: "صفحتان", icon: Columns },
+    { id: "scroll", label: t.viewModeScroll || "تمرير عمودي", icon: ScrollText },
+    { id: "single", label: t.viewModeSingle || "صفحة مفردة", icon: FileText },
+    { id: "spread", label: t.viewModeSpread || "صفحتان", icon: Columns },
   ];
 
   return (
@@ -465,7 +488,9 @@ export function ThemeComfortPanel({
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold">إعدادات القراءة وراحة العين</span>
+            <span className="text-xs font-bold">
+              {t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
+            </span>
             <button
               onClick={onClose}
               className="p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
@@ -476,7 +501,9 @@ export function ThemeComfortPanel({
 
           {/* Theme Swatches */}
           <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block">سمة الورق والإضاءة</span>
+            <span className="text-[11px] text-muted-foreground block">
+              {t.paperThemeLabel || "سمة الورق والإضاءة"}
+            </span>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {themes.map((th) => (
                 <button
@@ -498,7 +525,9 @@ export function ThemeComfortPanel({
 
           {/* View Mode */}
           <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block">نمط عرض الصفحات</span>
+            <span className="text-[11px] text-muted-foreground block">
+              {t.viewModeLabel || "نمط عرض الصفحات"}
+            </span>
             <div className="grid grid-cols-3 gap-1.5">
               {viewModes.map((vm) => {
                 const Icon = vm.icon;
@@ -526,7 +555,9 @@ export function ThemeComfortPanel({
           {/* Fit Mode */}
           {viewMode === "scroll" && (
             <div className="space-y-1.5">
-              <span className="text-[11px] text-muted-foreground block">ملائمة حجم الصفحة</span>
+              <span className="text-[11px] text-muted-foreground block">
+                {t.fitModeLabel || "ملائمة حجم الصفحة"}
+              </span>
               <div className="grid grid-cols-2 gap-1.5">
                 <button
                   onClick={() => onSelectFitMode("width")}
@@ -539,7 +570,7 @@ export function ThemeComfortPanel({
                   }`}
                 >
                   <MoveHorizontal className="w-3.5 h-3.5" />
-                  <span>ملائمة العرض</span>
+                  <span>{t.fitWidth || "ملائمة العرض"}</span>
                 </button>
                 <button
                   onClick={() => onSelectFitMode("page")}
@@ -552,7 +583,7 @@ export function ThemeComfortPanel({
                   }`}
                 >
                   <Maximize2 className="w-3.5 h-3.5" />
-                  <span>الصفحة كاملة</span>
+                  <span>{t.fitPage || "الصفحة كاملة"}</span>
                 </button>
               </div>
             </div>
@@ -563,7 +594,7 @@ export function ThemeComfortPanel({
             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <Sun className="w-3.5 h-3.5" />
-                <span>سطوع الصفحة</span>
+                <span>{t.pageBrightness || "سطوع الصفحة"}</span>
               </span>
               <span className="font-mono tabular-nums">{brightness}%</span>
             </div>
@@ -605,7 +636,7 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold">الانتقال إلى صفحة</span>
+              <span className="text-xs font-bold">{t.goToPageTitle || "الانتقال إلى صفحة"}</span>
               <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
                 1 – {totalPages}
               </span>
@@ -623,7 +654,7 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
                 className="flex-1 text-center font-mono tabular-nums"
               />
               <Button size="sm" onClick={onGo}>
-                {t.idxGo || "انتقال"}
+                {t.goBtn || t.idxGo || "انتقال"}
               </Button>
             </div>
           </motion.div>

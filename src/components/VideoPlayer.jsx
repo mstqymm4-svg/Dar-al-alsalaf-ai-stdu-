@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Maximize, Minimize, Play, Pause, RotateCcw, Volume2, VolumeX,
   Share2, Rewind, FastForward, Repeat, SkipBack, SkipForward,
-  ListVideo, Sun,
+  ListVideo, Sun, HelpCircle, Gauge
 } from "lucide-react";
 import { extractYoutubeId } from "@/components/dev/DevVideos";
 import { toast } from "sonner";
@@ -23,6 +23,8 @@ function formatTime(seconds) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
 export default function VideoPlayer({ video, onClose, playlist = [], onSelectVideo }) {
   const t = useT();
   const { isOnline } = useOnlineStatus();
@@ -36,18 +38,26 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const [duration, setDuration] = useState(0);
   const [bufferedPct, setBufferedPct] = useState(0);
   const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(100);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [showPlaylist, setShowPlaylist] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [ready, setReady] = useState(false);
   const [restoreTime, setRestoreTime] = useState(0);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState(false);
   const loopRef = useRef(false);
 
+  // Auto-advance countdown state
+  const [autoAdvanceTimer, setAutoAdvanceTimer] = useState(null);
+  const [autoAdvanceSeconds, setAutoAdvanceSeconds] = useState(5);
+
   const videoId = extractYoutubeId(video?.youtube_url);
 
-  // ── Playlist navigation (used by buttons, auto-advance and the panel) ──
+  // ── Playlist navigation ──
   const plIdx = playlist.findIndex((v) => v.id === video.id);
   const nextItem = plIdx >= 0 && plIdx < playlist.length - 1 ? playlist[plIdx + 1] : null;
   const prevItem = plIdx > 0 ? playlist[plIdx - 1] : null;
@@ -62,6 +72,34 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     const saved = localStorage.getItem(`video_pos_${videoId}`);
     if (saved) setRestoreTime(Number(saved));
   }, [videoId]);
+
+  // Handle auto-advance countdown
+  useEffect(() => {
+    if (autoAdvanceTimer === null) return;
+    if (autoAdvanceSeconds <= 0) {
+      if (nextItemRef.current && onSelectVideoRef.current) {
+        onSelectVideoRef.current(nextItemRef.current);
+      }
+      setAutoAdvanceTimer(null);
+      return;
+    }
+    const interval = setInterval(() => {
+      setAutoAdvanceSeconds((s) => s - 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [autoAdvanceTimer, autoAdvanceSeconds]);
+
+  const cancelAutoAdvance = () => {
+    setAutoAdvanceTimer(null);
+    setAutoAdvanceSeconds(5);
+  };
+
+  const playNextNow = () => {
+    if (nextItemRef.current && onSelectVideoRef.current) {
+      onSelectVideoRef.current(nextItemRef.current);
+    }
+    cancelAutoAdvance();
+  };
 
   // Initialize YouTube IFrame API player
   useEffect(() => {
@@ -83,20 +121,27 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
             setPlayer(e.target);
             setDuration(e.target.getDuration());
             setReady(true);
+            try {
+              setVolume(e.target.getVolume() || 100);
+              setMuted(e.target.isMuted() || false);
+            } catch {}
             e.target.playVideo();
           },
           onStateChange: (e) => {
             if (cancelled) return;
-            setPlaying(e.data === window.YT.PlayerState.PLAYING);
-            if (e.data === window.YT.PlayerState.PLAYING) {
+            const isNowPlaying = e.data === window.YT.PlayerState.PLAYING;
+            setPlaying(isNowPlaying);
+            if (isNowPlaying) {
               setDuration(e.target.getDuration());
+              cancelAutoAdvance();
             } else if (e.data === window.YT.PlayerState.ENDED) {
               if (loopRef.current) {
                 e.target.seekTo(0, true);
                 e.target.playVideo();
-              } else if (nextItemRef.current && onSelectVideoRef.current) {
-                // Auto-advance to the next video in the playlist
-                onSelectVideoRef.current(nextItemRef.current);
+              } else if (nextItemRef.current) {
+                // Trigger auto-advance countdown
+                setAutoAdvanceSeconds(5);
+                setAutoAdvanceTimer(true);
               }
             }
           },
@@ -141,7 +186,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           localStorage.setItem(`video_pos_${videoId}`, String(Math.floor(cur)));
         }
       } catch(e) {}
-    }, 300);
+    }, 250);
     return () => clearInterval(interval);
   }, [player, videoId]);
 
@@ -152,11 +197,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
-  // Keyboard
+  // Keyboard navigation
   useEffect(() => {
     const handler = (e) => {
+      if (e.target?.tagName === "INPUT" || e.target?.tagName === "TEXTAREA") return;
       if (e.key === "Escape") {
-        if (document.fullscreenElement) document.exitFullscreen();
+        if (showShortcutsModal) setShowShortcutsModal(false);
+        else if (showSpeedMenu) setShowSpeedMenu(false);
+        else if (showPlaylist) setShowPlaylist(false);
+        else if (document.fullscreenElement) document.exitFullscreen();
         else onClose?.();
       } else if (e.key === " " && player) {
         e.preventDefault();
@@ -171,17 +220,29 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       } else if (e.key === "ArrowUp" && player) {
         e.preventDefault();
         if (muted) { player.unMute(); setMuted(false); }
-        player.setVolume?.(Math.min(100, (player.getVolume?.() || 100) + 10));
+        const newVol = Math.min(100, (player.getVolume?.() || 100) + 10);
+        player.setVolume?.(newVol);
+        setVolume(newVol);
       } else if (e.key === "ArrowDown" && player) {
         e.preventDefault();
-        player.setVolume?.(Math.max(0, (player.getVolume?.() || 100) - 10));
+        const newVol = Math.max(0, (player.getVolume?.() || 100) - 10);
+        player.setVolume?.(newVol);
+        setVolume(newVol);
+      } else if (e.key === "m" || e.key === "M") {
+        toggleMute();
+      } else if (e.key === "f" || e.key === "F") {
+        toggleFullscreen();
+      } else if (e.key === "l" || e.key === "L") {
+        toggleLoop();
+      } else if (e.key === "?") {
+        setShowShortcutsModal((s) => !s);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [player, playing, onClose, muted]);
+  }, [player, playing, onClose, muted, showShortcutsModal, showSpeedMenu, showPlaylist]);
 
-  // ── Touch gestures (double-tap skip, drag seek, brightness & volume) ──
+  // Touch gestures
   const getCurrentTime = useCallback(() => {
     try { return player?.getCurrentTime?.() || 0; } catch { return 0; }
   }, [player]);
@@ -206,12 +267,11 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     player.seekTo(Math.max(0, cur), true);
   };
 
-  const cycleSpeed = () => {
+  const selectSpeed = (s) => {
     if (!player?.setPlaybackRate) return;
-    const steps = [0.75, 1, 1.25, 1.5, 2];
-    const next = steps[(steps.indexOf(rate) + 1) % steps.length];
-    setRate(next);
-    player.setPlaybackRate(next);
+    setRate(s);
+    player.setPlaybackRate(s);
+    setShowSpeedMenu(false);
   };
 
   const toggleLoop = () => {
@@ -232,8 +292,28 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
 
   const toggleMute = () => {
     if (!player) return;
-    if (muted) { player.unMute(); setMuted(false); }
-    else { player.mute(); setMuted(true); }
+    if (muted) {
+      player.unMute();
+      setMuted(false);
+      const v = player.getVolume() || 100;
+      setVolume(v === 0 ? 50 : v);
+    } else {
+      player.mute();
+      setMuted(true);
+    }
+  };
+
+  const handleVolumeChange = (newVal) => {
+    if (!player) return;
+    setVolume(newVal);
+    player.setVolume(newVal);
+    if (newVal === 0) {
+      player.mute();
+      setMuted(true);
+    } else if (muted) {
+      player.unMute();
+      setMuted(false);
+    }
   };
 
   const toggleFullscreen = () => {
@@ -253,8 +333,9 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     setShowControls(true);
     clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
-      if (playing) {
+      if (playing && !showPlaylist && !showSpeedMenu && !showShortcutsModal) {
         setShowControls(false);
+        setShowVolumeSlider(false);
       }
     }, 3500);
   };
@@ -289,29 +370,45 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-[60] bg-black flex flex-col"
+      className="fixed inset-0 z-[60] bg-black flex flex-col select-none overflow-hidden"
       dir="rtl"
       onMouseMove={showControlsTemp}
       onClick={showControlsTemp}
     >
-      <div className="flex-1 relative flex items-center justify-center">
-        {/* YouTube iframe with gesture-controlled brightness */}
-        <div className="w-full h-full" style={{ filter: `brightness(${brightness})` }}>
+      <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+        {/* Ambient Cinema Backdrop Glow */}
+        {video?.thumbnail && (
+          <div
+            className="absolute inset-0 opacity-25 filter blur-3xl scale-125 pointer-events-none transition-opacity duration-700"
+            style={{
+              backgroundImage: `url(${video.thumbnail})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }}
+          />
+        )}
+
+        {/* YouTube iframe container */}
+        <div
+          className="w-full h-full relative z-[2] transition-filter duration-200"
+          style={{ filter: `brightness(${brightness})` }}
+        >
           <div id="yt-player-container" className="w-full h-full pointer-events-none" />
         </div>
 
         {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
 
-        {/* Gesture capture layer (under the control overlays) */}
+        {/* Gesture capture layer */}
         <div
           className="absolute inset-0 z-[5]"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
+          onDoubleClick={toggleFullscreen}
         />
 
         {/* Double-tap ripple feedback */}
@@ -321,6 +418,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               key={ripple.key}
               initial={{ opacity: 0.4, scale: 0.5 }}
               animate={{ opacity: 0, scale: 1.5 }}
+              exit={{ opacity: 0 }}
               transition={{ duration: 0.5 }}
               className={`absolute top-1/2 -translate-y-1/2 w-32 h-32 rounded-full bg-white/20 pointer-events-none z-[15] flex items-center justify-center text-white font-bold text-lg ${
                 ripple.side === "left" ? "start-[10%]" : "end-[10%]"
@@ -331,11 +429,11 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           )}
         </AnimatePresence>
 
-        {/* Seek / volume / brightness indicator */}
+        {/* Seek / volume / brightness indicator overlay */}
         {(seekPreview || adjust) && (
           <div
             dir="ltr"
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[15] px-5 py-2.5 rounded-2xl bg-black/75 text-white text-sm font-bold flex items-center gap-2 pointer-events-none"
+            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[15] px-5 py-2.5 rounded-2xl bg-black/85 backdrop-blur-md text-white text-sm font-bold flex items-center gap-2 pointer-events-none shadow-2xl ring-1 ring-white/10"
           >
             {seekPreview && (
               <>
@@ -356,31 +454,134 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           show={showPlaylist}
           videos={playlist}
           currentIndex={plIdx}
-          onSelect={(v) => onSelectVideo?.(v)}
+          onSelect={(v) => { setShowPlaylist(false); onSelectVideo?.(v); }}
           onClose={() => setShowPlaylist(false)}
         />
 
-        {/* Top bar */}
+        {/* Keyboard Shortcuts Modal */}
+        <AnimatePresence>
+          {showShortcutsModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-40 bg-black/75 backdrop-blur-md flex items-center justify-center p-4"
+              onClick={() => setShowShortcutsModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 10 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 10 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-stone-900 border border-white/15 rounded-3xl p-5 max-w-sm w-full text-white shadow-2xl space-y-3"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                  <h3 className="text-sm font-bold flex items-center gap-2">
+                    <HelpCircle className="w-4 h-4 text-primary" />
+                    <span>{t.shortcutsTitle}</span>
+                  </h3>
+                  <button onClick={() => setShowShortcutsModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="space-y-2 text-xs text-stone-300">
+                  <div className="flex justify-between p-2 rounded-lg bg-white/5">
+                    <span>{t.shortcutPlayPause}</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded-lg bg-white/5">
+                    <span>{t.shortcutSeek}</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded-lg bg-white/5">
+                    <span>{t.shortcutVolume}</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded-lg bg-white/5">
+                    <span>{t.shortcutFullscreen}</span>
+                  </div>
+                  <div className="flex justify-between p-2 rounded-lg bg-white/5">
+                    <span>{t.shortcutMute}</span>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Auto-Advance Countdown Banner */}
+        <AnimatePresence>
+          {autoAdvanceTimer && nextItem && (
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 30 }}
+              className="absolute bottom-28 inset-x-4 max-w-md mx-auto z-30 p-4 rounded-2xl bg-black/90 backdrop-blur-xl border border-white/15 shadow-2xl flex items-center justify-between gap-3 text-white"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="relative w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center shrink-0 font-bold text-primary">
+                  {autoAdvanceSeconds}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-white/70">{t.autoPlayingNext}</p>
+                  <p className="text-xs font-bold truncate text-white">{nextItem.title}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={playNextNow}
+                  className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground font-bold text-xs hover:bg-primary/90 active:scale-95 transition-all flex items-center gap-1"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{t.playNow}</span>
+                </button>
+                <button
+                  onClick={cancelAutoAdvance}
+                  className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white/80 text-xs active:scale-95 transition-all"
+                >
+                  {t.cancel}
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Top Header Controls */}
         <AnimatePresence>
           {showControls && (
             <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-4 pt-4 pb-10 flex items-start justify-between gap-4 pointer-events-none z-10"
+              className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-4 pt-4 pb-12 flex items-start justify-between gap-4 pointer-events-none z-20"
             >
               <div className="flex-1 min-w-0 text-white pointer-events-auto">
-                <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm">{video.title}</h2>
+                <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm leading-tight">{video.title}</h2>
                 {video.channel_name && (
-                  <p className="text-[11px] text-white/70 mt-0.5 truncate">{video.channel_name}</p>
+                  <p className="text-[12px] text-white/70 mt-0.5 truncate flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    <span>{video.channel_name}</span>
+                  </p>
                 )}
               </div>
-              <div className="flex items-center gap-2 pointer-events-auto">
-                <button onClick={handleShare} className="w-11 h-11 rounded-full bg-white/10 backdrop-blur-md ring-1 ring-white/15 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition-all">
-                  <Share2 className="w-5 h-5" />
+              <div className="flex items-center gap-2 pointer-events-auto shrink-0">
+                <button
+                  onClick={() => setShowShortcutsModal(true)}
+                  title={t.shortcutsTitle}
+                  className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md ring-1 ring-white/15 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition-all"
+                >
+                  <HelpCircle className="w-4 h-4" />
                 </button>
-                <button onClick={onClose} className="w-11 h-11 rounded-full bg-white/10 backdrop-blur-md ring-1 ring-white/15 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition-all">
-                  <X className="w-5 h-5" />
+                <button
+                  onClick={handleShare}
+                  title={t.share}
+                  className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md ring-1 ring-white/15 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition-all"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={onClose}
+                  title={t.close}
+                  className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md ring-1 ring-white/15 hover:bg-white/20 active:scale-95 flex items-center justify-center text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             </motion.div>
@@ -395,27 +596,29 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               onClick={(e) => { e.stopPropagation(); togglePlay(); }}
-              className="absolute inset-0 flex items-center justify-center z-10"
+              className="absolute inset-0 flex items-center justify-center z-15"
             >
-              <div className="w-20 h-20 rounded-full bg-primary/90 backdrop-blur-sm ring-4 ring-white/15 flex items-center justify-center shadow-2xl">
-                <Play className="w-8 h-8 text-white fill-white mr-1" />
+              <div className="w-20 h-20 rounded-full bg-primary/90 backdrop-blur-md ring-4 ring-white/20 flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform">
+                <Play className="w-9 h-9 text-white fill-white mr-1" />
               </div>
             </motion.button>
           )}
         </AnimatePresence>
 
-        {/* Bottom controls */}
+        {/* Bottom player controls */}
         <AnimatePresence>
           {showControls && ready && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 20 }}
-              className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent px-4 pt-14 pb-3 pointer-events-none z-10"
+              className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-4 pt-16 pb-4 pointer-events-none z-20"
             >
-              {/* Draggable progress bar */}
-              <div className="flex items-center gap-3 mb-2 pointer-events-auto">
-                <span className="text-[11px] text-white font-mono w-12 text-center shrink-0">{formatTime(currentTime)}</span>
+              {/* Progress bar */}
+              <div className="flex items-center gap-3 mb-2.5 pointer-events-auto">
+                <span className="text-[11px] text-white font-mono w-12 text-center shrink-0 select-none">
+                  {formatTime(currentTime)}
+                </span>
                 <div
                   ref={barRef}
                   dir="ltr"
@@ -424,19 +627,21 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                   onPointerMove={(e) => { if (e.buttons === 1) seekFromClientX(e.clientX); }}
                 >
                   <div className="relative w-full h-1.5 rounded-full bg-white/20 transition-all group-hover:h-2.5">
-                    <div className="absolute inset-y-0 left-0 rounded-full bg-white/25" style={{ width: `${bufferedPct}%` }} />
+                    <div className="absolute inset-y-0 left-0 rounded-full bg-white/30" style={{ width: `${bufferedPct}%` }} />
                     <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-accent" style={{ width: `${progressPct}%` }} />
                     <div
-                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.5)] transition-transform group-hover:scale-125"
+                      className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.6)] transition-transform group-hover:scale-125"
                       style={{ left: `${progressPct}%` }}
                     />
                   </div>
                 </div>
-                <span className="text-[11px] text-white/80 font-mono w-12 text-center shrink-0">{formatTime(duration)}</span>
+                <span className="text-[11px] text-white/80 font-mono w-12 text-center shrink-0 select-none">
+                  {formatTime(duration)}
+                </span>
               </div>
 
-              {/* Primary controls — always visible, centered, large tap targets */}
-              <div className="flex items-center justify-center gap-3 pointer-events-auto mb-2" onClick={(e) => e.stopPropagation()}>
+              {/* Primary control buttons row */}
+              <div className="flex items-center justify-center gap-3.5 pointer-events-auto mb-2" onClick={(e) => e.stopPropagation()}>
                 <PlayerButton onClick={() => prevItem && onSelectVideo?.(prevItem)} disabled={!prevItem} title={t.prevVideo}>
                   <SkipBack className="w-5 h-5" />
                 </PlayerButton>
@@ -454,31 +659,90 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                 </PlayerButton>
               </div>
 
-              {/* Secondary controls — compact pill row */}
-              <div className="flex items-center justify-center gap-1 pointer-events-auto overflow-x-auto scrollbar-hide" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center gap-1 px-1.5 py-1 rounded-full bg-white/[0.07] backdrop-blur-md ring-1 ring-white/10">
+              {/* Secondary Controls Bar */}
+              <div className="flex items-center justify-center gap-1.5 pointer-events-auto relative" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/[0.08] backdrop-blur-xl ring-1 ring-white/15 shadow-xl">
+                  {/* Restart */}
                   <PlayerButton onClick={handleRestart} size="sm" title={t.restartPlayback}>
                     <RotateCcw className="w-4 h-4" />
                   </PlayerButton>
-                  <button
-                    onClick={cycleSpeed}
-                    title={t.speedLabel || "Speed"}
-                    className="h-10 px-3 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 flex items-center justify-center text-white text-xs font-bold transition-all shrink-0"
-                  >
-                    {rate}x
-                  </button>
+
+                  {/* Speed Popover Toggle */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSpeedMenu((s) => !s)}
+                      title={t.speedLabel}
+                      className={`h-9 px-3 rounded-full flex items-center gap-1 text-xs font-bold transition-all shrink-0 ${
+                        rate !== 1
+                          ? "bg-primary text-primary-foreground shadow"
+                          : "bg-white/10 hover:bg-white/20 text-white"
+                      }`}
+                    >
+                      <Gauge className="w-3.5 h-3.5" />
+                      <span>{rate}x</span>
+                    </button>
+
+                    {/* Speed options popover */}
+                    {showSpeedMenu && (
+                      <div className="absolute bottom-11 start-1/2 -translate-x-1/2 bg-stone-900/95 backdrop-blur-xl border border-white/15 rounded-2xl p-1.5 shadow-2xl flex flex-col gap-1 min-w-[70px] z-30">
+                        {SPEED_OPTIONS.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => selectSpeed(s)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-mono tabular-nums transition-colors text-center ${
+                              rate === s
+                                ? "bg-primary text-white font-bold"
+                                : "text-white/80 hover:bg-white/10"
+                            }`}
+                          >
+                            {s}x
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Loop toggle */}
                   <PlayerButton onClick={toggleLoop} size="sm" active={loop} title={t.loopBtn}>
                     <Repeat className="w-4 h-4" />
                   </PlayerButton>
+
+                  {/* Playlist drawer toggle */}
                   {playlist.length > 0 && (
                     <PlayerButton onClick={() => setShowPlaylist((s) => !s)} size="sm" active={showPlaylist} title={t.playlist}>
                       <ListVideo className="w-4 h-4" />
                     </PlayerButton>
                   )}
-                  <PlayerButton onClick={toggleMute} size="sm">
-                    {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </PlayerButton>
-                  <PlayerButton onClick={toggleFullscreen} size="sm" title={t.tbFullscreen || "Fullscreen"}>
+
+                  {/* Volume with hover/tap slider */}
+                  <div
+                    className="relative flex items-center"
+                    onMouseEnter={() => setShowVolumeSlider(true)}
+                    onMouseLeave={() => setShowVolumeSlider(false)}
+                  >
+                    <PlayerButton onClick={toggleMute} size="sm" title={t.shortcutMute}>
+                      {muted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                    </PlayerButton>
+
+                    {showVolumeSlider && (
+                      <div
+                        dir="ltr"
+                        className="hidden sm:flex items-center px-2 py-1 bg-stone-900/90 backdrop-blur rounded-full ring-1 ring-white/15 w-24 ms-1 transition-all"
+                      >
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={muted ? 0 : volume}
+                          onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                          className="w-full accent-primary h-1 cursor-pointer"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Fullscreen */}
+                  <PlayerButton onClick={toggleFullscreen} size="sm" title={t.tbFullscreen}>
                     {fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
                   </PlayerButton>
                 </div>

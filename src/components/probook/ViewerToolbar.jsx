@@ -24,6 +24,7 @@ import { useT } from "@/lib/i18n";
  * Includes zoom controls with 100% reset, page navigation, 3-tab navigator drawer
  * (TOC + Bookmarks + Page Grid), full-text search, bookmark toggle, view-mode cycle,
  * reading comfort/theme settings, fullscreen, and interactive progress scrubber with bookmark markers.
+ * Fully localized for English, Arabic, French, Urdu, Turkish, Hindi.
  */
 export default function ViewerToolbar({
   currentPage,
@@ -123,7 +124,7 @@ export default function ViewerToolbar({
             className="absolute -top-7 -translate-x-1/2 px-2 py-0.5 rounded bg-stone-900 text-stone-100 text-[10px] font-mono tabular-nums pointer-events-none shadow"
             style={{ left: `${hoverX}px` }}
           >
-            ص {hoverPage}
+            {t.pageNo || "ص"} {hoverPage}
           </div>
         )}
       </div>
@@ -140,7 +141,7 @@ export default function ViewerToolbar({
           </ToolBtn>
           <button
             onClick={onResetZoom}
-            title="إعادة ضبط التكبير (100%)"
+            title={t.tbResetZoom || "إعادة ضبط التكبير (100%)"}
             className={`hidden xs:inline-flex text-[11px] font-mono tabular-nums font-medium px-1.5 py-1 rounded-md transition-colors ${
               dark ? "hover:bg-neutral-800 text-stone-300" : "hover:bg-stone-200/70 text-stone-700"
             }`}
@@ -192,7 +193,7 @@ export default function ViewerToolbar({
           <ToolBtn
             onClick={onToggleToc}
             dark={dark}
-            title={t.idxTitle || "الفهرس والعلامات المرجعية"}
+            title={t.tocAndBookmarks || t.idxTitle || "الفهرس والعلامات المرجعية"}
             badge={bookmarks.length > 0 ? bookmarks.length : null}
           >
             <List className="w-3.5 h-3.5" />
@@ -218,7 +219,7 @@ export default function ViewerToolbar({
           <ToolBtn
             onClick={onCycleViewMode}
             dark={dark}
-            title="تغيير نمط العرض (تمرير / صفحة / صفحتان)"
+            title={t.tbViewMode || "تغيير نمط العرض (تمرير / صفحة / صفحتان)"}
             active={viewMode !== "scroll"}
           >
             <ViewModeIcon className="w-3.5 h-3.5" />
@@ -227,7 +228,7 @@ export default function ViewerToolbar({
           <ToolBtn
             onClick={onToggleComfort}
             dark={dark}
-            title="إعدادات الإضاءة وراحة العين"
+            title={t.tbComfort || "إعدادات الإضاءة وراحة العين"}
             active={theme !== "light"}
           >
             {themeIcon}

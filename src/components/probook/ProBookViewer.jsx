@@ -3,8 +3,6 @@ import {
   Loader2,
   AlertCircle,
   ChevronUp,
-  ChevronLeft,
-  ChevronRight,
 } from "lucide-react";
 import { loadPdfDocument, extractPageText, clearPageCache } from "@/lib/pdfLoader";
 import { useT } from "@/lib/i18n";
@@ -26,6 +24,7 @@ export default function ProBookViewer({
   title,
   bookId,
   language = "ar",
+  onProgressChange,
 }) {
   const t = useT();
   const [pdf, setPdf] = useState(null);
@@ -195,8 +194,9 @@ export default function ProBookViewer({
     if (totalPages > 0 && currentPage > 0) {
       localStorage.setItem(`lastpage_${bookId}`, String(currentPage));
       localStorage.setItem(`lastts_${bookId}`, String(Date.now()));
+      onProgressChange?.({ currentPage, totalPages });
     }
-  }, [currentPage, totalPages, bookId]);
+  }, [currentPage, totalPages, bookId, onProgressChange]);
 
   // ── Persist reader preferences ──
   useEffect(() => {
@@ -479,31 +479,8 @@ export default function ProBookViewer({
         onNextPage={nextPage}
         onPrevPage={prevPage}
         scrollToPageRef={scrollToPageRef}
+        onToggleToolbar={() => setShowToolbar((s) => !s)}
       />
-
-      {/* Side Page-Turn Buttons in Single / Spread Mode */}
-      {viewMode !== "scroll" && totalPages > 1 && (
-        <>
-          <button
-            data-viewer-ui
-            onClick={isRTL ? nextPage : prevPage}
-            disabled={isRTL ? currentPage >= totalPages : currentPage <= 1}
-            className="hidden sm:flex fixed-or-abs left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/45 hover:bg-black/70 text-white items-center justify-center transition-all disabled:opacity-20"
-            title={isRTL ? "الصفحة التالية" : "الصفحة السابقة"}
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <button
-            data-viewer-ui
-            onClick={isRTL ? prevPage : nextPage}
-            disabled={isRTL ? currentPage <= 1 : currentPage >= totalPages}
-            className="hidden sm:flex fixed-or-abs right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/45 hover:bg-black/70 text-white items-center justify-center transition-all disabled:opacity-20"
-            title={isRTL ? "الصفحة السابقة" : "الصفحة التالية"}
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-        </>
-      )}
 
       {/* Zoom level indicator */}
       <div
