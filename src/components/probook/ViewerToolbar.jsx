@@ -132,7 +132,7 @@ export default function ViewerToolbar({
       {/* Main controls row */}
       <div
         dir="ltr"
-        className="max-w-4xl mx-auto flex items-center justify-between px-2 py-1.5 gap-1"
+        className="max-w-4xl mx-auto flex items-center justify-between px-2 py-1.5 sm:py-2 gap-1 sm:gap-2 overflow-x-auto scrollbar-none pb-2 sm:pb-1.5"
       >
         {/* Left group: Zoom controls */}
         <div className="flex items-center gap-0.5">
@@ -258,7 +258,7 @@ function ToolBtn({ children, onClick, dark, title, active, disabled, badge, clas
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={`relative w-8 h-8 rounded-lg flex items-center justify-center transition-all active:scale-90 shrink-0 disabled:opacity-25 disabled:cursor-default ${
+      className={`relative w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all active:scale-90 shrink-0 disabled:opacity-25 disabled:cursor-default ${
         active
           ? "bg-primary/15 text-primary"
           : dark

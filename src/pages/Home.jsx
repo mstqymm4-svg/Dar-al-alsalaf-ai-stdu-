@@ -130,26 +130,7 @@ export default function Home() {
         </section>
         }
 
-      {/* Recent Books */}
-      <section className="mb-12">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <span className="w-8 h-8 rounded-lg bg-primary/15 flex items-center justify-center">
-              <BookOpen className="w-4 h-4 text-primary" />
-            </span>
-            {t.recentBooks}
-          </h2>
-          <Link to="/books" className="text-sm text-primary font-bold hover:underline flex items-center gap-1 hover:gap-2 transition-all">
-            {t.viewAll}
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {recentBooks.map((book, i) =>
-            <BookCard key={book.id} book={book} index={i} isFavorite={favorites.includes(book.id)} onToggleFavorite={user ? handleToggleFavorite : null} />
-            )}
-        </div>
-      </section>
+
 
       {recentBooks.length === 0 && featuredBooks.length === 0 &&
         <div className="text-center py-20">

@@ -279,7 +279,7 @@ export default function VerticalPageStream({
       <div
         ref={scrollRef}
         className={`flex-1 transition-colors duration-200 select-none relative ${themeConfig.canvasBg} ${
-          isZoomed ? "overflow-auto p-4 flex items-start justify-start sm:justify-center" : "overflow-hidden flex flex-col items-center justify-center"
+          isZoomed ? "overflow-auto p-4 flex items-center justify-center min-w-full min-h-full" : "overflow-hidden flex flex-col items-center justify-center"
         }`}
         style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
         onTouchStart={onTouchStart}
@@ -296,7 +296,7 @@ export default function VerticalPageStream({
             exit={{ opacity: 0.85, scale: 0.99 }}
             transition={{ duration: 0.15 }}
             dir={isRTL ? "rtl" : "ltr"}
-            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto"
+            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto min-w-full min-h-full"
           >
             {pagesToShow.map((p) => {
               const isBookmarked = bookmarks.includes(p);
@@ -393,7 +393,7 @@ export default function VerticalPageStream({
       onTouchEnd={onTouchEnd}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div dir="ltr" className="flex flex-col items-center py-4 px-2 sm:px-6">
+      <div dir="ltr" className="flex flex-col items-center py-4 px-2 sm:px-6 min-w-max mx-auto">
         {Array.from({ length: totalPages }, (_, idx) => {
           const p = idx + 1;
           const shouldRender = Math.abs(p - currentPage) <= RENDER_BUFFER;
