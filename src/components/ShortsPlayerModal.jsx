@@ -143,6 +143,7 @@ export default function ShortsPlayerModal({
   return (
     <div
       className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 select-none overflow-hidden"
+      style={{ touchAction: "none" }}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}

@@ -12,8 +12,10 @@ import {
   CheckSquare, Square, AlertCircle, Sparkles, Tv
 } from "lucide-react";
 import { fetchChannelVideos, extractYoutubeId, getThumbnail } from "@/lib/youtubeMeta";
+import { useT } from "@/lib/i18n";
 
 export default function ChannelVideosImportModal({ channel, isOpen, onClose, onSuccess }) {
+  const t = useT();
   const [limit, setLimit] = useState("15");
   const [customLimit, setCustomLimit] = useState("");
   const [loading, setLoading] = useState(false);

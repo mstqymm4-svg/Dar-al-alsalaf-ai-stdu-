@@ -149,6 +149,38 @@ export default function DevBooks() {
     }
   };
 
+  const handleAutoUploadFromUrl = async (url) => {
+    if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) return;
+    if (url.includes("base44") || url.startsWith("blob:")) return;
+    setPdfUploading(true);
+    setPdfProgressInfo("جاري جلب ورفع الملف من الرابط...");
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch");
+      const blob = await res.blob();
+      const filename = url.split("/").pop().split("?")[0] || "book.pdf";
+      const file = new File([blob], filename, { type: "application/pdf" });
+
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setForm(p => ({
+        ...p,
+        pdf_url: file_url,
+        title: p.title || titleFromPdfUrl(url)
+      }));
+      toast.success("تم جلب ورفع ملف PDF تلقائياً من الرابط ✓");
+    } catch (err) {
+      toast.info("تم حفظ الرابط المباشر (تعذر الجلب المباشر بسبب قيود CORS، الرابط يعمل مباشرة)");
+      setForm(p => ({
+        ...p,
+        pdf_url: url,
+        title: p.title || titleFromPdfUrl(url)
+      }));
+    } finally {
+      setPdfUploading(false);
+      setPdfProgressInfo("");
+    }
+  };
+
   const toggleSelect = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
 
   return (
@@ -278,10 +310,33 @@ export default function DevBooks() {
                 </label>
               </div>
             </div>
-            <Input value={form.pdf_url} onChange={e=>{
-              const val = e.target.value;
-              setForm(p=>({...p, pdf_url:val, title: p.title || titleFromPdfUrl(val)}));
-            }} placeholder="أو رابط PDF مباشر — يُستخرج العنوان تلقائيًا" className="text-xs h-8" />
+            <div className="flex gap-2 items-center">
+              <Input
+                value={form.pdf_url}
+                onChange={e=>{
+                  const val = e.target.value;
+                  setForm(p=>({...p, pdf_url:val, title: p.title || titleFromPdfUrl(val)}));
+                }}
+                onBlur={e=>{
+                  const val = e.target.value.trim();
+                  if (val && (val.startsWith("http://") || val.startsWith("https://")) && !val.includes("base44")) {
+                    handleAutoUploadFromUrl(val);
+                  }
+                }}
+                placeholder="أو رابط PDF مباشر — يُرفع تلقائياً ويُستخرج العنوان"
+                className="text-xs h-8 flex-1"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!form.pdf_url || pdfUploading || form.pdf_url.startsWith("blob:") || form.pdf_url.includes("base44")}
+                onClick={() => handleAutoUploadFromUrl(form.pdf_url)}
+                className="text-xs h-8 shrink-0 gap-1 rounded-lg"
+              >
+                <Upload className="w-3.5 h-3.5" /> رفع تلقائي
+              </Button>
+            </div>
             <div className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
               <Label className="text-sm cursor-pointer">كتاب مميز ⭐</Label>
               <Switch checked={form.is_featured} onCheckedChange={v=>setForm(p=>({...p,is_featured:v}))} />

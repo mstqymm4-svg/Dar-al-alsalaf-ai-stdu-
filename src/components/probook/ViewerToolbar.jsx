@@ -13,9 +13,6 @@ import {
   ChevronDown,
   Search,
   Palette,
-  Columns,
-  FileText,
-  ScrollText,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -63,8 +60,7 @@ export default function ViewerToolbar({
       <Sun className="w-3.5 h-3.5" />
     );
 
-  const ViewModeIcon =
-    viewMode === "spread" ? Columns : viewMode === "single" ? FileText : ScrollText;
+
 
   const isBookmarked = bookmarks.includes(currentPage);
 
@@ -216,14 +212,7 @@ export default function ViewerToolbar({
             )}
           </ToolBtn>
 
-          <ToolBtn
-            onClick={onCycleViewMode}
-            dark={dark}
-            title={t.tbViewMode || "تغيير نمط العرض (تمرير / صفحة / صفحتان)"}
-            active={viewMode !== "scroll"}
-          >
-            <ViewModeIcon className="w-3.5 h-3.5" />
-          </ToolBtn>
+
 
           <ToolBtn
             onClick={onToggleComfort}

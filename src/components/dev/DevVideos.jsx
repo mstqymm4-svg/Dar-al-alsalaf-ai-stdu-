@@ -467,8 +467,13 @@ function ChannelsTab() {
                 setShowForm(true);
               }}><Pencil className="w-3.5 h-3.5" /></Button>
               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={async () => {
-                if (!confirm(`حذف "${ch.name}"؟`)) return;
-                await base44.entities.VideoChannel.delete(ch.id); toast.success("تم الحذف"); load();
+                try {
+                  await base44.entities.VideoChannel.delete(ch.id);
+                  toast.success("تم حذف القناة بنجاح");
+                  load();
+                } catch (err) {
+                  toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+                }
               }}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
             </div>
           ))}
@@ -907,8 +912,13 @@ function VideosTab() {
                   setShowForm(true);
                 }}><Pencil className="w-3 h-3" /></Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  if (!confirm(`حذف "${v.title}"؟`)) return;
-                  await base44.entities.Video.delete(v.id); toast.success("تم الحذف"); load();
+                  try {
+                    await base44.entities.Video.delete(v.id);
+                    toast.success("تم حذف الفيديو بنجاح");
+                    load();
+                  } catch (err) {
+                    toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+                  }
                 }}><Trash2 className="w-3 h-3 text-destructive" /></Button>
               </div>
             </div>

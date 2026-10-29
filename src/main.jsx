@@ -4,6 +4,13 @@ import App from '@/App.jsx'
 import '@/index.css'
 import { migrateLegacySettings } from '@/lib/settingsStore'
 
+// Suppress harmless ResizeObserver loop errors globally
+window.addEventListener('error', (e) => {
+  if (e.message && e.message.includes('ResizeObserver')) {
+    e.stopImmediatePropagation();
+  }
+});
+
 // Migrate old dev_* localStorage keys to new system
 migrateLegacySettings();
 

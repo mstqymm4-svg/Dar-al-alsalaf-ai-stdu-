@@ -74,6 +74,15 @@ function PdfPageRenderer({
     let cancelled = false;
     setError(false);
 
+    // If already cached in memory, use cached image instantly and skip PDF worker render
+    const existing = getCachedPageImage(cacheKey);
+    if (existing) {
+      setCachedUrl(existing);
+      setHasRenderedOnce(true);
+      setRendering(false);
+      return;
+    }
+
     const render = async () => {
       try {
         if (renderTaskRef.current) {
