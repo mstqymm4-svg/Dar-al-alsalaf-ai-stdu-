@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
-  Sparkles, Search, Video, Tv, Clock, Play, Heart, Share2,
+  Search, Video, Tv, Clock, Play, Heart, Share2,
   Filter, X, ExternalLink, ArrowUpDown, Film, Flame
 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,6 +38,14 @@ export default function Videos() {
   const [favorites, setFavorites] = useState([]);
   const [watchedIds, setWatchedIds] = useState([]);
   const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ch = params.get("channel");
+    if (ch) setSelectedChannelId(ch);
+    const cat = params.get("category");
+    if (cat) setCategory(cat);
+  }, []);
 
   const loadData = () => {
     base44.auth.me().then((u) => {
@@ -220,22 +228,13 @@ export default function Videos() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
               {/* Left Column: Spotlight details */}
               <div className="lg:col-span-7 space-y-4 text-right">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    {featuredVideo.is_featured ? (t.featuredVideos || "فيديو مميز") : (t.recentVideos || "أحدث مقطع")}
-                  </span>
-                  {featuredVideo.category && (
-                    <span className="px-2.5 py-0.5 rounded-full text-xs bg-muted text-muted-foreground border border-border">
-                      {featuredVideo.category}
-                    </span>
-                  )}
-                  {featuredVideo.duration && (
+                {featuredVideo.duration && (
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-mono bg-black/5 dark:bg-white/10 text-foreground">
                       <Clock className="w-3 h-3 text-primary" /> {featuredVideo.duration}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 <h1
                   onClick={() => handlePlayVideo(featuredVideo)}

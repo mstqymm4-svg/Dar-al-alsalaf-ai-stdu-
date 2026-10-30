@@ -301,24 +301,49 @@ function createPublicCatalogEntity({
       const docs = [];
       snap.forEach((d) => {
         const data = d.data();
-        if (data && !deleted.has(String(data.id || d.id))) {
-          docs.push(sanitizeFn({ ...data, id: data.id || d.id }, data));
+        const docId = String(data?.id || d.id);
+        if (data && !deleted.has(docId)) {
+          docs.push(sanitizeFn({ ...data, id: docId }, data));
         }
       });
-      if (docs.length > 0) {
-        hasSyncedFromFirestore = true;
-        await cacheAll(docs).catch(() => {});
-        return docs;
-      }
-      // If Firestore collection is empty and admin is logged in, seed it in background
+
       const localItems = await loadLocalList();
-      if (canWriteAdminFirestore() && localItems.length > 0 && !hasSyncedFromFirestore) {
+      const map = new Map();
+      // Add server docs
+      docs.forEach((d) => map.set(String(d.id), d));
+      // Preserve local items not on server or newer
+      localItems.forEach((local) => {
+        const localId = String(local.id);
+        if (!deleted.has(localId)) {
+          const remote = map.get(localId);
+          if (!remote) {
+            map.set(localId, local);
+          } else {
+            const localTime = new Date(local.updated_date || 0).getTime();
+            const remoteTime = new Date(remote.updated_date || 0).getTime();
+            if (localTime >= remoteTime) {
+              map.set(localId, local);
+            }
+          }
+        }
+      });
+
+      const merged = Array.from(map.values());
+      if (merged.length > 0) {
         hasSyncedFromFirestore = true;
-        Promise.allSettled(
-          localItems.map((item) =>
-            setDoc(doc(db, collectionName, item.id), sanitizeFn(item, item))
-          )
-        ).catch(() => {});
+        await cacheAll(merged).catch(() => {});
+        // If admin can write, push local-only items to Firestore in background
+        if (canWriteAdminFirestore()) {
+          const toUpload = localItems.filter((l) => !docs.some((d) => String(d.id) === String(l.id)));
+          if (toUpload.length > 0) {
+            Promise.allSettled(
+              toUpload.map((item) =>
+                setDoc(doc(db, collectionName, item.id), sanitizeFn(item, item))
+              )
+            ).catch(() => {});
+          }
+        }
+        return merged;
       }
       return localItems;
     } catch (error) {
@@ -931,7 +956,7 @@ const AppSettingsEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeAppSetting,
   getCachedAll: offlineDB.getCachedSettings,
   cacheAll: offlineDB.cacheSettings,
-  deleteCached: null,
+  deleteCached: offlineDB.deleteCachedSetting,
   seedList: dedupedSeedSettings,
 });
 

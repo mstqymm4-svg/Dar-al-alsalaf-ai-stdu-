@@ -306,7 +306,7 @@ export function setSettings(obj) {
   });
 }
 
-/** Load settings on app start — DB first, localStorage fallback */
+/** Load settings on app start — DB + localStorage merge (user edits in cached win) */
 export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
   // 1. Apply localStorage immediately (fast path)
@@ -315,10 +315,17 @@ export async function loadSettings(userEmail) {
   applySettingsToDom(_cache);
   dispatchChange();
 
-  // 2. Load from DB (authoritative)
+  // 2. Load from DB and merge without clobbering user customization
   const dbData = await dbGetAll();
   if (dbData && Object.keys(dbData).length > 0) {
-    _cache = { ...DEFAULT_SETTINGS, ...dbData };
+    // dbData applied first, but cached user custom values take precedence
+    const merged = { ...DEFAULT_SETTINGS, ...dbData };
+    Object.entries(cached).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") {
+        merged[k] = String(v);
+      }
+    });
+    _cache = merged;
     ls.setAll(_cache);
     applySettingsToDom(_cache);
     dispatchChange();

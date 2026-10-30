@@ -1,307 +1,500 @@
 import { useState, useEffect, useRef } from "react";
-import { ShieldCheck, Loader2, MailCheck, Send, Mail } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  ShieldCheck,
+  Loader2,
+  Mail,
+  Send,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle2,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useT } from "@/lib/i18n";
+import { motion, AnimatePresence } from "framer-motion";
 
-const CODE_KEY = (email) => `ev_code_${(email || "").trim().toLowerCase()}`;
-const VERIFIED_KEY = (email) => `email_verified_${(email || "").trim()}`;
-const EXPIRY_MS = 10 * 60 * 1000;
-const RESEND_SECONDS = 60;
-
-export default function EmailVerification({ email, sendSignal }) {
-  const t = useT();
-  const normalizedEmail = (email || "").trim();
-  const [code, setCode] = useState("");
+export default function EmailVerification({
+  currentEmail = "",
+  isVerified = false,
+  onVerifiedSuccess,
+  onCancel,
+}) {
+  const [email, setEmail] = useState(currentEmail || "");
+  const [step, setStep] = useState("input"); // 'input' | 'otp' | 'success'
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [sent, setSent] = useState(() => {
-    if (!normalizedEmail) return false;
-    try {
-      const raw = localStorage.getItem(CODE_KEY(normalizedEmail));
-      if (!raw) return false;
-      const parsed = JSON.parse(raw);
-      return Boolean(parsed && parsed.exp > Date.now());
-    } catch {
-      return false;
-    }
-  });
   const [countdown, setCountdown] = useState(0);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [verified, setVerified] = useState(() => {
-    try {
-      return Boolean(normalizedEmail && localStorage.getItem(VERIFIED_KEY(normalizedEmail)) === "1");
-    } catch {
-      return false;
-    }
-  });
+  const [errorMsg, setErrorMsg] = useState("");
+  const [remainingAttempts, setRemainingAttempts] = useState(5);
 
-  // Reset state when the email changes
+  const otpInputsRef = useRef([]);
+
   useEffect(() => {
-    if (!normalizedEmail) return;
-    setVerified(() => {
-      try {
-        return localStorage.getItem(VERIFIED_KEY(normalizedEmail)) === "1";
-      } catch {
-        return false;
-      }
-    });
-    try {
-      const raw = localStorage.getItem(CODE_KEY(normalizedEmail));
-      const parsed = raw ? JSON.parse(raw) : null;
-      setSent(Boolean(parsed && parsed.exp > Date.now()));
-    } catch {
-      setSent(false);
+    if (currentEmail && !isVerified) {
+      setEmail(currentEmail);
     }
-    setCode("");
-    setCountdown(0);
-  }, [normalizedEmail]);
+  }, [currentEmail, isVerified]);
 
-  // Resend countdown ticker
+  // Resend countdown timer
   useEffect(() => {
     if (countdown <= 0) return;
-    const id = setTimeout(() => setCountdown((c) => c - 1), 1000);
-    return () => clearTimeout(id);
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
   }, [countdown]);
 
-  // Open confirmation modal whenever the parent signals (Save & Send button)
-  const lastSignal = useRef(0);
+  // Auto focus first OTP input when reaching 'otp' step
   useEffect(() => {
-    if (!sendSignal || sendSignal === lastSignal.current) return;
-    lastSignal.current = sendSignal;
-    if (!normalizedEmail || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) return;
-    setConfirmOpen(true);
-  }, [sendSignal, normalizedEmail]);
+    if (step === "otp" && otpInputsRef.current[0]) {
+      setTimeout(() => {
+        otpInputsRef.current[0]?.focus();
+      }, 100);
+    }
+  }, [step]);
 
-  if (!normalizedEmail || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) return null;
+  // ───────────────────────────────────────────────────────────────────────────
+  // Send OTP
+  // ───────────────────────────────────────────────────────────────────────────
+  const handleSendOtp = async (e) => {
+    if (e) e.preventDefault();
+    setErrorMsg("");
 
-  const requestSendCode = () => {
-    if (!normalizedEmail || !/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
-      toast.error(t.evInvalidEmail);
+    const targetEmail = email.trim().toLowerCase();
+    if (!targetEmail) {
+      setErrorMsg("يرجى إدخال البريد الإلكتروني");
       return;
     }
-    setConfirmOpen(true);
-  };
 
-  const executeSendCode = async (e) => {
-    if (e && typeof e.preventDefault === "function") {
-      e.preventDefault();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(targetEmail)) {
+      setErrorMsg("صيغة البريد الإلكتروني غير صحيحة");
+      return;
     }
-    if (sending) return;
-    const targetEmail = normalizedEmail;
+
     setSending(true);
     try {
-      const gen = String(Math.floor(100000 + Math.random() * 900000));
-      const res = await fetch("/api/send-verification-email", {
+      const res = await fetch("/api/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: targetEmail, code: gen }),
+        body: JSON.stringify({ email: targetEmail }),
       });
+
       const data = await res.json().catch(() => ({}));
+
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "تعذر إرسال بريد التحقق");
+        const errorText = data.error || "تعذر إرسال رمز التحقق، يرجى المحاولة لاحقاً.";
+        setErrorMsg(errorText);
+        toast.error(errorText);
+        if (data.retryAfter) {
+          setCountdown(data.retryAfter);
+        }
+        return;
       }
 
-      localStorage.setItem(
-        CODE_KEY(targetEmail),
-        JSON.stringify({ code: gen, exp: Date.now() + EXPIRY_MS })
-      );
-      setSent(true);
-      setCountdown(RESEND_SECONDS);
-      setConfirmOpen(false);
-      toast.success(`${t.evSentToast} (${targetEmail})`);
-    } catch (err) {
-      toast.error(err?.message || t.evSendError);
+      toast.success(data.message || `تم إرسال رمز التحقق إلى ${targetEmail}`);
+      setStep("otp");
+      setCountdown(60);
+      setOtp(["", "", "", "", "", ""]);
+      setRemainingAttempts(5);
+    } catch {
+      setErrorMsg("تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت.");
+      toast.error("تعذر الاتصال بالخادم");
     } finally {
       setSending(false);
     }
   };
 
-  const verify = async (val = code) => {
-    const v = String(val).trim();
-    if (v.length !== 6) return;
-    const targetEmail = normalizedEmail;
-    setVerifying(true);
+  // ───────────────────────────────────────────────────────────────────────────
+  // Resend OTP
+  // ───────────────────────────────────────────────────────────────────────────
+  const handleResendOtp = async () => {
+    if (countdown > 0 || sending) return;
+    setErrorMsg("");
+    setSending(true);
+
     try {
-      const raw = localStorage.getItem(CODE_KEY(targetEmail));
-      if (!raw) {
-        toast.error(t.evSendFirst);
+      const targetEmail = email.trim().toLowerCase();
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: targetEmail }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        const errorText = data.error || "تعذر إعادة إرسال الرمز";
+        setErrorMsg(errorText);
+        toast.error(errorText);
+        if (data.retryAfter) {
+          setCountdown(data.retryAfter);
+        }
         return;
       }
-      const entry = JSON.parse(raw);
-      if (Date.now() > entry.exp) {
-        toast.error(t.evExpired);
-        return;
-      }
-      if (entry.code !== v) {
-        toast.error(t.evWrongCode);
-        return;
-      }
-      localStorage.setItem(VERIFIED_KEY(targetEmail), "1");
-      if (email && email.trim() !== targetEmail) {
-        localStorage.setItem(`email_verified_${email.trim()}`, "1");
-      }
-      localStorage.removeItem(CODE_KEY(targetEmail));
-      setVerified(true);
-      setCode("");
-      try {
-        window.dispatchEvent(new Event("dau-email-verified"));
-      } catch {}
-      toast.success(t.evSuccess);
+
+      toast.success("تم إرسال رمز تحقق جديد بنجاح ✓");
+      setCountdown(60);
+      setOtp(["", "", "", "", "", ""]);
+      setRemainingAttempts(5);
+      if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();
     } catch {
-      toast.error(t.evError);
+      toast.error("فشل في إعادة إرسال الرمز");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // OTP Inputs handling
+  // ───────────────────────────────────────────────────────────────────────────
+  const handleDigitChange = (index, value) => {
+    const cleaned = value.replace(/\D/g, "");
+    const newOtp = [...otp];
+
+    if (cleaned.length > 1) {
+      const digits = cleaned.slice(0, 6).split("");
+      digits.forEach((d, i) => {
+        newOtp[i] = d;
+      });
+      setOtp(newOtp);
+      const nextIndex = Math.min(digits.length, 5);
+      if (otpInputsRef.current[nextIndex]) {
+        otpInputsRef.current[nextIndex].focus();
+      }
+      return;
+    }
+
+    newOtp[index] = cleaned;
+    setOtp(newOtp);
+
+    if (cleaned && index < 5 && otpInputsRef.current[index + 1]) {
+      otpInputsRef.current[index + 1].focus();
+    }
+  };
+
+  const handleKeyDown = (index, e) => {
+    if (e.key === "Backspace") {
+      if (!otp[index] && index > 0 && otpInputsRef.current[index - 1]) {
+        otpInputsRef.current[index - 1].focus();
+      }
+    }
+  };
+
+  const handlePaste = (e) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData("text/plain").trim();
+    const digits = pastedData.replace(/\D/g, "").slice(0, 6).split("");
+
+    if (digits.length > 0) {
+      const newOtp = ["", "", "", "", "", ""];
+      digits.forEach((d, i) => {
+        newOtp[i] = d;
+      });
+      setOtp(newOtp);
+      const nextIndex = Math.min(digits.length, 5);
+      if (otpInputsRef.current[nextIndex]) {
+        otpInputsRef.current[nextIndex].focus();
+      }
+    }
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Verify OTP
+  // ───────────────────────────────────────────────────────────────────────────
+  const handleVerifyOtp = async (e) => {
+    if (e) e.preventDefault();
+    setErrorMsg("");
+
+    const fullCode = otp.join("");
+    if (fullCode.length !== 6) {
+      setErrorMsg("يرجى إدخال جميع أرقام الرمز الستة");
+      return;
+    }
+
+    const targetEmail = email.trim().toLowerCase();
+    setVerifying(true);
+
+    try {
+      const res = await fetch("/api/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: targetEmail,
+          otp: fullCode,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        const errorText = data.error || "رمز التحقق غير صحيح";
+        setErrorMsg(errorText);
+        toast.error(errorText);
+
+        if (data.remainingAttempts !== undefined) {
+          setRemainingAttempts(data.remainingAttempts);
+        }
+        if (errorText.includes("طلب رمز جديد")) {
+          setOtp(["", "", "", "", "", ""]);
+        }
+        return;
+      }
+
+      setStep("success");
+      toast.success("تم التحقق من الرمز وربط البريد بنجاح ✓");
+
+      // Notify parent to finalize linking
+      if (onVerifiedSuccess) {
+        onVerifiedSuccess(targetEmail);
+      }
+    } catch {
+      setErrorMsg("تعذر الاتصال بالخادم للتحقق من الرمز");
+      toast.error("تعذر الاتصال بالخادم");
     } finally {
       setVerifying(false);
     }
   };
 
-  if (verified) {
-    return null;
-  }
-
   return (
-    <>
-      <div className="rounded-2xl border border-primary/20 bg-primary/[0.04] p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2.5 flex-wrap">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <MailCheck className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <p className="text-sm font-bold">
-                {sent ? t.evCodePlaceholder : t.evTitle}
-              </p>
-              <p className="text-xs text-muted-foreground truncate max-w-[260px]" dir="ltr">
-                {normalizedEmail}
-              </p>
-            </div>
-          </div>
+    <div className="rounded-2xl border border-primary/25 bg-gradient-to-b from-primary/[0.04] to-card p-4 sm:p-5 shadow-xs">
+      <AnimatePresence mode="wait">
+        {/* STEP 1: Enter Email to Send OTP */}
+        {step === "input" && (
+          <motion.div
+            key="step-input"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-foreground">
+                    ربط البريد الإلكتروني برمز تحقق (OTP)
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    يتم ربط البريد وتفعيله بالحساب بعد التحقق من ملكيته عبر Gmail
+                  </p>
+                </div>
+              </div>
 
-          {!sent && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={requestSendCode}
-              disabled={sending}
-              className="gap-1.5 rounded-xl text-xs"
-            >
-              {sending ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Send className="w-3.5 h-3.5 text-primary" />
-              )}
-              {t.evSend}
-            </Button>
-          )}
-        </div>
-
-        {sent && (
-          <>
-            <div dir="ltr" className="flex justify-center pt-1">
-              <InputOTP
-                maxLength={6}
-                value={code}
-                onChange={setCode}
-                onComplete={(v) => verify(v)}
-                disabled={verifying}
-              >
-                <InputOTPGroup>
-                  {[0, 1, 2, 3, 4, 5].map((i) => (
-                    <InputOTPSlot
-                      key={i}
-                      index={i}
-                      className="h-11 w-10 text-lg font-bold"
-                    />
-                  ))}
-                </InputOTPGroup>
-              </InputOTP>
-            </div>
-
-            <Button
-              type="button"
-              onClick={() => verify()}
-              disabled={verifying || code.length !== 6}
-              className="gap-2 w-full rounded-[4px_20px_4px_20px]"
-            >
-              {verifying ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <ShieldCheck className="w-4 h-4" />
-              )}
-              {t.evVerify}
-            </Button>
-
-            <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-              <span>{t.evCheckSpam}</span>
-              {countdown > 0 ? (
-                <span className="font-bold text-foreground/70">
-                  · {t.evResendIn.replace("{s}", countdown)}
-                </span>
-              ) : (
+              {onCancel && (
                 <button
                   type="button"
-                  onClick={requestSendCode}
-                  disabled={sending}
-                  className="text-primary hover:underline font-bold"
+                  onClick={onCancel}
+                  className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors"
+                  title="إلغاء"
                 >
-                  · {sending ? "…" : t.evResend}
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
-          </>
-        )}
-      </div>
 
-      <AlertDialog open={confirmOpen} onOpenChange={(open) => !sending && setConfirmOpen(open)}>
-        <AlertDialogContent dir="rtl">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <Mail className="w-5 h-5 text-primary" />
-              تأكيد إرسال رمز التحقق
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-right leading-relaxed text-sm text-muted-foreground">
-                <p>
-                  سيتم إرسال رمز تحقق مكوّن من 6 أرقام إلى البريد الإلكتروني:{" "}
-                  <strong className="text-foreground" dir="ltr">
-                    {normalizedEmail}
-                  </strong>
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  يُرجى التحقق من البريد الإلكتروني المدخل وإدخال الرمز لتأكيد ربطه بالملف الشخصي.
-                </p>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-foreground block">
+                أدخل البريد المراد ربطه بالملف الشخصي
+              </label>
+              <div className="relative">
+                <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  type="email"
+                  dir="ltr"
+                  placeholder="example@gmail.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={sending}
+                  className="pr-10 h-10 rounded-xl bg-background border-border text-sm text-left font-mono"
+                />
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="gap-2 sm:gap-0">
-            <AlertDialogCancel disabled={sending}>{t.cancel}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={executeSendCode}
-              disabled={sending}
-              className="gap-1.5"
-            >
-              {sending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+              <Button
+                type="button"
+                onClick={handleSendOtp}
+                disabled={sending || !email.trim()}
+                className="gap-2 rounded-[4px_20px_4px_20px] font-bold text-xs h-10 flex-1"
+              >
+                {sending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>جاري إرسال الرمز...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>إرسال رمز التحقق إلى البريد</span>
+                  </>
+                )}
+              </Button>
+
+              {onCancel && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onCancel}
+                  disabled={sending}
+                  className="rounded-[4px_20px_4px_20px] text-xs h-10"
+                >
+                  إلغاء
+                </Button>
               )}
-              {sending ? "جاري الإرسال..." : "تأكيد وإرسال الرمز"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+            </div>
+          </motion.div>
+        )}
+
+        {/* STEP 2: Enter 6-digit OTP */}
+        {step === "otp" && (
+          <motion.div
+            key="step-otp"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-foreground">
+                    أدخل رمز التحقق (6 أرقام)
+                  </h4>
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                    <span>أُرسل إلى:</span>
+                    <span dir="ltr" className="font-mono font-bold text-foreground">
+                      {email}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStep("input");
+                        setErrorMsg("");
+                      }}
+                      className="text-primary hover:underline font-bold text-[11px] mr-1"
+                    >
+                      (تعديل)
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 6 Digits Boxes */}
+            <div
+              className="flex items-center justify-center gap-2 my-2"
+              dir="ltr"
+              onPaste={handlePaste}
+            >
+              {otp.map((digit, idx) => (
+                <input
+                  key={idx}
+                  ref={(el) => (otpInputsRef.current[idx] = el)}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleDigitChange(idx, e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(idx, e)}
+                  disabled={verifying}
+                  className="w-10 h-12 text-center text-xl font-bold rounded-xl border-2 border-border bg-background focus:border-primary focus:bg-primary/5 focus:outline-none transition-all"
+                />
+              ))}
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            {/* Timer and Resend */}
+            <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+              <div>
+                {countdown > 0 ? (
+                  <span className="flex items-center gap-1">
+                    <span>إعادة الإرسال بعد:</span>
+                    <span className="font-mono font-bold text-primary">
+                      {Math.floor(countdown / 60)}:
+                      {(countdown % 60).toString().padStart(2, "0")}
+                    </span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={sending}
+                    className="text-primary font-bold hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${sending ? "animate-spin" : ""}`} />
+                    <span>إعادة إرسال الرمز</span>
+                  </button>
+                )}
+              </div>
+
+              <span className="text-[11px] opacity-75">
+                المحاولات المتاحة: {remainingAttempts} من 5
+              </span>
+            </div>
+
+            <Button
+              type="button"
+              onClick={handleVerifyOtp}
+              disabled={verifying || otp.join("").length !== 6}
+              className="w-full h-10 rounded-[4px_20px_4px_20px] font-bold text-xs gap-2"
+            >
+              {verifying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>جاري التحقق وربط البريد...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>تأكيد الرمز وربط البريد بالحساب</span>
+                </>
+              )}
+            </Button>
+          </motion.div>
+        )}
+
+        {/* STEP 3: Success Notification */}
+        {step === "success" && (
+          <motion.div
+            key="step-success"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center py-2 space-y-2.5"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto shadow-xs">
+              <CheckCircle2 className="w-7 h-7" />
+            </div>
+            <h4 className="text-base font-bold text-foreground">
+              تم تأكيد البريد وربطه بنجاح!
+            </h4>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              تم توثيق بريدك الإلكتروني (<span dir="ltr" className="font-mono font-bold">{email}</span>) وربطه بملفك الشخصي بنجاح.
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }

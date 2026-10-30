@@ -11,6 +11,8 @@ import {
   Eye,
   Lock,
   ShieldCheck,
+  Mail,
+  RefreshCw,
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -50,44 +52,53 @@ export default function ProfileCard() {
       return "";
     }
   });
-  const [emailInput, setEmailInput] = useState(() => getAccountEmail());
+
+  // Current linked account email
+  const [linkedEmail, setLinkedEmail] = useState(() => getAccountEmail());
   const [avatar, setAvatar] = useState(() => getAvatarUrl(getAccountEmail()));
-  const [saving, setSaving] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [sendSignal, setSendSignal] = useState(0);
+  const [isChangingEmail, setIsChangingEmail] = useState(false);
   const [stats, setStats] = useState({ favs: 0, dls: 0, reading: 0, watched: 0 });
   const [recentReads, setRecentReads] = useState([]);
-  const [verified, setVerified] = useState(false);
+  const [verified, setVerified] = useState(() => {
+    const em = getAccountEmail();
+    try {
+      return !!em && localStorage.getItem(`email_verified_${em}`) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     load();
   }, []);
 
-  // Verified emails are locked — re-check whenever the email changes or a
-  // verification just succeeded elsewhere in the card
-  useEffect(() => {
-    const em = emailInput.trim() || getAccountEmail(user);
-    try {
-      setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1");
-    } catch {
-      setVerified(false);
-    }
-  }, [emailInput, user]);
-
+  // Listen for email verification events across the app
   useEffect(() => {
     const onVerified = () => {
-      const em = emailInput.trim() || getAccountEmail(user);
-      try {
-        setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1");
-      } catch {}
+      const em = getAccountEmail(user);
+      if (em) {
+        setLinkedEmail(em);
+        try {
+          setVerified(localStorage.getItem(`email_verified_${em}`) === "1");
+        } catch {}
+      }
     };
     window.addEventListener("dau-email-verified", onVerified);
-    return () => window.removeEventListener("dau-email-verified", onVerified);
-  }, [emailInput, user]);
+    window.addEventListener("dau-email-change", onVerified);
+    return () => {
+      window.removeEventListener("dau-email-verified", onVerified);
+      window.removeEventListener("dau-email-change", onVerified);
+    };
+  }, [user]);
 
   const load = async () => {
     const rawUser = await base44.auth.me().catch(() => null);
-    const u = rawUser && typeof rawUser === "object" && (rawUser.email || rawUser.full_name) ? rawUser : null;
+    const u =
+      rawUser && typeof rawUser === "object" && (rawUser.email || rawUser.full_name)
+        ? rawUser
+        : null;
     setUser(u);
 
     let savedName = "";
@@ -99,8 +110,13 @@ export default function ProfileCard() {
 
     const em = getAccountEmail(u);
     if (em) {
-      setEmailInput(em);
+      setLinkedEmail(em);
       setAvatar(getAvatarUrl(em));
+      try {
+        setVerified(localStorage.getItem(`email_verified_${em}`) === "1");
+      } catch {
+        setVerified(false);
+      }
     }
     refreshStats(em);
     loadRecentReads();
@@ -146,7 +162,7 @@ export default function ProfileCard() {
     setUploading(true);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      const em = getAccountEmail(user) || emailInput.trim();
+      const em = getAccountEmail(user) || linkedEmail.trim();
       setAvatarUrl(em, file_url);
       setAvatar(file_url);
       window.dispatchEvent(new Event("dau-avatar-change"));
@@ -158,44 +174,53 @@ export default function ProfileCard() {
     }
   };
 
-  const handleSaveProfile = async () => {
-    const em = emailInput.trim();
-    if (!em || !/^\S+@\S+\.\S+$/.test(em)) {
-      toast.error(t.evInvalidEmail);
+  // Save Full Name
+  const handleSaveName = async () => {
+    const trimmed = fullName.trim();
+    if (!trimmed) {
+      toast.error("يرجى إدخال الاسم الكامل");
       return;
     }
-    setSaving(true);
+    setSavingName(true);
     try {
       try {
-        localStorage.setItem(FULL_NAME_KEY, fullName.trim());
+        localStorage.setItem(FULL_NAME_KEY, trimmed);
       } catch {}
-      // Update remote profile in background without blocking local save + verification code
-      base44.auth.updateMe({ full_name: fullName.trim() }).catch(() => {});
-
-      const prev = getAccountEmail(user);
-      if (prev && prev !== em) {
-        const av = getAvatarUrl(prev);
-        if (av) setAvatarUrl(em, av);
-      }
-      setAccountEmail(em);
-      setEmailInput(em);
-
-      const isAlreadyVerified = (() => {
-        try {
-          return localStorage.getItem(`email_verified_${em}`) === "1";
-        } catch {
-          return false;
-        }
-      })();
-
-      if (!isAlreadyVerified) {
-        setSendSignal(Date.now()); // triggers EmailVerification modal to send code via Nodemailer
-      }
-      await refreshStats(em);
-      toast.success(t.saveChanges + " ✓");
+      base44.auth.updateMe({ full_name: trimmed }).catch(() => {});
+      toast.success("تم حفظ الاسم بنجاح ✓");
     } finally {
-      setSaving(false);
+      setSavingName(false);
     }
+  };
+
+  // Successful OTP verification callback: links email to profile
+  const handleVerifiedSuccess = async (verifiedEmail) => {
+    const prev = getAccountEmail(user);
+    if (prev && prev !== verifiedEmail) {
+      const av = getAvatarUrl(prev);
+      if (av) setAvatarUrl(verifiedEmail, av);
+    }
+
+    setAccountEmail(verifiedEmail);
+    setLinkedEmail(verifiedEmail);
+    try {
+      localStorage.setItem(`email_verified_${verifiedEmail}`, "1");
+    } catch {}
+
+    setVerified(true);
+    setIsChangingEmail(false);
+
+    // Update remote profile
+    base44.auth.updateMe({ email: verifiedEmail }).catch(() => {});
+
+    // Dispatch global events for other components
+    try {
+      window.dispatchEvent(new Event("dau-email-verified"));
+      window.dispatchEvent(new Event("dau-email-change"));
+    } catch {}
+
+    await refreshStats(verifiedEmail);
+    toast.success("تم ربط البريد الإلكتروني بالملف الشخصي وتوثيقه بنجاح ✓");
   };
 
   return (
@@ -224,7 +249,7 @@ export default function ProfileCard() {
                   <img src={avatar} alt={t.profile} className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-2xl font-black text-primary">
-                    {initials(fullName, emailInput)}
+                    {initials(fullName, linkedEmail)}
                   </span>
                 )}
               </div>
@@ -252,71 +277,108 @@ export default function ProfileCard() {
           <div className="pb-1 min-w-0 sm:text-end">
             <div className="flex items-center gap-1.5 sm:justify-end">
               <p className="font-bold text-base text-foreground truncate">
-                {fullName || t.profile}
+                {fullName || "مستخدم دار العلوم"}
               </p>
               {verified && (
-                <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
-                  <ShieldCheck className="w-3 h-3" /> {t.verifiedBadge}
+                <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>موثّق</span>
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5">{emailInput}</p>
+            <p className="text-xs text-muted-foreground truncate mt-0.5" dir="ltr">
+              {linkedEmail || "لا يوجد بريد مرتبط"}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Fields */}
-      <div className="px-5 sm:px-6 pt-5 space-y-4">
-        <div>
-          <Label>{t.fullName}</Label>
-          <Input
-            value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
-            className="mt-1.5"
-          />
-        </div>
-        <div>
-          <div className="flex items-center justify-between">
-            <Label>{t.email}</Label>
-          </div>
-          <div className="relative mt-1.5">
+      {/* Profile Form Fields */}
+      <div className="px-5 sm:px-6 pt-5 space-y-5">
+        {/* Full Name */}
+        <div className="space-y-1.5">
+          <Label className="text-xs font-bold">{t.fullName}</Label>
+          <div className="flex gap-2">
             <Input
-              value={emailInput}
-              onChange={(e) => setEmailInput(e.target.value)}
-              type="email"
-              inputMode="email"
-              placeholder="example@gmail.com"
-              disabled={verified}
-              className="pe-10"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="اكتب اسمك الكامل..."
+              className="rounded-xl bg-background"
             />
+            <Button
+              onClick={handleSaveName}
+              disabled={savingName}
+              className="gap-1.5 rounded-[4px_20px_4px_20px] shrink-0 text-xs px-4"
+            >
+              {savingName ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              <span>حفظ الاسم</span>
+            </Button>
+          </div>
+        </div>
 
-            {verified && (
-              <Lock className="absolute end-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
+        {/* Linked Email Section */}
+        <div className="space-y-2 pt-2 border-t border-border/60">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs font-bold flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5 text-primary" />
+              <span>البريد الإلكتروني المرتبط بالحساب</span>
+            </Label>
+            {verified && !isChangingEmail && (
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                <span>متحقق منه بنجاح</span>
+              </span>
             )}
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            {verified ? t.lockedEmailHint : t.accHint}
-          </p>
-        </div>
-        <Button
-          onClick={handleSaveProfile}
-          disabled={saving}
-          className="gap-2 rounded-[4px_20px_4px_20px]"
-        >
-          {saving ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <Save className="w-4 h-4" />
-          )}{" "}
-          {verified ? t.saveChanges : t.saveSendBtn}
-        </Button>
 
-        {/* Email verification — inline, code sent via Nodemailer on save */}
-        <EmailVerification email={emailInput} sendSignal={sendSignal} />
+          {/* Condition 1: User has verified linked email and is not currently changing it */}
+          {verified && !isChangingEmail ? (
+            <div className="p-3.5 rounded-2xl bg-emerald-500/[0.05] border border-emerald-500/20 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-foreground truncate font-mono" dir="ltr">
+                      {linkedEmail}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      مرتبط بالملف الشخصي ومحمي برمز OTP
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsChangingEmail(true)}
+                  className="rounded-[4px_20px_4px_20px] text-xs h-8 px-3 shrink-0 gap-1.5"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>تغيير البريد</span>
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* Condition 2: No verified email, or changing email -> OTP verification flow */
+            <EmailVerification
+              currentEmail={linkedEmail}
+              isVerified={verified}
+              onVerifiedSuccess={handleVerifiedSuccess}
+              onCancel={verified ? () => setIsChangingEmail(false) : null}
+            />
+          )}
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="px-5 sm:px-6 pt-5">
+      <div className="px-5 sm:px-6 pt-6">
         <h3 className="flex items-center gap-2 text-sm font-bold text-foreground mb-3">
           <Activity className="w-4 h-4 text-primary" /> {t.myActivity}
         </h3>

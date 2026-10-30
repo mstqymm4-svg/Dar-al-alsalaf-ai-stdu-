@@ -100,9 +100,13 @@ async function reconcile({
 
   if (toCache.length > 0) await cacheFn(toCache);
 
-  // Delete items removed from server
+  // Delete items: ONLY if explicitly deleted locally (in deleted entity tracker)
   let deletedCount = 0;
-  const toDelete = cached.filter((c) => !serverIds.has(c.id));
+  let deletedIds = new Set();
+  try {
+    deletedIds = new Set(JSON.parse(localStorage.getItem("dau_deleted_entity_ids_v1") || "[]"));
+  } catch {}
+  const toDelete = cached.filter((c) => deletedIds.has(String(c.id)));
   for (const item of toDelete) {
     await deleteFn(item.id);
     deletedCount++;
@@ -167,9 +171,15 @@ async function syncSocialChannelsIncremental() {
 }
 
 async function syncSettingsIncremental() {
-  const serverSettings = await entities.AppSettings.list("-created_date", 1000);
-  await db.cacheSettings(serverSettings);
-  return { total: serverSettings.length };
+  const serverSettings = await entities.AppSettings.list("-created_date", 1000).catch(() => []);
+  const cachedSettings = await db.getCachedSettings().catch(() => []);
+  const map = new Map();
+  serverSettings.forEach(s => { if (s?.setting_key) map.set(s.setting_key, s); });
+  // Local settings customized by user take precedence
+  cachedSettings.forEach(s => { if (s?.setting_key) map.set(s.setting_key, s); });
+  const merged = Array.from(map.values());
+  await db.cacheSettings(merged);
+  return { total: merged.length };
 }
 
 // ─── Main sync ────────────────────────────────────────────────────────────────

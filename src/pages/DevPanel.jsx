@@ -3,7 +3,8 @@ import {
   Shield, Lock, Eye, EyeOff,
   LayoutDashboard, BookOpen, Type, Palette, Layers, Sliders,
   Navigation, Image, Users, HardDrive, Archive, Activity, Zap, Settings, ChevronRight, Moon, Sun, Menu, X,
-  ImagePlay, GalleryHorizontal, Paintbrush, Share2, Video, WifiOff, Wrench, FlaskConical, MessageCircle, Search
+  ImagePlay, GalleryHorizontal, Paintbrush, Share2, Video, WifiOff, Wrench, FlaskConical, MessageCircle, Search,
+  Cloud, CloudUpload, RefreshCw
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,10 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { subscribeToSettings } from "@/lib/settingsStore";
 import { setThemeMode, getThemeState } from "@/lib/themeEngine";
+import { auth } from "@/api/base44Client";
+import { onAuthStateChanged } from "firebase/auth";
+import { googleSignIn } from "@/lib/gmailService";
+import { forceSyncNow } from "@/lib/contentSyncEngine";
 
 // ─── Section Components ───────────────────────────────────────────────────────
 import DevDashboard from "@/components/dev/DevDashboard";
@@ -90,12 +95,40 @@ export default function DevPanel() {
   const [sidebarOpen, setSidebarOpen]     = useState(() => typeof window !== "undefined" && window.innerWidth >= 768);
   const [tabSearch, setTabSearch]         = useState("");
   const [darkMode, setDarkMode]           = useState(() => getThemeState().isDark);
+  const [fbUser, setFbUser]               = useState(() => auth.currentUser);
+  const [syncingCloud, setSyncingCloud]   = useState(false);
 
   // Sync dark mode
   useEffect(() => {
     const unsub = subscribeToSettings(() => setDarkMode(getThemeState().isDark));
     return unsub;
   }, []);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => setFbUser(u));
+  }, []);
+
+  const handleSyncCloud = async () => {
+    setSyncingCloud(true);
+    try {
+      await forceSyncNow();
+      toast.success("تمت المزامنة بنجاح وحفظ كافة التعديلات ✓");
+    } catch (e) {
+      toast.error("حدث خطأ أثناء المزامنة: " + (e?.message || ""));
+    } finally {
+      setSyncingCloud(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    try {
+      await googleSignIn();
+      toast.success("تم تسجيل الدخول كمسؤول بنجاح ✓");
+      await forceSyncNow();
+    } catch (e) {
+      toast.error("تعذر تسجيل الدخول: " + (e?.message || "يرجى التحقق من الصلاحيات"));
+    }
+  };
 
   const handleUnlock = () => {
     if (passwordInput === getPassword()) setUnlocked(true);
@@ -282,9 +315,40 @@ export default function DevPanel() {
             {(() => { const t = TABS.find(t => t.id === activeTab); return t ? <><t.icon className="w-4 h-4 text-primary" /><h1 className="font-bold text-sm">{t.label}</h1></> : null; })()}
           </div>
           <div className="flex-1" />
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span>متصل</span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSyncCloud}
+              disabled={syncingCloud}
+              className="h-8 text-xs gap-1.5"
+              title="مزامنة التعديلات سحابياً"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncingCloud ? "animate-spin text-primary" : ""}`} />
+              <span className="hidden sm:inline">مزامنة سحابية</span>
+            </Button>
+            {fbUser ? (
+              <span className="text-[11px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2.5 py-1 rounded-lg border border-emerald-500/20 flex items-center gap-1.5 font-medium">
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="hidden md:inline">{fbUser.email}</span>
+                <span className="md:hidden">متصل سحابياً</span>
+              </span>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleGoogleAuth}
+                className="h-8 text-xs gap-1.5 text-primary border border-primary/20 hover:bg-primary/10"
+                title="تسجيل الدخول كمسؤول لتفعيل المزامنة السحابية المباشرة مع Firebase"
+              >
+                <CloudUpload className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">ربط حساب Google السحابي</span>
+              </Button>
+            )}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="hidden sm:inline">حفظ فوري</span>
+            </div>
           </div>
         </header>
 

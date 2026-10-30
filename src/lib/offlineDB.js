@@ -328,6 +328,12 @@ export async function getCachedSettings() {
   return [];
 }
 
+export async function deleteCachedSetting(key) {
+  const store = await tx("settings", "readwrite");
+  store.delete(key);
+  await txDone(store);
+}
+
 export async function getCachedSetting(key) {
   const store = await tx("settings");
   const rec = await reqAsPromise(store.get(key));
