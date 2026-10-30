@@ -1,0 +1,8 @@
+{
+  "appId": "com.daralulom.app",
+  "appName": "دار العلوم",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  }
+}

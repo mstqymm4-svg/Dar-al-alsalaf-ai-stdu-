@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { apiUrl } from "@/lib/apiBase";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -76,7 +77,7 @@ export default function EmailVerification({
 
     setSending(true);
     try {
-      const res = await fetch("/api/send-otp", {
+      const res = await fetch(apiUrl("/api/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: targetEmail }),
@@ -117,7 +118,7 @@ export default function EmailVerification({
 
     try {
       const targetEmail = email.trim().toLowerCase();
-      const res = await fetch("/api/send-otp", {
+      const res = await fetch(apiUrl("/api/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: targetEmail }),
@@ -218,7 +219,7 @@ export default function EmailVerification({
     setVerifying(true);
 
     try {
-      const res = await fetch("/api/verify-otp", {
+      const res = await fetch(apiUrl("/api/verify-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
