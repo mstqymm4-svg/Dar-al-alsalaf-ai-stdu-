@@ -172,9 +172,9 @@ export default function ReadBook() {
                 ? "bg-primary text-primary-foreground font-bold"
                 : "bg-muted/70 hover:bg-muted text-foreground"
             }`}
-            title={isZenMode ? "الخروج من وضع التركيز" : "وضع التركيز الكامل"}
+            title={isZenMode ? (t.exitZenMode || "الخروج من وضع التركيز") : (t.enterZenMode || "وضع التركيز الكامل")}
           >
-            {isZenMode ? "تركيز ✓" : "تركيز"}
+            {isZenMode ? (t.zenActive || "تركيز ✓") : (t.zenMode || "تركيز")}
           </button>
 
           {/* Protection Badge */}
@@ -184,7 +184,7 @@ export default function ReadBook() {
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
             <span className="hidden sm:inline">
-              {t.langCode === "en" ? "Protected" : "محمي"}
+              {t.contentProtected || "محمي"}
             </span>
           </div>
         </div>

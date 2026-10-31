@@ -280,7 +280,7 @@ export default function Videos() {
                     size="icon"
                     variant="outline"
                     className="h-11 w-11 rounded-xl border-border bg-card/80 hover:bg-card"
-                    title="مشاركة"
+                    title={t.share || "مشاركة"}
                     onClick={() => handleShare(featuredVideo)}
                   >
                     <Share2 className="w-5 h-5" />
@@ -464,7 +464,7 @@ export default function Videos() {
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
-                        title="زيارة القناة على يوتيوب"
+                        title={t.visitChannel || "زيارة القناة على يوتيوب"}
                         className="text-muted-foreground hover:text-red-600 p-1"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
@@ -636,7 +636,7 @@ export default function Videos() {
                   {/* Top Shorts Tag */}
                   <div className="absolute top-2.5 right-2.5">
                     <span className="px-2 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold shadow">
-                      Shorts
+                      {t.shortsBadge || "شورتس"}
                     </span>
                   </div>
 
@@ -679,7 +679,7 @@ export default function Videos() {
                   {t.noMatchingVideos || "لا توجد فيديوهات مطابقة للبحث"}
                 </h3>
                 <p className="text-xs text-muted-foreground mt-1">
-                  جرب البحث بكلمات أخرى أو اختر قناة أو تصنيفاً مختلفاً.
+                  {t.noMatchingVideosSub || "جرب البحث بكلمات أخرى أو اختر قناة أو تصنيفاً مختلفاً."}
                 </p>
               </div>
               <Button

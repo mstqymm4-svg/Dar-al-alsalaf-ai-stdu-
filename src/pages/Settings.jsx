@@ -13,7 +13,6 @@ import {
   ShieldCheck,
   AlertCircle,
   Lock,
-  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -21,17 +20,6 @@ import { Switch } from "@/components/ui/switch";
 import { MobileSelect } from "@/components/ui/mobile-select";
 import SettingRow from "@/components/SettingRow";
 import ProfileCard from "@/components/ProfileCard";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import MobileHeader from "@/components/MobileHeader";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
@@ -117,30 +105,25 @@ export default function Settings() {
     toast.success(t.applyLang + " ✓");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     try {
-      base44.auth.logout("/");
-    } catch (e) {
-      console.error("Logout failed:", e);
-    }
-    setTimeout(() => {
-      try {
-        localStorage.removeItem("base44_access_token");
-        localStorage.removeItem("token");
-      } catch (e) {}
-      window.location.replace("/");
-    }, 800);
-  };
+      localStorage.removeItem("dau_account_email");
+      localStorage.removeItem("dau_full_name");
+      localStorage.removeItem("base44_access_token");
+      localStorage.removeItem("token");
+      window.dispatchEvent(new Event("dau-email-change"));
+      window.dispatchEvent(new Event("dau-email-verified"));
+      window.dispatchEvent(new Event("dau-avatar-change"));
+    } catch (e) {}
 
-  const handleDeleteAccount = async () => {
     try {
-      await base44.functions.invoke("deleteAccountRequest", {});
-      toast.success(t.deleteRequestSent);
-    } catch (e) {
-      toast.error(t.deleteRequestFailed);
-      return;
-    }
-    setTimeout(() => handleLogout(), 1200);
+      await base44.auth.logout("/").catch(() => {});
+    } catch (e) {}
+
+    toast.success(t.logoutSuccess || "تم تسجيل الخروج بنجاح ✓");
+    setTimeout(() => {
+      window.location.href = "/";
+    }, 400);
   };
 
   if (loading) return <PageSpinner />;
@@ -333,7 +316,7 @@ export default function Settings() {
                     className="inline-flex items-center gap-1.5 mt-2 px-3.5 py-1.5 rounded-[4px_20px_4px_20px] bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/95 transition-all shadow-xs"
                   >
                     <Mail className="w-3.5 h-3.5" />
-                    <span>تأكيد البريد برمز OTP</span>
+                    <span>{t.verifyOtpBadge || "تأكيد البريد برمز OTP"}</span>
                   </Link>
                 )}
               </div>
@@ -402,48 +385,6 @@ export default function Settings() {
           >
             <LogOut className="w-4 h-4" /> {t.logout}
           </Button>
-        </motion.div>
-
-        {/* Account Deletion */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.35 }}
-          className="bg-card border border-destructive/20 rounded-2xl p-6"
-        >
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center">
-              <Trash2 className="w-4 h-4 text-destructive" />
-            </div>
-            <h2 className="text-base font-bold">{t.deleteAccount}</h2>
-          </div>
-          <p className="text-sm text-muted-foreground mb-4">
-            {t.deleteAccountSub}
-          </p>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="destructive"
-                className="gap-2 rounded-[4px_20px_4px_20px]"
-              >
-                <Trash2 className="w-4 h-4" /> {t.deleteAccount}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t.deleteAccountConfirm}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t.deleteAccountWarning}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t.cancel}</AlertDialogCancel>
-                <AlertDialogAction onClick={handleDeleteAccount}>
-                  {t.deletePermanently}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </motion.div>
       </div>
     </div>

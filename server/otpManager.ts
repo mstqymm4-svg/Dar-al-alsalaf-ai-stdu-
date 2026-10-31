@@ -1,5 +1,33 @@
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+
+// Helper to ensure .env is parsed and loaded into process.env
+function loadEnv() {
+  try {
+    const envPath = path.resolve(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      for (const line of content.split('\n')) {
+        const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+        if (match) {
+          const key = match[1];
+          let val = (match[2] || '').trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          process.env[key] = val;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[OTP Service] Error reading .env file:', err);
+  }
+}
+
+// Initial load
+loadEnv();
 
 interface OtpRecord {
   hashedOtp: string;
@@ -69,78 +97,106 @@ export function checkIpRateLimit(ip: string): boolean {
 
 // Configure Gmail SMTP transporter
 function getTransporter() {
-  const user = process.env.GMAIL_USER || process.env.SMTP_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS;
+  loadEnv();
+  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
+  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || 'jtdjjxasqtswagnr';
+  const pass = rawPass.replace(/\s+/g, '').trim();
 
   return nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // TLS
-    requireTLS: true,
+    service: 'gmail',
     auth: {
-      user: user || '',
-      pass: pass || '',
-    },
-    tls: {
-      rejectUnauthorized: false,
+      user: user,
+      pass: pass,
     },
   });
 }
 
-// Generate styled Arabic HTML email template
+// Generate styled English HTML email template with premium modern design
 function createEmailTemplate(otp: string): string {
+  const digits = (otp || '').split('');
+  const digitCells = digits
+    .map(
+      (d) =>
+        `<td style="width:48px;height:60px;background:#f0fdf4;border:2px solid #059669;border-radius:14px;font-size:32px;font-weight:800;color:#065f46;text-align:center;font-family:'Segoe UI',Roboto,Helvetica,Arial,monospace;line-height:60px;box-shadow:0 3px 8px rgba(5,150,105,0.12);letter-spacing:1px;">${d}</td>`
+    )
+    .join('');
+
   return `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
+<html lang="en" dir="ltr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>رمز التحقق — دار العلوم</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Dar Al Uloom — Verification Code</title>
 </head>
-<body style="margin:0;padding:24px;background-color:#f8f9fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;color:#1f2937;">
-  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);border:1px solid #e5e7eb;">
+<body style="margin:0;padding:32px 14px;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;direction:ltr;text-align:left;">
+  
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 14px 40px rgba(0,0,0,0.08);border:1px solid #e5e7eb;">
     
-    <!-- Header -->
-    <div style="background:linear-gradient(135deg,#1c5c46 0%,#2d7a5e 100%);padding:32px 24px;text-align:center;">
-      <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:bold;letter-spacing:0.5px;">دار العلوم</h1>
-      <p style="color:#d1fae5;margin:8px 0 0;font-size:14px;">رمز التحقق من البريد الإلكتروني</p>
+    <!-- Top Header Banner -->
+    <div style="background:linear-gradient(135deg,#064e3b 0%,#047857 55%,#0d9488 100%);padding:38px 28px;text-align:center;">
+      <div style="display:inline-block;padding:5px 16px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);border-radius:999px;margin-bottom:14px;">
+        <span style="color:#d1fae5;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">Official Verification</span>
+      </div>
+      <h1 style="color:#ffffff;margin:0;font-size:30px;font-weight:900;letter-spacing:0.5px;">DAR AL ULOOM</h1>
+      <p style="color:#a7f3d0;margin:8px 0 0;font-size:14px;font-weight:500;">Light of Knowledge &amp; Learning</p>
     </div>
 
-    <!-- Content -->
-    <div style="padding:32px 28px;text-align:center;">
-      <p style="margin:0 0 16px;font-size:16px;color:#374151;line-height:1.6;">
-        السلام عليكم ورحمة الله وبركاته،<br>
-        استخدم رمز التحقق التالي لتأكيد حسابك في تطبيق <strong>دار العلوم</strong>:
+    <!-- Gold Accent Divider -->
+    <div style="height:4px;background:linear-gradient(90deg,#d97706,#f59e0b,#fbbf24,#f59e0b,#d97706);"></div>
+
+    <!-- Main Content Card -->
+    <div style="padding:36px 30px;text-align:center;">
+      
+      <h2 style="margin:0 0 14px;color:#064e3b;font-size:22px;font-weight:800;letter-spacing:-0.2px;">Verify Your Email Address</h2>
+      
+      <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.7;">
+        Hello,<br>
+        Please use the 6-digit verification code below to verify your email address and secure your account on <strong>Dar Al Uloom</strong>:
       </p>
 
-      <!-- OTP Box -->
-      <div style="margin:28px 0;padding:18px 24px;background-color:#f0fdf4;border:2px dashed #10b981;border-radius:12px;display:inline-block;">
-        <span dir="ltr" style="font-size:36px;font-weight:900;letter-spacing:10px;color:#047857;font-family:Consolas,monaco,monospace;display:block;">
-          ${otp}
-        </span>
+      <!-- 6-Digit Verification Code Table -->
+      <table align="center" border="0" cellpadding="0" cellspacing="8" dir="ltr" style="margin:20px auto 28px auto;">
+        <tr>
+          ${digitCells}
+        </tr>
+      </table>
+
+      <!-- Security & Expiration Info Box -->
+      <div style="background-color:#f0fdf4;border-radius:16px;padding:18px 20px;border:1px solid #bbf7d0;text-align:left;margin-top:20px;">
+        <div style="display:flex;align-items:flex-start;margin-bottom:10px;">
+          <p style="margin:0;font-size:13px;color:#166534;line-height:1.6;">
+            ⏱ <strong>Expires in:</strong> This code is valid for <strong>10 minutes</strong> only from the time requested.
+          </p>
+        </div>
+        <div>
+          <p style="margin:0;font-size:13px;color:#991b1b;line-height:1.6;">
+            🔒 <strong>Security Notice:</strong> Never share this code with anyone. Dar Al Uloom will never ask you for this code.
+          </p>
+        </div>
       </div>
 
-      <!-- Info & Warnings -->
-      <div style="background-color:#f9fafb;border-radius:10px;padding:16px;margin:20px 0 0;border:1px solid #e5e7eb;text-align:right;">
-        <p style="margin:0 0 8px;font-size:13px;color:#4b5563;">
-          ⏳ <strong>الصلاحية:</strong> هذا الرمز صالح لمدة <strong>10 دقائق</strong> فقط.
-        </p>
-        <p style="margin:0;font-size:13px;color:#dc2626;">
-          🔒 <strong>تنبيه أمني:</strong> لا تشارك هذا الرمز مع أي شخص حفاظاً على أمان حسابك.
-        </p>
-      </div>
+      <p style="margin:28px 0 0;font-size:13px;color:#9ca3af;line-height:1.6;">
+        If you did not request this verification code, you can safely ignore this email.
+      </p>
 
-      <p style="margin:24px 0 0;font-size:12px;color:#9ca3af;line-height:1.5;">
-        إذا لم تكن قد طلبت هذا الرمز، يمكنك تجاهل هذه الرسالة بأمان.
+    </div>
+
+    <!-- Email Footer -->
+    <div style="background-color:#fafafa;padding:22px 28px;text-align:center;border-top:1px solid #f1f5f9;">
+      <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#064e3b;">
+        Dar Al Uloom
+      </p>
+      <p style="margin:0 0 4px;font-size:12px;color:#6b7280;">
+        Islamic Knowledge &amp; Research Platform
+      </p>
+      <p style="margin:0;font-size:11px;color:#9ca3af;">
+        &copy; 2026 Dar Al Uloom. All rights reserved.
       </p>
     </div>
 
-    <!-- Footer -->
-    <div style="background-color:#f9fafb;padding:16px 24px;text-align:center;border-top:1px solid #f3f4f6;">
-      <p style="margin:0;font-size:12px;color:#9ca3af;">
-        © دار العلوم — جميع الحقوق محفوظة
-      </p>
-    </div>
   </div>
+
 </body>
 </html>`;
 }
@@ -206,33 +262,33 @@ export async function sendOtp(email: string, clientIp: string) {
   });
 
   // 6. Send email via Gmail SMTP
-  const user = process.env.GMAIL_USER || process.env.SMTP_USER;
-  const pass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS;
-
-  if (!user || !pass) {
-    console.warn(
-      `[OTP Service] GMAIL_USER or GMAIL_APP_PASSWORD is not set in environment variables!`
-    );
-    console.log(
-      `[OTP Simulation for Testing] Email: ${normalizedEmail} | OTP Code: ${otpCode}`
-    );
-    return {
-      status: 200,
-      data: {
-        success: true,
-        message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني بنجاح (وضع الاختبار)',
-        simulated: true,
-      },
-    };
-  }
+  loadEnv();
+  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
+  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || 'jtdjjxasqtswagnr';
+  const pass = rawPass.replace(/\s+/g, '').trim();
 
   try {
     const transporter = getTransporter();
+    const senderName = process.env.SENDER_NAME || 'Dar Al Uloom';
+    const senderAddress = (process.env.SENDER_EMAIL || user).trim();
+
     await transporter.sendMail({
-      from: `"دار العلوم" <${user}>`,
+      from: `"${senderName}" <${senderAddress}>`,
       to: normalizedEmail,
-      subject: 'رمز التحقق — دار العلوم',
-      text: `رمز التحقق الخاص بك لتطبيق دار العلوم هو: ${otpCode} (صالح لمدة 10 دقائق)`,
+      subject: `Dar Al Uloom — Your Verification Code: ${otpCode}`,
+      text: [
+        'Hello,',
+        '',
+        `Your verification code for Dar Al Uloom is: ${otpCode}`,
+        '',
+        'This code is valid for 10 minutes only.',
+        'Security Notice: Never share this code with anyone.',
+        '',
+        'If you did not request this verification code, please ignore this email.',
+        '',
+        'Dar Al Uloom — Light of Knowledge & Learning',
+        '© 2026 Dar Al Uloom. All rights reserved.',
+      ].join('\n'),
       html: createEmailTemplate(otpCode),
     });
 

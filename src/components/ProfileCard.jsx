@@ -12,7 +12,6 @@ import {
   Lock,
   ShieldCheck,
   Mail,
-  RefreshCw,
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
@@ -58,7 +57,6 @@ export default function ProfileCard() {
   const [avatar, setAvatar] = useState(() => getAvatarUrl(getAccountEmail()));
   const [savingName, setSavingName] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [isChangingEmail, setIsChangingEmail] = useState(false);
   const [stats, setStats] = useState({ favs: 0, dls: 0, reading: 0, watched: 0 });
   const [recentReads, setRecentReads] = useState([]);
   const [verified, setVerified] = useState(() => {
@@ -178,7 +176,7 @@ export default function ProfileCard() {
   const handleSaveName = async () => {
     const trimmed = fullName.trim();
     if (!trimmed) {
-      toast.error("يرجى إدخال الاسم الكامل");
+      toast.error(t.pleaseEnterFullName || "يرجى إدخال الاسم الكامل");
       return;
     }
     setSavingName(true);
@@ -187,7 +185,7 @@ export default function ProfileCard() {
         localStorage.setItem(FULL_NAME_KEY, trimmed);
       } catch {}
       base44.auth.updateMe({ full_name: trimmed }).catch(() => {});
-      toast.success("تم حفظ الاسم بنجاح ✓");
+      toast.success(t.nameSavedSuccess || "تم حفظ الاسم بنجاح ✓");
     } finally {
       setSavingName(false);
     }
@@ -208,10 +206,8 @@ export default function ProfileCard() {
     } catch {}
 
     setVerified(true);
-    setIsChangingEmail(false);
 
-    // Update remote profile
-    base44.auth.updateMe({ email: verifiedEmail }).catch(() => {});
+    // Verified email is stored in dau_account_email and localStorage without triggering external platform emails
 
     // Dispatch global events for other components
     try {
@@ -220,7 +216,7 @@ export default function ProfileCard() {
     } catch {}
 
     await refreshStats(verifiedEmail);
-    toast.success("تم ربط البريد الإلكتروني بالملف الشخصي وتوثيقه بنجاح ✓");
+    toast.success(t.linkedSuccess || "تم ربط البريد الإلكتروني بالملف الشخصي وتوثيقه بنجاح ✓");
   };
 
   return (
@@ -277,17 +273,17 @@ export default function ProfileCard() {
           <div className="pb-1 min-w-0 sm:text-end">
             <div className="flex items-center gap-1.5 sm:justify-end">
               <p className="font-bold text-base text-foreground truncate">
-                {fullName || "مستخدم دار العلوم"}
+                {fullName || t.userDefaultName || "مستخدم دار العلوم"}
               </p>
               {verified && (
                 <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>موثّق</span>
+                  <span>{t.verifiedBadge || "موثّق"}</span>
                 </span>
               )}
             </div>
             <p className="text-xs text-muted-foreground truncate mt-0.5" dir="ltr">
-              {linkedEmail || "لا يوجد بريد مرتبط"}
+              {linkedEmail || t.noLinkedEmail || "لا يوجد بريد مرتبط"}
             </p>
           </div>
         </div>
@@ -302,7 +298,7 @@ export default function ProfileCard() {
             <Input
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              placeholder="اكتب اسمك الكامل..."
+              placeholder={t.fullNamePlaceholder || "اكتب اسمك الكامل..."}
               className="rounded-xl bg-background"
             />
             <Button
@@ -315,7 +311,7 @@ export default function ProfileCard() {
               ) : (
                 <Save className="w-3.5 h-3.5" />
               )}
-              <span>حفظ الاسم</span>
+              <span>{t.saveName || "حفظ الاسم"}</span>
             </Button>
           </div>
         </div>
@@ -325,53 +321,60 @@ export default function ProfileCard() {
           <div className="flex items-center justify-between">
             <Label className="text-xs font-bold flex items-center gap-1.5">
               <Mail className="w-3.5 h-3.5 text-primary" />
-              <span>البريد الإلكتروني المرتبط بالحساب</span>
+              <span>{t.linkedEmailTitle || "البريد الإلكتروني المرتبط بالحساب"}</span>
             </Label>
             {verified && !isChangingEmail && (
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
                 <ShieldCheck className="w-3 h-3" />
-                <span>متحقق منه بنجاح</span>
+                <span>{t.verifiedSuccessBadge || "متحقق منه بنجاح"}</span>
               </span>
             )}
           </div>
 
-          {/* Condition 1: User has verified linked email and is not currently changing it */}
-          {verified && !isChangingEmail ? (
-            <div className="p-3.5 rounded-2xl bg-emerald-500/[0.05] border border-emerald-500/20 space-y-3">
+          {/* Condition 1: User has verified linked email -> LOCKED & UNMODIFIABLE */}
+          {verified ? (
+            <div className="p-4 rounded-2xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2.5">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-xs">
                     <Lock className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-foreground truncate font-mono" dir="ltr">
-                      {linkedEmail}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-foreground truncate font-mono" dir="ltr">
+                        {linkedEmail}
+                      </p>
+                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
+                        <ShieldCheck className="w-3 h-3" />
+                        <span>{t.verifiedBadge || "موثّق"}</span>
+                      </span>
+                    </div>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      مرتبط بالملف الشخصي ومحمي برمز OTP
+                      {t.linkedAndProtected || "مرتبط بالملف الشخصي ومحمي برمز OTP"}
                     </p>
                   </div>
                 </div>
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsChangingEmail(true)}
-                  className="rounded-[4px_20px_4px_20px] text-xs h-8 px-3 shrink-0 gap-1.5"
-                >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>تغيير البريد</span>
-                </Button>
+                <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[11px] font-bold">
+                  <Lock className="w-3 h-3 text-emerald-600" />
+                  <span>غير قابل للتعديل</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-emerald-500/15 text-[11px] text-muted-foreground leading-relaxed flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>
+                  {t.lockedEmailNotice || "تم توثيق هذا البريد بنجاح ولا يمكن تعديله أو حذفه للحفاظ على أمان حسابك وبياناتك."}
+                </span>
               </div>
             </div>
           ) : (
-            /* Condition 2: No verified email, or changing email -> OTP verification flow */
+            /* Condition 2: No verified email -> OTP verification flow to verify and lock */
             <EmailVerification
               currentEmail={linkedEmail}
-              isVerified={verified}
+              isVerified={false}
               onVerifiedSuccess={handleVerifiedSuccess}
-              onCancel={verified ? () => setIsChangingEmail(false) : null}
+              onCancel={null}
             />
           )}
         </div>

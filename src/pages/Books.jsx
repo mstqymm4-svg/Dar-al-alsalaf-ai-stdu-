@@ -168,7 +168,7 @@ export default function Books() {
                   ? "bg-card text-foreground shadow-xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
-              title="عرض الشبكة"
+              title={t.gridViewTitle || "عرض الشبكة"}
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
@@ -179,7 +179,7 @@ export default function Books() {
                   ? "bg-card text-foreground shadow-xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
-              title="عرض القائمة"
+              title={t.listViewTitle || "عرض القائمة"}
             >
               <List className="w-4 h-4" />
             </button>

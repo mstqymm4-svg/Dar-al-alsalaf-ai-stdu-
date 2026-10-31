@@ -225,7 +225,11 @@ export default function Favorites() {
             <div className="relative w-full sm:w-64 group">
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
               <Input
-                placeholder={tab === "books" ? "بحث في مفضلة الكتب..." : "بحث في مفضلة الفيديوهات..."}
+                placeholder={
+                  tab === "books"
+                    ? (t.searchFavBooksPlaceholder || "بحث في مفضلة الكتب...")
+                    : (t.searchFavVideosPlaceholder || "بحث في مفضلة الفيديوهات...")
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pr-9 pl-8 h-10 rounded-xl bg-card border-border text-xs focus-visible:border-primary"
@@ -266,7 +270,7 @@ export default function Favorites() {
               </h3>
               <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-5">
                 {search
-                  ? "جرّب البحث بكلمة أخرى في قائمتك المفضلة"
+                  ? (t.tryDifferentSearchInFav || "جرّب البحث بكلمة أخرى في قائمتك المفضلة")
                   : t.noFavoritesSub}
               </p>
               {!search && (
@@ -306,7 +310,7 @@ export default function Favorites() {
             </h3>
             <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-5">
               {search
-                ? "جرّب البحث بكلمة أخرى في قائمتك المفضلة"
+                ? (t.tryDifferentSearchInFav || "جرّب البحث بكلمة أخرى في قائمتك المفضلة")
                 : t.noVideoFavoritesSub}
             </p>
             {!search && (

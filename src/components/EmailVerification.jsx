@@ -14,6 +14,7 @@ import { apiUrl } from "@/lib/apiBase";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import { useT } from "@/lib/i18n";
 
 export default function EmailVerification({
   currentEmail = "",
@@ -21,6 +22,7 @@ export default function EmailVerification({
   onVerifiedSuccess,
   onCancel,
 }) {
+  const t = useT();
   const [email, setEmail] = useState(currentEmail || "");
   const [step, setStep] = useState("input"); // 'input' | 'otp' | 'success'
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
@@ -65,13 +67,13 @@ export default function EmailVerification({
 
     const targetEmail = email.trim().toLowerCase();
     if (!targetEmail) {
-      setErrorMsg("يرجى إدخال البريد الإلكتروني");
+      setErrorMsg(t.pleaseEnterEmail || "يرجى إدخال البريد الإلكتروني");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(targetEmail)) {
-      setErrorMsg("صيغة البريد الإلكتروني غير صحيحة");
+      setErrorMsg(t.invalidEmail || "صيغة البريد الإلكتروني غير صحيحة");
       return;
     }
 
@@ -86,7 +88,7 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "تعذر إرسال رمز التحقق، يرجى المحاولة لاحقاً.";
+        const errorText = data.error || t.sendFailed || "تعذر إرسال رمز التحقق، يرجى المحاولة لاحقاً.";
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -95,14 +97,14 @@ export default function EmailVerification({
         return;
       }
 
-      toast.success(data.message || `تم إرسال رمز التحقق إلى ${targetEmail}`);
+      toast.success(data.message || (t.resendSuccess || "تم إرسال رمز التحقق بنجاح"));
       setStep("otp");
       setCountdown(60);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
     } catch {
-      setErrorMsg("تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت.");
-      toast.error("تعذر الاتصال بالخادم");
+      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم، يرجى التحقق من اتصال الإنترنت.");
+      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
     } finally {
       setSending(false);
     }
@@ -127,7 +129,7 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "تعذر إعادة إرسال الرمز";
+        const errorText = data.error || t.sendFailed || "تعذر إعادة إرسال الرمز";
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -136,13 +138,13 @@ export default function EmailVerification({
         return;
       }
 
-      toast.success("تم إرسال رمز تحقق جديد بنجاح ✓");
+      toast.success(t.resendSuccess || "تم إرسال رمز تحقق جديد بنجاح ✓");
       setCountdown(60);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
       if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();
     } catch {
-      toast.error("فشل في إعادة إرسال الرمز");
+      toast.error(t.serverConnError || "فشل في إعادة إرسال الرمز");
     } finally {
       setSending(false);
     }
@@ -211,7 +213,7 @@ export default function EmailVerification({
 
     const fullCode = otp.join("");
     if (fullCode.length !== 6) {
-      setErrorMsg("يرجى إدخال جميع أرقام الرمز الستة");
+      setErrorMsg(t.enterAll6Digits || "يرجى إدخال جميع أرقام الرمز الستة");
       return;
     }
 
@@ -231,7 +233,7 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "رمز التحقق غير صحيح";
+        const errorText = data.error || (t.evWrongCode || "رمز التحقق غير صحيح");
         setErrorMsg(errorText);
         toast.error(errorText);
 
@@ -245,15 +247,15 @@ export default function EmailVerification({
       }
 
       setStep("success");
-      toast.success("تم التحقق من الرمز وربط البريد بنجاح ✓");
+      toast.success(t.linkedSuccess || "تم التحقق من الرمز وربط البريد بنجاح ✓");
 
       // Notify parent to finalize linking
       if (onVerifiedSuccess) {
         onVerifiedSuccess(targetEmail);
       }
     } catch {
-      setErrorMsg("تعذر الاتصال بالخادم للتحقق من الرمز");
-      toast.error("تعذر الاتصال بالخادم");
+      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم للتحقق من الرمز");
+      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
     } finally {
       setVerifying(false);
     }
@@ -278,10 +280,10 @@ export default function EmailVerification({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-foreground">
-                    ربط البريد الإلكتروني برمز تحقق (OTP)
+                    {t.otpLinkTitle || "ربط البريد الإلكتروني برمز تحقق (OTP)"}
                   </h4>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    يتم ربط البريد وتفعيله بالحساب بعد التحقق من ملكيته عبر Gmail
+                    {t.otpLinkDesc || "يتم ربط البريد وتفعيله بالحساب بعد التحقق من ملكيته"}
                   </p>
                 </div>
               </div>
@@ -291,7 +293,7 @@ export default function EmailVerification({
                   type="button"
                   onClick={onCancel}
                   className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition-colors"
-                  title="إلغاء"
+                  title={t.cancel || "إلغاء"}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -300,10 +302,10 @@ export default function EmailVerification({
 
             <div className="space-y-2">
               <label className="text-xs font-semibold text-foreground block">
-                أدخل البريد المراد ربطه بالملف الشخصي
+                {t.enterEmailToLink || "أدخل البريد المراد ربطه بالملف الشخصي"}
               </label>
               <div className="relative">
-                <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <Input
                   type="email"
                   dir="ltr"
@@ -311,8 +313,18 @@ export default function EmailVerification({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={sending}
-                  className="pr-10 h-10 rounded-xl bg-background border-border text-sm text-left font-mono"
+                  className="pr-10 pl-9 h-10 rounded-xl bg-background border-border text-sm text-left font-mono"
                 />
+                {email && !sending && (
+                  <button
+                    type="button"
+                    onClick={() => setEmail("")}
+                    title={t.clearEmail || "مسح البريد"}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/80 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -333,12 +345,12 @@ export default function EmailVerification({
                 {sending ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>جاري إرسال الرمز...</span>
+                    <span>{t.sendingOtp || "جاري إرسال الرمز..."}</span>
                   </>
                 ) : (
                   <>
                     <Send className="w-3.5 h-3.5" />
-                    <span>إرسال رمز التحقق إلى البريد</span>
+                    <span>{t.sendOtpBtn || "إرسال رمز التحقق إلى البريد"}</span>
                   </>
                 )}
               </Button>
@@ -351,7 +363,7 @@ export default function EmailVerification({
                   disabled={sending}
                   className="rounded-[4px_20px_4px_20px] text-xs h-10"
                 >
-                  إلغاء
+                  {t.cancel || "إلغاء"}
                 </Button>
               )}
             </div>
@@ -374,10 +386,10 @@ export default function EmailVerification({
                 </div>
                 <div>
                   <h4 className="text-sm font-bold text-foreground">
-                    أدخل رمز التحقق (6 أرقام)
+                    {t.enterOtp6Digits || "أدخل رمز التحقق (6 أرقام)"}
                   </h4>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                    <span>أُرسل إلى:</span>
+                    <span>{t.otpSentTo || "أُرسل إلى:"}</span>
                     <span dir="ltr" className="font-mono font-bold text-foreground">
                       {email}
                     </span>
@@ -389,7 +401,7 @@ export default function EmailVerification({
                       }}
                       className="text-primary hover:underline font-bold text-[11px] mr-1"
                     >
-                      (تعديل)
+                      ({t.editEmail || "تعديل"})
                     </button>
                   </div>
                 </div>
@@ -431,7 +443,7 @@ export default function EmailVerification({
               <div>
                 {countdown > 0 ? (
                   <span className="flex items-center gap-1">
-                    <span>إعادة الإرسال بعد:</span>
+                    <span>{t.resendAfter || "إعادة الإرسال بعد:"}</span>
                     <span className="font-mono font-bold text-primary">
                       {Math.floor(countdown / 60)}:
                       {(countdown % 60).toString().padStart(2, "0")}
@@ -445,13 +457,13 @@ export default function EmailVerification({
                     className="text-primary font-bold hover:underline flex items-center gap-1"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${sending ? "animate-spin" : ""}`} />
-                    <span>إعادة إرسال الرمز</span>
+                    <span>{t.resendCode || "إعادة إرسال الرمز"}</span>
                   </button>
                 )}
               </div>
 
               <span className="text-[11px] opacity-75">
-                المحاولات المتاحة: {remainingAttempts} من 5
+                {(t.attemptsRemaining || "المحاولات المتاحة: {n} من 5").replace("{n}", remainingAttempts)}
               </span>
             </div>
 
@@ -464,12 +476,12 @@ export default function EmailVerification({
               {verifying ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>جاري التحقق وربط البريد...</span>
+                  <span>{t.verifyingOtp || "جاري التحقق وربط البريد..."}</span>
                 </>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>تأكيد الرمز وربط البريد بالحساب</span>
+                  <span>{t.verifyAndLinkBtn || "تأكيد الرمز وربط البريد بالحساب"}</span>
                 </>
               )}
             </Button>
@@ -488,10 +500,10 @@ export default function EmailVerification({
               <CheckCircle2 className="w-7 h-7" />
             </div>
             <h4 className="text-base font-bold text-foreground">
-              تم تأكيد البريد وربطه بنجاح!
+              {t.otpSuccessTitle || "تم تأكيد البريد وربطه بنجاح!"}
             </h4>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              تم توثيق بريدك الإلكتروني (<span dir="ltr" className="font-mono font-bold">{email}</span>) وربطه بملفك الشخصي بنجاح.
+              {t.otpSuccessDesc || "تم توثيق بريدك الإلكتروني وربطه بملفك الشخصي بنجاح."}
             </p>
           </motion.div>
         )}

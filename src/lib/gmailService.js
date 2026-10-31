@@ -264,37 +264,35 @@ export async function sendVerificationEmailViaGmail(recipientEmail, code) {
     throw err;
   }
 
-  const subject = 'رمز التحقق — دار العلوم | Verification code';
+  const subject = 'رمز التحقق — دار العلوم';
   const plain = [
-    'السلام عليكم ورحمة الله وبركاته',
+    'السلام عليكم ورحمة الله وبركاته،',
     '',
-    'رمز التحقق الخاص بك هو:',
+    'رمز التحقق الخاص بك في تطبيق دار العلوم هو:',
     '',
     code,
     '',
-    'الرمز صالح لمدة 10 دقائق. لا تشاركه مع أحد.',
+    'الرمز صالح لمدة 10 دقائق فقط. يرجى عدم مشاركته مع أي شخص.',
     '',
-    '---',
-    '',
-    'Your verification code is: ' + code,
-    'Valid for 10 minutes. Do not share it with anyone.',
-    '',
-    'دار العلوم | Dar Al Uloom',
+    'دار العلوم — نور العلم والمعرفة',
   ].join('\n');
 
   const html = `<!DOCTYPE html>
 <html dir="rtl" lang="ar">
-<body style="margin:0;padding:24px;background:#f7f5f0;font-family:Tahoma,Arial,sans-serif;">
-  <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e8e2d5;">
-    <div style="background:linear-gradient(135deg,#1c5c46,#2e7d5b);padding:24px;text-align:center;">
-      <h1 style="color:#fdfaf2;margin:0;font-size:20px;">دار العلوم</h1>
-      <p style="color:#cfe6d9;margin:6px 0 0;font-size:13px;">رمز التحقق من البريد الإلكتروني</p>
+<head>
+  <meta charset="utf-8">
+  <title>رمز التحقق — دار العلوم</title>
+</head>
+<body style="margin:0;padding:24px;background:#f8faf8;font-family:system-ui,-apple-system,'Segoe UI',Tahoma,Arial,sans-serif;">
+  <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.05);">
+    <div style="background:linear-gradient(135deg,#064e3b,#059669);padding:26px 20px;text-align:center;">
+      <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:bold;">دار العلوم</h1>
+      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">رمز التحقق من البريد الإلكتروني</p>
     </div>
-    <div style="padding:28px 24px;color:#24312b;font-size:14px;line-height:2;text-align:center;">
-      <p style="margin:0 0 16px;">رمز التحقق الخاص بك هو:</p>
-      <div dir="ltr" style="font-size:34px;font-weight:bold;letter-spacing:8px;color:#1c5c46;background:#f7f5f0;border:1px solid #e8e2d5;border-radius:8px;padding:14px 0;margin:0 0 16px;">${code}</div>
-      <p style="margin:0 0 8px;color:#4a6357;font-size:13px;">الرمز صالح لمدة 10 دقائق، ولا تشاركه مع أحد.</p>
-      <p dir="ltr" style="margin:16px 0 0;color:#7a8a82;font-size:12px;">Your code is valid for 10 minutes. Do not share it with anyone.</p>
+    <div style="padding:28px 24px;color:#1f2937;font-size:14px;line-height:1.8;text-align:center;">
+      <p style="margin:0 0 16px;color:#4b5563;">السلام عليكم ورحمة الله وبركاته، رمز التحقق الخاص بك هو:</p>
+      <div dir="ltr" style="font-size:36px;font-weight:900;letter-spacing:10px;color:#047857;background:#f0fdf4;border:2px dashed #10b981;border-radius:12px;padding:16px 0;margin:0 0 16px;font-family:monospace;">${code}</div>
+      <p style="margin:0;color:#6b7280;font-size:13px;">الرمز صالح لمدة <strong>10 دقائق</strong> فقط. لا تشارك هذا الرمز مع أي شخص.</p>
     </div>
   </div>
 </body>

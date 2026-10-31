@@ -68,19 +68,19 @@ export default function VideoCard({
             )}
             {video.video_type === "short" && (
               <span className="px-1.5 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold shadow-md">
-                شورت
+                {t.shortLabel || "شورت"}
               </span>
             )}
             {video.video_type === "live" && (
               <span className="px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold flex items-center gap-1 shadow-md animate-pulse">
-                <Radio className="w-2.5 h-2.5" /> مباشر
+                <Radio className="w-2.5 h-2.5" /> {t.liveLabel || "مباشر"}
               </span>
             )}
           </div>
 
           {isWatched && (
             <span className="px-1.5 py-0.5 rounded-md bg-black/75 backdrop-blur-sm text-emerald-400 text-[10px] font-medium flex items-center gap-1 shadow">
-              <CheckCircle className="w-3 h-3" /> تمّت المشاهدة
+              <CheckCircle className="w-3 h-3" /> {t.watched || "تمّت المشاهدة"}
             </span>
           )}
         </div>
@@ -155,7 +155,7 @@ export default function VideoCard({
             size="icon"
             variant="ghost"
             className="h-8 w-8 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            title="مشاركة الرابط"
+            title={t.shareLink || "مشاركة الرابط"}
             onClick={() => onShare(video)}
           >
             <Share2 className="w-3.5 h-3.5" />

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import PdfPageRenderer from "./PdfPageRenderer";
 import { motion, AnimatePresence } from "framer-motion";
+import { useT } from "@/lib/i18n";
 
 const DEFAULT_RATIO = 0.707; // Standard portrait aspect ratio (width / height)
 const RENDER_BUFFER = 2; // Pre-render currentPage ± 2 pages
@@ -58,6 +59,7 @@ export default function VerticalPageStream({
   scrollToPageRef,
   onToggleToolbar,
 }) {
+  const t = useT();
   const scrollRef = useRef(null);
   const [baseRatio, setBaseRatio] = useState(DEFAULT_RATIO);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -352,7 +354,7 @@ export default function VerticalPageStream({
             <div
               onClick={(e) => { e.stopPropagation(); handleZoneClick("prev"); }}
               className="cursor-pointer group flex items-center justify-start ps-3"
-              title={isRTL ? "الصفحة التالية" : "الصفحة السابقة"}
+              title={isRTL ? (t.nextPage || "الصفحة التالية") : (t.prevPage || "الصفحة السابقة")}
             >
               <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
                 <ChevronLeft className="w-5 h-5" />
@@ -369,7 +371,7 @@ export default function VerticalPageStream({
             <div
               onClick={(e) => { e.stopPropagation(); handleZoneClick("next"); }}
               className="cursor-pointer group flex items-center justify-end pe-3"
-              title={isRTL ? "الصفحة السابقة" : "الصفحة التالية"}
+              title={isRTL ? (t.prevPage || "الصفحة السابقة") : (t.nextPage || "الصفحة التالية")}
             >
               <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
                 <ChevronRight className="w-5 h-5" />

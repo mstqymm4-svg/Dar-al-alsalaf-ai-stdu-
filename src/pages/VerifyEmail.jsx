@@ -16,8 +16,10 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { getAccountEmail, setAccountEmail } from "@/lib/activeUser";
+import { useT } from "@/lib/i18n";
 
 export default function VerifyEmail() {
+  const t = useT();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -77,13 +79,13 @@ export default function VerifyEmail() {
 
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail) {
-      setErrorMsg("يرجى إدخال البريد الإلكتروني");
+      setErrorMsg(t.pleaseEnterEmail || "يرجى إدخال البريد الإلكتروني");
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      setErrorMsg("صيغة البريد الإلكتروني غير صحيحة");
+      setErrorMsg(t.invalidEmail || "صيغة البريد الإلكتروني غير صحيحة");
       return;
     }
 
@@ -98,7 +100,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "حدث خطأ أثناء إرسال رمز التحقق";
+        const errorText = data.error || (t.sendFailed || "حدث خطأ أثناء إرسال رمز التحقق");
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -107,14 +109,14 @@ export default function VerifyEmail() {
         return;
       }
 
-      toast.success(data.message || "تم إرسال رمز التحقق بنجاح");
+      toast.success(data.message || (t.resendSuccess || "تم إرسال رمز التحقق بنجاح"));
       setStep("otp");
       setCountdown(60); // 60 seconds cooldown
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
     } catch (err) {
-      setErrorMsg("تعذر الاتصال بالخادم، يرجى المحاولة مرة أخرى.");
-      toast.error("تعذر الاتصال بالخادم");
+      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم، يرجى المحاولة مرة أخرى.");
+      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
@@ -138,7 +140,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "تعذر إعادة إرسال الرمز";
+        const errorText = data.error || (t.sendFailed || "تعذر إعادة إرسال الرمز");
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -147,13 +149,13 @@ export default function VerifyEmail() {
         return;
       }
 
-      toast.success("تم إرسال رمز تحقق جديد بنجاح ✓");
+      toast.success(t.resendSuccess || "تم إرسال رمز تحقق جديد بنجاح ✓");
       setCountdown(60);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
       if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();
     } catch (err) {
-      toast.error("فشل في إعادة الإرسال");
+      toast.error(t.serverConnError || "فشل في إعادة الإرسال");
     } finally {
       setResending(false);
     }
@@ -226,7 +228,7 @@ export default function VerifyEmail() {
 
     const fullCode = otp.join("");
     if (fullCode.length !== 6) {
-      setErrorMsg("يرجى إدخال جميع أرقام الرمز الستة");
+      setErrorMsg(t.enterAll6Digits || "يرجى إدخال جميع أرقام الرمز الستة");
       return;
     }
 
@@ -244,7 +246,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || "رمز التحقق غير صحيح";
+        const errorText = data.error || (t.invalidOtp || "رمز التحقق غير صحيح");
         setErrorMsg(errorText);
         toast.error(errorText);
 
@@ -253,7 +255,7 @@ export default function VerifyEmail() {
         }
 
         // If expired or exceeded, clear otp boxes
-        if (errorText.includes("طلب رمز جديد")) {
+        if (errorText.includes("طلب رمز جديد") || (data.remainingAttempts !== undefined && data.remainingAttempts <= 0)) {
           setOtp(["", "", "", "", "", ""]);
         }
         return;
@@ -268,11 +270,11 @@ export default function VerifyEmail() {
         window.dispatchEvent(new Event("dau-email-change"));
       } catch (err) {}
 
-      toast.success(data.message || "تم التحقق من البريد بنجاح ✓");
+      toast.success(data.message || (t.linkedSuccess || "تم التحقق من البريد بنجاح ✓"));
       setStep("success");
     } catch (err) {
-      setErrorMsg("تعذر الاتصال بالخادم للتحقق من الرمز");
-      toast.error("تعذر الاتصال بالخادم");
+      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم للتحقق من الرمز");
+      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
     } finally {
       setLoading(false);
     }
@@ -293,11 +295,11 @@ export default function VerifyEmail() {
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ChevronLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
-            <span>العودة للإعدادات</span>
+            <span>{t.backToSettings || "العودة للإعدادات"}</span>
           </Link>
 
           <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-            دار العلوم
+            {t.brandName || "دار العلوم"}
           </span>
         </div>
 
@@ -318,17 +320,17 @@ export default function VerifyEmail() {
                   <Mail className="w-7 h-7" />
                 </div>
                 <h1 className="text-xl font-bold text-foreground">
-                  التحقق من البريد الإلكتروني
+                  {t.verifyEmailTitle || "التحقق من البريد الإلكتروني"}
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  أدخل بريدك الإلكتروني لاستلام رمز تحقق فوري (OTP) لحماية حسابك
+                  {t.verifyEmailSub || "أدخل بريدك الإلكتروني لاستلام رمز تحقق فوري (OTP) لحماية حسابك"}
                 </p>
               </div>
 
               <form onSubmit={handleSendOtp} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-foreground block">
-                    البريد الإلكتروني
+                    {t.email || "البريد الإلكتروني"}
                   </label>
                   <div className="relative group">
                     <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
@@ -355,7 +357,7 @@ export default function VerifyEmail() {
                 <div className="p-3.5 rounded-xl bg-muted/40 border border-border/80 text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2.5">
                   <Lock className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                   <span>
-                    يُرسل الرمز مباشرة عبر خادم Gmail الرسمي لدار العلوم، وصالح للاستخدام لمدة 10 دقائق.
+                    {t.gmailOtpNotice || "يُرسل الرمز مباشرة عبر خادم Gmail الرسمي لدار العلوم، وصالح للاستخدام لمدة 10 دقائق."}
                   </span>
                 </div>
 
@@ -367,11 +369,11 @@ export default function VerifyEmail() {
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>جاري إرسال الرمز...</span>
+                      <span>{t.sendingOtp || "جاري إرسال الرمز..."}</span>
                     </>
                   ) : (
                     <>
-                      <span>إرسال رمز التحقق</span>
+                      <span>{t.sendOtpBtn || "إرسال رمز التحقق"}</span>
                       <ArrowLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
                     </>
                   )}
@@ -396,10 +398,10 @@ export default function VerifyEmail() {
                   <ShieldCheck className="w-7 h-7" />
                 </div>
                 <h1 className="text-xl font-bold text-foreground">
-                  أدخل رمز التحقق
+                  {t.enterOtp6Digits || "أدخل رمز التحقق"}
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1">
-                  تم إرسال رمز التحقق المكون من 6 أرقام إلى:
+                  {t.otpSentTo || "تم إرسال رمز التحقق المكون من 6 أرقام إلى:"}
                 </p>
                 <div className="inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-lg bg-muted text-xs font-mono font-medium text-foreground">
                   <span dir="ltr">{email}</span>
@@ -410,7 +412,7 @@ export default function VerifyEmail() {
                     }}
                     className="text-primary hover:underline font-sans text-[11px] mr-1"
                   >
-                    (تعديل)
+                    ({t.editEmail || "تعديل"})
                   </button>
                 </div>
               </div>
@@ -451,7 +453,7 @@ export default function VerifyEmail() {
                   <div>
                     {countdown > 0 ? (
                       <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
-                        <span>إعادة الإرسال بعد:</span>
+                        <span>{t.resendAfter || "إعادة الإرسال بعد:"}</span>
                         <span className="font-mono font-bold text-primary">
                           {Math.floor(countdown / 60)}:
                           {(countdown % 60).toString().padStart(2, "0")}
@@ -465,13 +467,13 @@ export default function VerifyEmail() {
                         className="text-primary font-bold hover:underline flex items-center gap-1"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${resending ? "animate-spin" : ""}`} />
-                        <span>إعادة إرسال الرمز</span>
+                        <span>{t.resendCode || "إعادة إرسال الرمز"}</span>
                       </button>
                     )}
                   </div>
 
                   <span className="text-[11px] opacity-75">
-                    صلاحية الرمز: 10 دقائق
+                    {t.otpCodeValidity || "صلاحية الرمز: 10 دقائق"}
                   </span>
                 </div>
 
@@ -483,12 +485,12 @@ export default function VerifyEmail() {
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>جاري التحقق...</span>
+                      <span>{t.verifyingOtp || "جاري التحقق..."}</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>تأكيد الرمز</span>
+                      <span>{t.verifyCodeBtn || "تأكيد الرمز"}</span>
                     </>
                   )}
                 </Button>
@@ -513,16 +515,17 @@ export default function VerifyEmail() {
 
               <div>
                 <h1 className="text-xl font-bold text-foreground">
-                  تم تأكيد البريد بنجاح!
+                  {t.otpSuccessTitle || "تم تأكيد البريد بنجاح!"}
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  تم التحقق من بريدك الإلكتروني (<span dir="ltr" className="font-mono font-medium">{email}</span>) وأصبح حسابك مؤكداً ومحمياً.
+                  {t.otpSuccessDesc2 || "تم التحقق من بريدك الإلكتروني بنجاح وأصبح حسابك مؤكداً ومحمياً."}
+                  <span className="block mt-1 font-mono font-medium text-foreground" dir="ltr">{email}</span>
                 </p>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 font-medium flex items-center justify-center gap-2">
                 <ShieldCheck className="w-4 h-4" />
-                <span>حسابك الآن يحمل شارة الحماية المعتمدة في دار العلوم</span>
+                <span>{t.otpSuccessBadgeDesc || "حسابك الآن يحمل شارة الحماية المعتمدة في دار العلوم"}</span>
               </div>
 
               <div className="pt-2">
@@ -530,7 +533,7 @@ export default function VerifyEmail() {
                   onClick={() => navigate("/settings")}
                   className="w-full h-11 rounded-[4px_20px_4px_20px] font-bold text-sm gap-2"
                 >
-                  <span>العودة إلى الإعدادات</span>
+                  <span>{t.backToSettings || "العودة إلى الإعدادات"}</span>
                   <ArrowLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
                 </Button>
               </div>

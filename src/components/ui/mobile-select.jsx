@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/drawer";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 /**
  * Select component that renders as a bottom-drawer (Vaul) on mobile
@@ -34,6 +35,7 @@ export function MobileSelect({
   placeholder,
   triggerClassName,
 }) {
+  const t = useT();
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
 
@@ -78,7 +80,7 @@ export function MobileSelect({
       </DrawerTrigger>
       <DrawerContent>
         <DrawerHeader className="pb-2">
-          <DrawerTitle>{placeholder || "اختر"}</DrawerTitle>
+          <DrawerTitle>{placeholder || t.selectOption || "اختر"}</DrawerTitle>
         </DrawerHeader>
         <div className="px-2 pb-6 max-h-[50vh] overflow-y-auto">
           {options.map((opt) => (
