@@ -72,24 +72,20 @@ export default function ProfileCard() {
     load();
   }, []);
 
-  // Listen for email verification events across the app
+  // Listen for email verification & logout events across the app
   useEffect(() => {
-    const onVerified = () => {
-      const em = getAccountEmail(user);
-      if (em) {
-        setLinkedEmail(em);
-        try {
-          setVerified(localStorage.getItem(`email_verified_${em}`) === "1");
-        } catch {}
-      }
+    const onAuthEvent = () => {
+      load();
     };
-    window.addEventListener("dau-email-verified", onVerified);
-    window.addEventListener("dau-email-change", onVerified);
+    window.addEventListener("dau-email-verified", onAuthEvent);
+    window.addEventListener("dau-email-change", onAuthEvent);
+    window.addEventListener("dau-avatar-change", onAuthEvent);
     return () => {
-      window.removeEventListener("dau-email-verified", onVerified);
-      window.removeEventListener("dau-email-change", onVerified);
+      window.removeEventListener("dau-email-verified", onAuthEvent);
+      window.removeEventListener("dau-email-change", onAuthEvent);
+      window.removeEventListener("dau-avatar-change", onAuthEvent);
     };
-  }, [user]);
+  }, []);
 
   const load = async () => {
     const rawUser = await base44.auth.me().catch(() => null);
@@ -104,18 +100,22 @@ export default function ProfileCard() {
       savedName = localStorage.getItem(FULL_NAME_KEY) || "";
     } catch {}
     const nameToUse = u?.full_name || savedName || "";
-    if (nameToUse) setFullName(nameToUse);
+    setFullName(nameToUse);
 
-    const em = getAccountEmail(u);
+    const em = (getAccountEmail(u) || "").trim();
+    setLinkedEmail(em);
+    setAvatar(em ? getAvatarUrl(em) : "");
+
     if (em) {
-      setLinkedEmail(em);
-      setAvatar(getAvatarUrl(em));
       try {
         setVerified(localStorage.getItem(`email_verified_${em}`) === "1");
       } catch {
         setVerified(false);
       }
+    } else {
+      setVerified(false);
     }
+
     refreshStats(em);
     loadRecentReads();
   };
@@ -236,7 +236,7 @@ export default function ProfileCard() {
       </div>
 
       {/* Avatar + identity */}
-      <div className="px-5 sm:px-6 -mt-10">
+      <div className="px-4 sm:px-6 -mt-10">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
           <div className="relative self-start">
             <div className="p-[3px] rounded-full bg-gradient-to-br from-primary via-accent to-primary shadow-lg">
@@ -270,9 +270,9 @@ export default function ProfileCard() {
               )}
             </button>
           </div>
-          <div className="pb-1 min-w-0 sm:text-end">
-            <div className="flex items-center gap-1.5 sm:justify-end">
-              <p className="font-bold text-base text-foreground truncate">
+          <div className="pb-1 min-w-0 w-full sm:w-auto sm:text-end">
+            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+              <p className="font-bold text-base text-foreground break-words">
                 {fullName || t.userDefaultName || "مستخدم دار العلوم"}
               </p>
               {verified && (
@@ -282,7 +282,7 @@ export default function ProfileCard() {
                 </span>
               )}
             </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5" dir="ltr">
+            <p className="text-xs text-muted-foreground break-all mt-0.5" dir="ltr">
               {linkedEmail || t.noLinkedEmail || "لا يوجد بريد مرتبط"}
             </p>
           </div>
@@ -290,21 +290,21 @@ export default function ProfileCard() {
       </div>
 
       {/* Profile Form Fields */}
-      <div className="px-5 sm:px-6 pt-5 space-y-5">
+      <div className="px-4 sm:px-6 pt-5 space-y-5">
         {/* Full Name */}
         <div className="space-y-1.5">
           <Label className="text-xs font-bold">{t.fullName}</Label>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <Input
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder={t.fullNamePlaceholder || "اكتب اسمك الكامل..."}
-              className="rounded-xl bg-background"
+              className="rounded-xl bg-background text-sm flex-1 h-10"
             />
             <Button
               onClick={handleSaveName}
               disabled={savingName}
-              className="gap-1.5 rounded-[4px_20px_4px_20px] shrink-0 text-xs px-4"
+              className="gap-1.5 rounded-xl shrink-0 text-xs px-4 h-10 w-full sm:w-auto"
             >
               {savingName ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -318,12 +318,12 @@ export default function ProfileCard() {
 
         {/* Linked Email Section */}
         <div className="space-y-2 pt-2 border-t border-border/60">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
             <Label className="text-xs font-bold flex items-center gap-1.5">
               <Mail className="w-3.5 h-3.5 text-primary" />
               <span>{t.linkedEmailTitle || "البريد الإلكتروني المرتبط بالحساب"}</span>
             </Label>
-            {verified && !isChangingEmail && (
+            {verified && (
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
                 <ShieldCheck className="w-3 h-3" />
                 <span>{t.verifiedSuccessBadge || "متحقق منه بنجاح"}</span>
@@ -333,15 +333,15 @@ export default function ProfileCard() {
 
           {/* Condition 1: User has verified linked email -> LOCKED & UNMODIFIABLE */}
           {verified ? (
-            <div className="p-4 rounded-2xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-2.5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-xs">
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-xs mt-0.5 sm:mt-0">
                     <Lock className="w-4 h-4" />
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-bold text-foreground truncate font-mono" dir="ltr">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="text-xs sm:text-sm font-bold text-foreground break-all font-mono" dir="ltr">
                         {linkedEmail}
                       </p>
                       <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
@@ -355,16 +355,16 @@ export default function ProfileCard() {
                   </div>
                 </div>
 
-                <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[11px] font-bold">
+                <div className="self-start sm:self-auto shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[11px] font-bold">
                   <Lock className="w-3 h-3 text-emerald-600" />
-                  <span>غير قابل للتعديل</span>
+                  <span>{t.nonEditable || "غير قابل للتعديل"}</span>
                 </div>
               </div>
 
-              <div className="pt-2 border-t border-emerald-500/15 text-[11px] text-muted-foreground leading-relaxed flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <div className="pt-2 border-t border-emerald-500/15 text-[11px] text-muted-foreground leading-relaxed flex items-start sm:items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5 sm:mt-0" />
                 <span>
-                  {t.lockedEmailNotice || "تم توثيق هذا البريد بنجاح ولا يمكن تعديله أو حذفه للحفاظ على أمان حسابك وبياناتك."}
+                  {t.lockedEmailNotice || "تم توثيق هذا البريد بنجاح ولا يمكن تعديله للحفاظ على أمان حسابك وبياناتك."}
                 </span>
               </div>
             </div>

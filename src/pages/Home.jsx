@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { BookOpen, Sparkles, Youtube, ExternalLink, ChevronLeft } from "lucide-react";
 import BookCard from "../components/BookCard";
 import HeroBanner from "../components/HeroBanner";
+import LiveStreamBanner from "../components/LiveStreamBanner";
 import SocialChannelsSection from "../components/SocialChannelsSection";
 import HomeChannels from "../components/HomeChannels";
 import { SkeletonGrid } from "../components/Skeleton";
@@ -83,6 +84,9 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
         {/* Hero */}
         <HeroBanner />
+
+        {/* Automatic Live Stream from YouTube Channels */}
+        <LiveStreamBanner />
 
         {/* YouTube Channel Banner */}
         {youtubeUrl && (

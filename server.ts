@@ -523,10 +523,108 @@ async function startServer() {
     }
   });
 
+  // API endpoint to check if any of the given YouTube channels are currently LIVE
+  app.post('/api/check-live-streams', async (req, res) => {
+    const { channels = [] } = req.body;
+    if (!Array.isArray(channels) || channels.length === 0) {
+      return res.json({ success: true, liveStreams: [] });
+    }
+
+    const fetchHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept-Language': 'ar,en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    };
+
+    const liveStreams: any[] = [];
+
+    const checkChannelLive = async (ch: { id?: string; name?: string; youtube_url?: string }) => {
+      let channelUrl = (ch.youtube_url || '').trim();
+      if (!channelUrl) return null;
+
+      if (channelUrl.startsWith('@')) {
+        channelUrl = `https://www.youtube.com/${channelUrl}`;
+      } else if (!channelUrl.startsWith('http')) {
+        channelUrl = `https://www.youtube.com/@${channelUrl}`;
+      }
+
+      const baseUrl = channelUrl.replace(/\/(videos|featured|shorts|playlists|community|live)\/?$/, '');
+      const livePageUrl = `${baseUrl}/live`;
+
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+
+        const response = await fetch(livePageUrl, {
+          headers: fetchHeaders,
+          redirect: 'follow',
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) return null;
+
+        const html = await response.text();
+
+        const isLive =
+          html.includes('"isLive":true') ||
+          html.includes('"isLiveContent":true') ||
+          html.includes('BADGE_STYLE_TYPE_LIVE_NOW') ||
+          html.includes('"status":"LIVE"') ||
+          html.includes('"LIVE_NOW"');
+
+        if (!isLive) return null;
+
+        const finalUrl = response.url || '';
+        const vIdMatch =
+          finalUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/) ||
+          html.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+
+        if (!vIdMatch) return null;
+        const videoId = vIdMatch[1];
+
+        let title = '';
+        const titleMatch =
+          html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
+          html.match(/<title>([^<]+?)(?:\s*-\s*YouTube)?<\/title>/i) ||
+          html.match(/"title":\s*\{\s*"runs":\s*\[\s*\{\s*"text":"([^"]+)"/i);
+        if (titleMatch) title = decodeHtml(titleMatch[1]);
+
+        return {
+          id: `live_${videoId}`,
+          videoId,
+          title: title || `${ch.name || 'بث مباشر'} - مباشر الآن`,
+          channel_id: ch.id || '',
+          channel_name: ch.name || '',
+          youtube_url: `https://www.youtube.com/watch?v=${videoId}`,
+          thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+          video_type: 'live',
+          is_live: true,
+          duration: 'مباشر',
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    try {
+      const results = await Promise.all(channels.map((ch) => checkChannelLive(ch)));
+      for (const item of results) {
+        if (item) liveStreams.push(item);
+      }
+      return res.json({ success: true, liveStreams });
+    } catch {
+      return res.json({ success: true, liveStreams: [] });
+    }
+  });
+
   // Vite middleware setup for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -537,10 +635,32 @@ async function startServer() {
     });
   }
 
-  const PORT = process.env.PORT || 3000;
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  // Determine port: AI Studio requires port 3000
+  const portArgIdx = process.argv.indexOf('--port');
+  const cliPort = portArgIdx !== -1 && process.argv[portArgIdx + 1] ? Number(process.argv[portArgIdx + 1]) : null;
+  const PORT = cliPort || (process.env.PORT === '3000' ? 3000 : 3000);
+
+  const hostArgIdx = process.argv.indexOf('--host');
+  const HOST = hostArgIdx !== -1 && process.argv[hostArgIdx + 1] ? process.argv[hostArgIdx + 1] : '0.0.0.0';
+
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    console.error('Server listen error:', err);
   });
 }
 
-startServer();
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+});
+

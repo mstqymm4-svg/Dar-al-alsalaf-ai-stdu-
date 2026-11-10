@@ -748,9 +748,24 @@ const UserEntity = createLocalBackedEntity("User", [DEFAULT_OWNER_USER]);
 
 function readCurrentUserProfile() {
   try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("dau_logged_out") === "true" && !auth.currentUser) {
+      return null;
+    }
+  } catch {}
+
+  try {
     const raw = localStorage.getItem(USER_PROFILE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
+
+  const savedEmail = (() => {
+    try {
+      return localStorage.getItem("dau_account_email") || "";
+    } catch {
+      return "";
+    }
+  })();
+
   const savedName = (() => {
     try {
       return localStorage.getItem("dau_full_name") || "";
@@ -758,22 +773,31 @@ function readCurrentUserProfile() {
       return "";
     }
   })();
-  const savedEmail = (() => {
-    try {
-      return localStorage.getItem("dau_account_email") || OWNER_EMAIL;
-    } catch {
-      return OWNER_EMAIL;
-    }
-  })();
+
+  if (!savedEmail && !auth.currentUser?.email) {
+    return null;
+  }
+
+  const effectiveEmail = savedEmail || auth.currentUser?.email || "";
+  if (!effectiveEmail) return null;
+
   return {
     ...DEFAULT_OWNER_USER,
-    email: savedEmail || OWNER_EMAIL,
-    full_name: savedName || DEFAULT_OWNER_USER.full_name,
+    id: auth.currentUser?.uid ? sanitizeId(auth.currentUser.uid, "usr") : "usr_current",
+    uid: auth.currentUser?.uid ? sanitizeId(auth.currentUser.uid, "usr") : "usr_current",
+    email: effectiveEmail,
+    full_name: savedName || auth.currentUser?.displayName || (effectiveEmail.split("@")[0]) || DEFAULT_OWNER_USER.full_name,
   };
 }
 
 function writeCurrentUserProfile(profile) {
   try {
+    if (!profile) {
+      localStorage.removeItem(USER_PROFILE_KEY);
+      localStorage.removeItem("dau_full_name");
+      localStorage.removeItem("dau_account_email");
+      return;
+    }
     localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(profile));
     if (profile?.full_name) localStorage.setItem("dau_full_name", profile.full_name);
     if (profile?.email) localStorage.setItem("dau_account_email", profile.email);
@@ -782,15 +806,24 @@ function writeCurrentUserProfile(profile) {
 
 // Keep user profile synced when Firebase Auth state changes
 onAuthStateChanged(auth, async (fbUser) => {
-  if (!fbUser) return;
-  const current = readCurrentUserProfile();
+  if (!fbUser) {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("dau-email-change"));
+      window.dispatchEvent(new Event("dau-email-verified"));
+    }
+    return;
+  }
+  try {
+    localStorage.removeItem("dau_logged_out");
+  } catch {}
+  const current = readCurrentUserProfile() || {};
   const isOwner =
     fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const now = new Date().toISOString();
   const syncedProfile = {
     id: sanitizeId(fbUser.uid, "usr"),
     uid: sanitizeId(fbUser.uid, "usr"),
-    email: truncStr(fbUser.email || current.email || OWNER_EMAIL, 256),
+    email: truncStr(fbUser.email || current.email || "", 256),
     full_name: truncStr(
       fbUser.displayName || current.full_name || "مستخدم دار العلوم",
       200
@@ -1032,13 +1065,27 @@ export const base44 = {
     },
 
     async isAuthenticated() {
-      return true;
+      return !!readCurrentUserProfile();
     },
 
     async logout(redirectUrl) {
       try {
+        localStorage.setItem("dau_logged_out", "true");
+        localStorage.removeItem(USER_PROFILE_KEY);
+        localStorage.removeItem("dau_account_email");
+        localStorage.removeItem("dau_full_name");
+        localStorage.removeItem("base44_access_token");
+        localStorage.removeItem("token");
+        Object.keys(localStorage).forEach((k) => {
+          if (k.startsWith("email_verified_")) localStorage.removeItem(k);
+        });
         await auth.signOut();
       } catch {}
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dau-email-change"));
+        window.dispatchEvent(new Event("dau-email-verified"));
+        window.dispatchEvent(new Event("dau-avatar-change"));
+      }
       if (redirectUrl && typeof window !== "undefined") {
         window.location.href = redirectUrl;
       }
@@ -1046,6 +1093,7 @@ export const base44 = {
 
     async redirectToLogin() {
       try {
+        localStorage.removeItem("dau_logged_out");
         await googleSignIn();
       } catch {}
     },

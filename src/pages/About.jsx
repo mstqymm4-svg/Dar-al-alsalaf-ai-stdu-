@@ -34,7 +34,7 @@ export default function About() {
 
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" dir="rtl">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8" dir={t.dir || "rtl"}>
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         {/* Hero */}
         <div className="relative overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/10 via-card to-accent/10 p-8 sm:p-10 mb-8">

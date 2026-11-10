@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import ShortsPlayerModal from "@/components/ShortsPlayerModal";
 import VideoCard from "@/components/VideoCard";
+import LiveStreamBanner from "@/components/LiveStreamBanner";
 import { PageSpinner } from "@/components/Skeleton";
 import { useT } from "@/lib/i18n";
 import { base44 } from "@/api/base44Client";
@@ -382,6 +383,9 @@ export default function Videos() {
 
       {/* ─── Main Content Container ─────────────────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-8">
+        {/* Automatic Live Stream from Channels */}
+        <LiveStreamBanner onPlayLive={(stream) => handlePlayVideo(stream)} />
+
         {/* Header Title when on simple view */}
         {!selectedChannel && (search || category !== "all" || videoTypeFilter !== "all" || !featuredVideo) && (
           <div className="flex items-center justify-between border-b border-border pb-4">
@@ -576,9 +580,9 @@ export default function Videos() {
         {(search || selectedChannelId !== "all" || category !== "all" || videoTypeFilter !== "all") && (
           <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
             <p>
-              {t.foundVideos ? t.foundVideos.replace("{count}", String(filtered.length)) : `تم العثور على ${filtered.length} مقطع فيديو`}
+              <span>{t.foundVideos || "تم العثور على فيديوهات"}: {filtered.length}</span>
               {selectedChannelId !== "all" && channelsById[selectedChannelId] && (
-                <> {t.inChannel ? t.inChannel.replace("{name}", channelsById[selectedChannelId].name) : `في قناة ${channelsById[selectedChannelId].name}`}</>
+                <span> — {t.inChannel || "في القناة"} {channelsById[selectedChannelId].name}</span>
               )}
             </p>
             <button

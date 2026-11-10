@@ -58,9 +58,9 @@ export default function ShortsPlayerModal({
       setDirection(1);
       setCurrentIndex((prev) => prev + 1);
     } else {
-      toast.info("وصلت إلى آخر مقطع قصير");
+      toast.info(t.reachedLastShort || "وصلت إلى آخر مقطع قصير");
     }
-  }, [currentIndex, list.length]);
+  }, [currentIndex, list.length, t.reachedLastShort]);
 
   const goToPrev = useCallback(() => {
     if (currentIndex > 0) {

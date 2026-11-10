@@ -492,7 +492,7 @@ export function ThemeComfortPanel({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 40 }}
             transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className={`w-full sm:w-96 max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[85vh] overflow-y-auto p-5 sm:p-6 shadow-2xl space-y-4 border ${surfaceCls}`}
+            className={`w-full sm:w-[440px] max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[85vh] overflow-y-auto p-4 sm:p-6 shadow-2xl space-y-4 border ${surfaceCls}`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-2 border-b border-border/40">
@@ -509,7 +509,7 @@ export function ThemeComfortPanel({
 
           {/* Theme Swatches */}
           <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block">
+            <span className="text-[11px] text-muted-foreground block font-medium">
               {t.paperThemeLabel || "سمة الورق والإضاءة"}
             </span>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -517,15 +517,15 @@ export function ThemeComfortPanel({
                 <button
                   key={th.id}
                   onClick={() => onSelectTheme(th.id)}
-                  className={`px-2.5 py-2 rounded-xl border text-xs font-medium transition-all flex items-center justify-center ${
+                  className={`px-2 py-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center text-center leading-tight min-h-[42px] ${
                     th.swatch
                   } ${
                     theme === th.id
-                      ? "ring-2 ring-primary font-bold scale-[1.02]"
+                      ? "ring-2 ring-primary font-bold scale-[1.02] shadow-xs"
                       : "opacity-80 hover:opacity-100"
                   }`}
                 >
-                  {th.label}
+                  <span className="break-words line-clamp-1">{th.label}</span>
                 </button>
               ))}
             </div>
@@ -533,10 +533,10 @@ export function ThemeComfortPanel({
 
           {/* View Mode */}
           <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block">
+            <span className="text-[11px] text-muted-foreground block font-medium">
               {t.viewModeLabel || "نمط عرض الصفحات"}
             </span>
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-3 gap-2">
               {viewModes.map((vm) => {
                 const Icon = vm.icon;
                 const active = viewMode === vm.id;
@@ -544,16 +544,16 @@ export function ThemeComfortPanel({
                   <button
                     key={vm.id}
                     onClick={() => onSelectViewMode(vm.id)}
-                    className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-xs font-medium transition-colors whitespace-nowrap ${
+                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 px-1.5 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center leading-tight min-h-[50px] ${
                       active
-                        ? "border-primary bg-primary/15 text-primary font-bold"
+                        ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
                         : darkMode
-                        ? "border-neutral-800 hover:bg-neutral-800"
-                        : "border-stone-200 hover:bg-stone-100"
+                        ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
+                        : "border-stone-200 hover:bg-stone-100 text-stone-700"
                     }`}
                   >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                    <span>{vm.label}</span>
+                    <Icon className="w-4 h-4 shrink-0 text-primary" />
+                    <span className="break-words line-clamp-2">{vm.label}</span>
                   </button>
                 );
               })}
@@ -563,35 +563,35 @@ export function ThemeComfortPanel({
           {/* Fit Mode */}
           {viewMode === "scroll" && (
             <div className="space-y-1.5">
-              <span className="text-[11px] text-muted-foreground block">
+              <span className="text-[11px] text-muted-foreground block font-medium">
                 {t.fitModeLabel || "ملائمة حجم الصفحة"}
               </span>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => onSelectFitMode("width")}
-                  className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl border text-xs font-medium transition-colors ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center min-h-[42px] ${
                     fitMode === "width"
-                      ? "border-primary bg-primary/15 text-primary font-bold"
+                      ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
                       : darkMode
-                      ? "border-neutral-800 hover:bg-neutral-800"
-                      : "border-stone-200 hover:bg-stone-100"
+                      ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
+                      : "border-stone-200 hover:bg-stone-100 text-stone-700"
                   }`}
                 >
-                  <MoveHorizontal className="w-3.5 h-3.5" />
-                  <span>{t.fitWidth || "ملائمة العرض"}</span>
+                  <MoveHorizontal className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span className="truncate">{t.fitWidth || "ملائمة العرض"}</span>
                 </button>
                 <button
                   onClick={() => onSelectFitMode("page")}
-                  className={`flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl border text-xs font-medium transition-colors ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center min-h-[42px] ${
                     fitMode === "page"
-                      ? "border-primary bg-primary/15 text-primary font-bold"
+                      ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
                       : darkMode
-                      ? "border-neutral-800 hover:bg-neutral-800"
-                      : "border-stone-200 hover:bg-stone-100"
+                      ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
+                      : "border-stone-200 hover:bg-stone-100 text-stone-700"
                   }`}
                 >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                  <span>{t.fitPage || "الصفحة كاملة"}</span>
+                  <Maximize2 className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span className="truncate">{t.fitPage || "الصفحة كاملة"}</span>
                 </button>
               </div>
             </div>
@@ -673,34 +673,33 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
   );
 }
 
-/** Recursive outline tree renderer. */
 function OutlineTree({ items, currentPage, onPageClick, darkMode, depth = 0 }) {
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-1">
       {items.map((item, i) => {
-        const isCurrent = item.pageNumber && item.pageNumber === currentPage;
+        const targetPage = Number(item.pageNumber) || 1;
+        const isCurrent = targetPage === currentPage;
         return (
           <div key={i}>
             <button
-              onClick={() => item.pageNumber && onPageClick(item.pageNumber)}
-              disabled={!item.pageNumber}
+              type="button"
+              onClick={() => onPageClick(targetPage)}
               className={`w-full text-start px-2.5 py-2 rounded-lg text-xs transition-colors flex items-center justify-between gap-2 ${
                 isCurrent
-                  ? "bg-primary/15 text-primary font-bold"
-                  : item.pageNumber
-                  ? darkMode
-                    ? "hover:bg-neutral-800 text-stone-200"
-                    : "hover:bg-stone-200/60 text-stone-800"
-                  : "text-muted-foreground/50 cursor-default"
+                  ? "bg-primary/15 text-primary font-bold border border-primary/30"
+                  : darkMode
+                  ? "hover:bg-neutral-800 text-stone-200"
+                  : "hover:bg-stone-200/60 text-stone-800"
               }`}
               style={{ paddingInlineStart: `${depth * 14 + 10}px` }}
             >
-              <span className="line-clamp-1">{item.title}</span>
-              {item.pageNumber && (
-                <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">
-                  {item.pageNumber}
-                </span>
-              )}
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCurrent ? "bg-primary" : "bg-muted-foreground/40"}`} />
+                <span className="line-clamp-1">{item.title}</span>
+              </div>
+              <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0 px-1.5 py-0.5 rounded bg-muted/40">
+                {targetPage}
+              </span>
             </button>
             {item.items?.length > 0 && (
               <OutlineTree

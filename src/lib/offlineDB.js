@@ -232,7 +232,36 @@ export async function cacheVideos(videos) {
   await txDone(store);
 }
 
+export async function clearAllCachedVideos() {
+  try {
+    const store = await tx("videos", "readwrite");
+    store.clear();
+    await txDone(store);
+  } catch {}
+}
+
+let _mediaPurged = false;
+export async function purgeOldSeedMediaOnce() {
+  if (_mediaPurged) return;
+  _mediaPurged = true;
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("dau_media_purged_v3") !== "true") {
+      localStorage.setItem("dau_media_purged_v3", "true");
+      await clearAllCachedVideos();
+      await clearAllCachedVideoChannels();
+      try {
+        localStorage.removeItem("dau_store_Video");
+        localStorage.removeItem("dau_store_VideoChannel");
+        localStorage.removeItem("dau_store_videos");
+        localStorage.removeItem("dau_store_video_channels");
+        localStorage.removeItem("video_favorites");
+      } catch {}
+    }
+  } catch {}
+}
+
 export async function getCachedVideos() {
+  await purgeOldSeedMediaOnce();
   const store = await tx("videos");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
@@ -250,6 +279,14 @@ export async function deleteCachedVideo(id) {
 }
 
 // ─── Video Channels ───────────────────────────────────────────────────────────
+export async function clearAllCachedVideoChannels() {
+  try {
+    const store = await tx("channels", "readwrite");
+    store.clear();
+    await txDone(store);
+  } catch {}
+}
+
 export async function cacheVideoChannels(channels) {
   const store = await tx("channels", "readwrite");
   for (const c of channels) {
@@ -259,6 +296,7 @@ export async function cacheVideoChannels(channels) {
 }
 
 export async function getCachedVideoChannels() {
+  await purgeOldSeedMediaOnce();
   const store = await tx("channels");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
