@@ -288,7 +288,8 @@ function createPublicCatalogEntity({
   async function loadLocalList() {
     const deleted = getDeletedIds();
     const cached = await getCachedAll().catch(() => []);
-    const base = cached && cached.length > 0 ? cached : seedList.map((x) => sanitizeFn(x));
+    const isInitialized = typeof localStorage !== "undefined" && localStorage.getItem(`dau_${collectionName}_initialized`) === "true";
+    const base = cached && cached.length > 0 ? cached : (isInitialized ? [] : seedList.map((x) => sanitizeFn(x)));
     return base
       .filter((item) => item && !deleted.has(String(item.id)))
       .map((item) => sanitizeFn(item, item));
@@ -309,8 +310,12 @@ function createPublicCatalogEntity({
 
       const localItems = await loadLocalList();
       const map = new Map();
-      // Add server docs
-      docs.forEach((d) => map.set(String(d.id), d));
+      // Add server docs that are not marked deleted
+      docs.forEach((d) => {
+        if (!deleted.has(String(d.id))) {
+          map.set(String(d.id), d);
+        }
+      });
       // Preserve local items not on server or newer
       localItems.forEach((local) => {
         const localId = String(local.id);
@@ -328,7 +333,7 @@ function createPublicCatalogEntity({
         }
       });
 
-      const merged = Array.from(map.values());
+      const merged = Array.from(map.values()).filter((item) => item && !deleted.has(String(item.id)));
       if (merged.length > 0) {
         hasSyncedFromFirestore = true;
         await cacheAll(merged).catch(() => {});
@@ -347,9 +352,6 @@ function createPublicCatalogEntity({
       }
       return localItems;
     } catch (error) {
-      if (error instanceof Error && error.message.includes("Missing or insufficient permissions")) {
-        handleFirestoreError(error, OperationType.LIST, collectionName);
-      }
       return loadLocalList();
     }
   }
@@ -376,11 +378,7 @@ function createPublicCatalogEntity({
             await cacheAll([item]).catch(() => {});
             return item;
           }
-        } catch (error) {
-          if (error instanceof Error && error.message.includes("Missing or insufficient permissions")) {
-            handleFirestoreError(error, OperationType.GET, `${collectionName}/${cleanId}`);
-          }
-        }
+        } catch {}
       }
       const all = await loadLocalList();
       return all.find((x) => x.id === cleanId || x.setting_key === id) || null;
@@ -389,12 +387,15 @@ function createPublicCatalogEntity({
     async create(payload) {
       const item = sanitizeFn(payload);
       unmarkDeletedId(item.id);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+      }
       await cacheAll([item]).catch(() => {});
       if (navigator.onLine && canWriteAdminFirestore()) {
         try {
           await setDoc(doc(db, collectionName, item.id), item);
         } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${item.id}`);
+          console.warn(`Firestore create deferred for ${collectionName}:`, error?.message);
         }
       }
       return item;
@@ -406,12 +407,15 @@ function createPublicCatalogEntity({
         { ...existing, ...payload, id: existing.id, updated_date: new Date().toISOString() },
         existing
       );
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+      }
       await cacheAll([updated]).catch(() => {});
       if (navigator.onLine && canWriteAdminFirestore()) {
         try {
           await setDoc(doc(db, collectionName, updated.id), updated);
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${updated.id}`);
+          console.warn(`Firestore update deferred for ${collectionName}:`, error?.message);
         }
       }
       return updated;
@@ -420,6 +424,9 @@ function createPublicCatalogEntity({
     async delete(id) {
       const cleanId = sanitizeId(id);
       markDeletedId(cleanId);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+      }
       if (deleteCached) {
         await deleteCached(cleanId).catch(() => {});
       }
@@ -427,7 +434,7 @@ function createPublicCatalogEntity({
         try {
           await deleteDoc(doc(db, collectionName, cleanId));
         } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, `${collectionName}/${cleanId}`);
+          console.warn(`Firestore delete deferred for ${collectionName}:`, error?.message);
         }
       }
       return { id: cleanId, deleted: true };

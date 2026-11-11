@@ -110,7 +110,11 @@ export async function getCachedBooks() {
   const store = await tx("books");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
+  if (typeof localStorage !== "undefined" && localStorage.getItem("dau_books_initialized") === "true") {
+    return [];
+  }
   if (Array.isArray(initialBooks) && initialBooks.length > 0) {
+    if (typeof localStorage !== "undefined") localStorage.setItem("dau_books_initialized", "true");
     await cacheBooks(initialBooks);
     return initialBooks;
   }
@@ -265,7 +269,11 @@ export async function getCachedVideos() {
   const store = await tx("videos");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
+  if (typeof localStorage !== "undefined" && localStorage.getItem("dau_videos_initialized") === "true") {
+    return [];
+  }
   if (Array.isArray(initialVideos) && initialVideos.length > 0) {
+    if (typeof localStorage !== "undefined") localStorage.setItem("dau_videos_initialized", "true");
     await cacheVideos(initialVideos);
     return initialVideos;
   }
@@ -300,7 +308,11 @@ export async function getCachedVideoChannels() {
   const store = await tx("channels");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
+  if (typeof localStorage !== "undefined" && localStorage.getItem("dau_video_channels_initialized") === "true") {
+    return [];
+  }
   if (Array.isArray(initialVideoChannels) && initialVideoChannels.length > 0) {
+    if (typeof localStorage !== "undefined") localStorage.setItem("dau_video_channels_initialized", "true");
     await cacheVideoChannels(initialVideoChannels);
     return initialVideoChannels;
   }

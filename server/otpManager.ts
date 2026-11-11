@@ -412,3 +412,100 @@ export async function verifyOtp(email: string, otp: string) {
     },
   };
 }
+
+/**
+ * Sends user contact form submissions directly to Dar Al Uloom official email
+ */
+export interface ContactMessagePayload {
+  name: string;
+  email: string;
+  message: string;
+  subject?: string;
+}
+
+export async function sendContactEmail(payload: ContactMessagePayload) {
+  const { name, email, message, subject } = payload;
+  const normalizedEmail = (email || '').toLowerCase().trim();
+  const senderName = (name || 'مستخدم دار العلوم').trim();
+  const bodyText = (message || '').trim();
+
+  if (!bodyText || !normalizedEmail) {
+    return {
+      status: 400,
+      data: { success: false, error: 'الاسم والبريد والرسالة حقول مطلوبة' },
+    };
+  }
+
+  loadEnv();
+  const officialRecipient = (process.env.CONTACT_EMAIL || process.env.GMAIL_USER || 'daraluloom258@gmail.com').trim();
+  const smtpUser = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
+
+  try {
+    const transporter = getTransporter();
+    const mailSubject = subject || `[دار العلوم — رسالة تواصل جديدة]: ${senderName}`;
+
+    await transporter.sendMail({
+      from: `"تطبيق دار العلوم" <${smtpUser}>`,
+      replyTo: normalizedEmail,
+      to: officialRecipient,
+      subject: mailSubject,
+      text: `رسالة تواصل جديدة من تطبيق دار العلوم:\n\nالاسم: ${senderName}\nالبريد: ${normalizedEmail}\n\nنص الرسالة:\n${bodyText}\n\n---\nتطبيق دار العلوم`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; direction: rtl; text-align: right; background-color: #f9fafb; padding: 24px;">
+          <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
+            <div style="background: linear-gradient(135deg, #064e3b, #047857); padding: 24px; color: #ffffff; text-align: center;">
+              <h2 style="margin: 0; font-size: 20px; font-weight: 800;">رسالة تواصل جديدة — دار العلوم</h2>
+              <p style="margin: 6px 0 0; font-size: 13px; opacity: 0.9;">وصلت رسالة جديدة من أحد مستخدمي التطبيق عبر صفحة تواصل معنا</p>
+            </div>
+            <div style="padding: 24px;">
+              <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px;">
+                <tr>
+                  <td style="padding: 8px 0; color: #6b7280; width: 100px;"><strong>الاسم:</strong></td>
+                  <td style="padding: 8px 0; color: #111827; font-weight: bold;">${senderName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #6b7280;"><strong>البريد:</strong></td>
+                  <td style="padding: 8px 0; color: #047857;"><a href="mailto:${normalizedEmail}">${normalizedEmail}</a></td>
+                </tr>
+                <tr>
+                  <td style="padding: 8px 0; color: #6b7280;"><strong>التاريخ:</strong></td>
+                  <td style="padding: 8px 0; color: #374151;">${new Date().toLocaleString('ar-SA')}</td>
+                </tr>
+              </table>
+              <div style="background: #f0fdf4; border-radius: 12px; padding: 18px; border: 1px solid #bbf7d0; border-right: 4px solid #059669;">
+                <p style="margin: 0 0 8px; font-size: 13px; color: #065f46;"><strong>نص الرسالة:</strong></p>
+                <p style="margin: 0; font-size: 15px; color: #1f2937; line-height: 1.8; white-space: pre-wrap;">${bodyText}</p>
+              </div>
+              <div style="margin-top: 24px; text-align: center;">
+                <a href="mailto:${normalizedEmail}?subject=رد:%20دار%20العلوم" style="display: inline-block; background: #047857; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: bold;">الرد مباشرة على المرسل</a>
+              </div>
+            </div>
+            <div style="background: #f9fafb; padding: 14px 24px; text-align: center; border-top: 1px solid #f3f4f6; font-size: 12px; color: #9ca3af;">
+              تطبيق دار العلوم — منصة المعرفة والبحث الإسلامي
+            </div>
+          </div>
+        </div>
+      `,
+    });
+
+    console.log(`[Contact Service] Message from ${normalizedEmail} successfully delivered to ${officialRecipient}`);
+    return {
+      status: 200,
+      data: {
+        success: true,
+        message: 'تم إرسال رسالتك بنجاح إلى إدارة تطبيق دار العلوم ✓',
+      },
+    };
+  } catch (err: any) {
+    console.error('[Contact Service] Failed to send contact email:', err?.message);
+    return {
+      status: 500,
+      data: {
+        success: false,
+        error: 'تعذر إرسال الرسالة إلى بريد التطبيق حالياً. يرجى المحاولة لاحقاً أو مراسلتنا عبر الرابط المباشر.',
+        details: err?.message,
+      },
+    };
+  }
+}
+

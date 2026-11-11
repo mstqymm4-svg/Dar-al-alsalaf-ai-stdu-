@@ -104,7 +104,7 @@ export default function VerticalPageStream({
     return () => ro.disconnect();
   }, []);
 
-  // ── Touch gestures: Pinch-to-zoom & horizontal swipe ──
+  // ── Touch gestures: Pinch-to-zoom with locked page anchor & horizontal swipe ──
   const onTouchStart = (e) => {
     const st = touchRef.current;
     if (e.touches.length === 2) {
@@ -112,6 +112,16 @@ export default function VerticalPageStream({
       st.mode = "pinch";
       st.dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       st.baseZoom = zoomRef.current;
+      isProgrammaticScrollRef.current = true;
+      st.anchorPage = currentPageRef.current || 1;
+      const curH = totalItemHeight;
+      st.oldItemH = curH;
+      if (scrollRef.current && curH > 0) {
+        const oldPageTop = (st.anchorPage - 1) * curH;
+        st.offsetInPage = Math.max(0, scrollRef.current.scrollTop - oldPageTop);
+      } else {
+        st.offsetInPage = 0;
+      }
     } else if (e.touches.length === 1) {
       st.mode = "single";
       st.startX = e.touches[0].clientX;
@@ -126,14 +136,25 @@ export default function VerticalPageStream({
       const [a, b] = e.touches;
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       if (st.dist > 0) {
-        setPinchZoom(clampZoom(st.baseZoom * (d / st.dist)));
+        const nextZ = clampZoom(st.baseZoom * (d / st.dist));
+        setPinchZoom(nextZ);
       }
     }
   };
 
   const finishPinch = () => {
+    const targetZoom = pinchZoom ?? zoom;
     if (pinchZoom != null) onZoomChange?.(pinchZoom);
     setPinchZoom(null);
+    if (scrollRef.current && touchRef.current.anchorPage && viewMode === "scroll") {
+      const p = touchRef.current.anchorPage;
+      const targetY = (p - 1) * totalItemHeight;
+      scrollRef.current.scrollTop = targetY;
+    }
+    clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 250);
   };
 
   const onTouchEnd = (e) => {
@@ -167,6 +188,16 @@ export default function VerticalPageStream({
 
   const effZoom = pinchZoom ?? zoom;
   const isZoomed = effZoom > 1.05;
+
+  // Keep scroll position firmly anchored to currentPage when pinchZoom or zoom changes
+  useEffect(() => {
+    const st = touchRef.current;
+    if (st.mode === "pinch" && scrollRef.current && st.anchorPage && viewMode === "scroll") {
+      const newPageTop = (st.anchorPage - 1) * totalItemHeight;
+      const ratio = st.oldItemH > 0 ? totalItemHeight / st.oldItemH : 1;
+      scrollRef.current.scrollTop = newPageTop + (st.offsetInPage * ratio);
+    }
+  }, [effZoom, totalItemHeight, viewMode]);
 
   // ── Calculate dimensions efficiently ──
   const { pageWidth, pageHeight } = useMemo(() => {

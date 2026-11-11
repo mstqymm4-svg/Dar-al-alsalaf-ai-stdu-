@@ -3,7 +3,7 @@ import { createServer as createViteServer } from 'vite';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendOtp, verifyOtp } from './server/otpManager';
+import { sendOtp, verifyOtp, sendContactEmail } from './server/otpManager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +71,15 @@ async function startServer() {
   };
   app.post('/verify-otp', handleVerifyOtp);
   app.post('/api/verify-otp', handleVerifyOtp);
+
+  // POST /send-contact-message and /api/send-contact-message: Deliver contact message directly to daraluloom258@gmail.com
+  const handleSendContactMessage = async (req: express.Request, res: express.Response) => {
+    const { name, email, message, subject } = req.body;
+    const result = await sendContactEmail({ name, email, message, subject });
+    return res.status(result.status).json(result.data);
+  };
+  app.post('/send-contact-message', handleSendContactMessage);
+  app.post('/api/send-contact-message', handleSendContactMessage);
 
   // YouTube metadata extractor helper functions
   const decodeHtml = (html: string) => {

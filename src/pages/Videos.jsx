@@ -23,6 +23,7 @@ import {
 } from "@/lib/activeUser";
 import { useContentRefresh } from "@/hooks/useContentSync";
 import SmartImage from "@/components/SmartImage";
+import { catLabel } from "@/lib/i18n-terms";
 
 export default function Videos() {
   const t = useT();
@@ -569,7 +570,7 @@ export default function Videos() {
                       : "bg-muted/50 text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {c}
+                  {catLabel(c, t.langCode)}
                 </button>
               ))}
             </div>

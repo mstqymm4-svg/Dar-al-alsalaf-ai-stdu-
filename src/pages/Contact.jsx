@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import { getSetting } from "@/lib/settingsStore";
 
+import { apiUrl } from "@/lib/apiBase";
+
 export default function Contact() {
   const t = useT();
   const [name, setName] = useState("");
@@ -28,19 +30,37 @@ export default function Contact() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !message.trim()) {
-      toast.error(t.contactFillAll);
+      toast.error(t.contactFillAll || "يرجى ملء جميع الحقول");
       return;
     }
     setSending(true);
     try {
-      const { base44 } = await import("@/api/base44Client");
-      await base44.functions.invoke("sendContactMessage", { name, email, message });
-      toast.success(t.contactSent);
-      setName("");
-      setEmail("");
-      setMessage("");
+      const response = await fetch(apiUrl("/send-contact-message"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          message: message.trim(),
+          subject: `[دار العلوم — تواصل]: ${name.trim()}`,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data.success) {
+        toast.success(t.contactSent || "تم إرسال رسالتك بنجاح إلى بريد دار العلوم ✓");
+        setName("");
+        setEmail("");
+        setMessage("");
+      } else {
+        const errorMsg = data.error || t.contactSendError || "تعذر إرسال الرسالة، يرجى المحاولة لاحقاً";
+        toast.error(errorMsg);
+      }
     } catch {
-      toast.error(t.contactSendError);
+      toast.error(t.contactSendError || "تعذر إرسال الرسالة، يرجى المحاولة لاحقاً");
     } finally {
       setSending(false);
     }

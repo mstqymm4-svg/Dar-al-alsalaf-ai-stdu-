@@ -70,18 +70,23 @@ export default function DevBooks() {
   const handleSave = async () => {
     if (!form.title || !form.author) { toast.error("أدخل العنوان والمؤلف"); return; }
     setSaving(true);
-    const data = { ...form, pages_count: form.pages_count ? Number(form.pages_count) : null, rating: Number(form.rating)||0 };
-    if (editBook) {
-      const updated = await base44.entities.Book.update(editBook.id, data);
-      setBooks(prev => prev.map(b => b.id === editBook.id ? { ...b, ...updated } : b));
-      toast.success("تم التحديث ✓");
-    } else {
-      const created = await base44.entities.Book.create(data);
-      setBooks(prev => [created, ...prev]);
-      toast.success("تمت الإضافة ✓");
+    try {
+      const data = { ...form, pages_count: form.pages_count ? Number(form.pages_count) : null, rating: Number(form.rating)||0 };
+      if (editBook) {
+        const updated = await base44.entities.Book.update(editBook.id, data);
+        setBooks(prev => prev.map(b => b.id === editBook.id ? { ...b, ...updated } : b));
+        toast.success("تم التحديث ✓");
+      } else {
+        const created = await base44.entities.Book.create(data);
+        setBooks(prev => [created, ...prev]);
+        toast.success("تمت الإضافة ✓");
+      }
+      setShowAdd(false);
+    } catch (err) {
+      toast.error("فشل الحفظ: " + (err?.message || "خطأ غير معروف"));
+    } finally {
+      setSaving(false);
     }
-    setShowAdd(false);
-    setSaving(false);
   };
 
   const handleDelete = async (book) => {

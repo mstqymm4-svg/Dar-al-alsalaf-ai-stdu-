@@ -195,16 +195,10 @@ export default function Settings() {
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground truncate mt-0.5" dir="ltr">
-                  {userEmail || t.noLinkedEmail || "تعديل الملف الشخصي وتوثيق البريد"}
-                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0 ms-2">
-              <span className="text-[11px] font-medium text-muted-foreground hidden sm:inline">
-                {openCards.profile ? (t.close || "إغلاق") : (t.edit || "تعديل")}
-              </span>
               <div
                 className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
                   openCards.profile ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
@@ -247,16 +241,10 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-foreground">
                   {t.appLangTitle || "لغة واجهة التطبيق"}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {t.appLangSub || "تغيير لغة التطبيق"}
-                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0 ms-2">
-              <span className="px-2.5 py-1 rounded-xl bg-primary/10 text-primary text-xs font-bold">
-                {appLangNames[appLang] || "العربية"}
-              </span>
               <div
                 className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
                   openCards.lang ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
@@ -336,16 +324,10 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-foreground">
                   {t.appearance || "المظهر والعرض"}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {darkMode ? (t.darkMode || "الوضع الداكن مفعّل") : (t.lightMode || "الوضع الفاتح مفعّل")}
-                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0 ms-2">
-              <span className="px-2.5 py-1 rounded-xl bg-muted text-foreground text-xs font-bold">
-                {darkMode ? (t.darkMode || "داكن") : (t.lightMode || "فاتح")}
-              </span>
               <div
                 className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
                   openCards.appearance ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
@@ -398,16 +380,10 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-foreground">
                   {t.preferences || "التفضيلات والمحتوى"}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {t.preferredLangSub || "الإشعارات ولغة الكتب المفضلة"}
-                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0 ms-2">
-              <span className="px-2.5 py-1 rounded-xl bg-muted text-foreground text-xs font-bold">
-                {bookLangLabel(language, t.langCode) || language}
-              </span>
               <div
                 className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
                   openCards.preferences ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
@@ -485,22 +461,10 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-foreground">
                   {t.securityTitle || "الأمان والخصوصية"}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {verified ? (t.securityVerified || "الحساب موثّق ومحمي") : (t.securityUnverified || "البريد بحاجة للتوثيق")}
-                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2.5 shrink-0 ms-2">
-              <span
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold ${
-                  verified
-                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                    : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                }`}
-              >
-                {verified ? (t.verifiedBadge || "موثّق") : (t.unverified || "غير موثّق")}
-              </span>
               <div
                 className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
                   openCards.security ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
@@ -577,9 +541,6 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-foreground">
                   {t.aboutTitle} & {t.contactTitle}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {t.aboutContactSub}
-                </p>
               </div>
             </div>
 
@@ -642,9 +603,6 @@ export default function Settings() {
                 <h2 className="text-sm sm:text-base font-bold text-destructive">
                   {t.logout}
                 </h2>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {t.logoutSub}
-                </p>
               </div>
             </div>
 
