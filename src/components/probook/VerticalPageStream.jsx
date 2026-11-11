@@ -73,6 +73,8 @@ export default function VerticalPageStream({
   const rafScrollRef = useRef(null);
   const lastReportedPageRef = useRef(currentPage);
   lastReportedPageRef.current = currentPage;
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
 
   // ── Sample base aspect ratio once from Page 1 ──
   useEffect(() => {
