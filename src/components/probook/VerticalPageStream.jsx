@@ -104,6 +104,66 @@ export default function VerticalPageStream({
     return () => ro.disconnect();
   }, []);
 
+  const effZoom = pinchZoom ?? zoom;
+  const isZoomed = effZoom > 1.05;
+
+  // ── Calculate dimensions efficiently ──
+  const { pageWidth, pageHeight } = useMemo(() => {
+    const r = baseRatio || DEFAULT_RATIO;
+    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
+    const availH = Math.max(360, containerSize.height - 28);
+
+    let baseW;
+    if (viewMode === "spread" && containerSize.width >= 768) {
+      const halfW = (availW - 16) / 2;
+      const fitPageW = availH * r;
+      baseW = Math.min(halfW, fitPageW);
+    } else if (fitMode === "page" || viewMode === "single") {
+      const fitPageW = availH * r;
+      baseW = Math.min(availW, fitPageW, 880);
+    } else {
+      baseW = Math.min(availW, 860);
+    }
+
+    const finalW = Math.round(baseW * effZoom);
+    const finalH = Math.round(finalW / r);
+    return { pageWidth: finalW, pageHeight: finalH };
+  }, [baseRatio, containerSize, viewMode, fitMode, effZoom]);
+
+  const committedDim = useMemo(() => {
+    const r = baseRatio || DEFAULT_RATIO;
+    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
+    const availH = Math.max(360, containerSize.height - 28);
+
+    let baseW;
+    if (viewMode === "spread" && containerSize.width >= 768) {
+      const halfW = (availW - 16) / 2;
+      const fitPageW = availH * r;
+      baseW = Math.min(halfW, fitPageW);
+    } else if (fitMode === "page" || viewMode === "single") {
+      const fitPageW = availH * r;
+      baseW = Math.min(availW, fitPageW, 880);
+    } else {
+      baseW = Math.min(availW, 860);
+    }
+
+    const finalW = Math.round(baseW * zoom);
+    const finalH = Math.round(finalW / r);
+    return { width: finalW, height: finalH };
+  }, [baseRatio, containerSize, viewMode, fitMode, zoom]);
+
+  const totalItemHeight = pageHeight + GAP;
+
+  // Keep scroll position firmly anchored to currentPage when pinchZoom or zoom changes
+  useEffect(() => {
+    const st = touchRef.current;
+    if (st.mode === "pinch" && scrollRef.current && st.anchorPage && viewMode === "scroll") {
+      const newPageTop = (st.anchorPage - 1) * totalItemHeight;
+      const ratio = st.oldItemH > 0 ? totalItemHeight / st.oldItemH : 1;
+      scrollRef.current.scrollTop = newPageTop + (st.offsetInPage * ratio);
+    }
+  }, [effZoom, totalItemHeight, viewMode]);
+
   // ── Touch gestures: Pinch-to-zoom with locked page anchor & horizontal swipe ──
   const onTouchStart = (e) => {
     const st = touchRef.current;
@@ -185,66 +245,6 @@ export default function VerticalPageStream({
     }
     st.mode = "idle";
   };
-
-  const effZoom = pinchZoom ?? zoom;
-  const isZoomed = effZoom > 1.05;
-
-  // Keep scroll position firmly anchored to currentPage when pinchZoom or zoom changes
-  useEffect(() => {
-    const st = touchRef.current;
-    if (st.mode === "pinch" && scrollRef.current && st.anchorPage && viewMode === "scroll") {
-      const newPageTop = (st.anchorPage - 1) * totalItemHeight;
-      const ratio = st.oldItemH > 0 ? totalItemHeight / st.oldItemH : 1;
-      scrollRef.current.scrollTop = newPageTop + (st.offsetInPage * ratio);
-    }
-  }, [effZoom, totalItemHeight, viewMode]);
-
-  // ── Calculate dimensions efficiently ──
-  const { pageWidth, pageHeight } = useMemo(() => {
-    const r = baseRatio || DEFAULT_RATIO;
-    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
-    const availH = Math.max(360, containerSize.height - 28);
-
-    let baseW;
-    if (viewMode === "spread" && containerSize.width >= 768) {
-      const halfW = (availW - 16) / 2;
-      const fitPageW = availH * r;
-      baseW = Math.min(halfW, fitPageW);
-    } else if (fitMode === "page" || viewMode === "single") {
-      const fitPageW = availH * r;
-      baseW = Math.min(availW, fitPageW, 880);
-    } else {
-      baseW = Math.min(availW, 860);
-    }
-
-    const finalW = Math.round(baseW * effZoom);
-    const finalH = Math.round(finalW / r);
-    return { pageWidth: finalW, pageHeight: finalH };
-  }, [baseRatio, containerSize, viewMode, fitMode, effZoom]);
-
-  const committedDim = useMemo(() => {
-    const r = baseRatio || DEFAULT_RATIO;
-    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
-    const availH = Math.max(360, containerSize.height - 28);
-
-    let baseW;
-    if (viewMode === "spread" && containerSize.width >= 768) {
-      const halfW = (availW - 16) / 2;
-      const fitPageW = availH * r;
-      baseW = Math.min(halfW, fitPageW);
-    } else if (fitMode === "page" || viewMode === "single") {
-      const fitPageW = availH * r;
-      baseW = Math.min(availW, fitPageW, 880);
-    } else {
-      baseW = Math.min(availW, 860);
-    }
-
-    const finalW = Math.round(baseW * zoom);
-    const finalH = Math.round(finalW / r);
-    return { width: finalW, height: finalH };
-  }, [baseRatio, containerSize, viewMode, fitMode, zoom]);
-
-  const totalItemHeight = pageHeight + GAP;
 
   // ── Expose scrollToPage to parent ──
   useEffect(() => {
