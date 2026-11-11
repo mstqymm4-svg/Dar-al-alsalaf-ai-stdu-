@@ -17,6 +17,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { getAccountEmail, setAccountEmail } from "@/lib/activeUser";
 import { useT } from "@/lib/i18n";
+import { apiUrl } from "@/lib/apiBase";
 
 export default function VerifyEmail() {
   const t = useT();
@@ -91,7 +92,7 @@ export default function VerifyEmail() {
 
     setLoading(true);
     try {
-      const res = await fetch("/send-otp", {
+      const res = await fetch(apiUrl("/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimmedEmail }),
@@ -131,7 +132,7 @@ export default function VerifyEmail() {
     setResending(true);
 
     try {
-      const res = await fetch("/send-otp", {
+      const res = await fetch(apiUrl("/send-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
@@ -234,7 +235,7 @@ export default function VerifyEmail() {
 
     setLoading(true);
     try {
-      const res = await fetch("/verify-otp", {
+      const res = await fetch(apiUrl("/verify-otp"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

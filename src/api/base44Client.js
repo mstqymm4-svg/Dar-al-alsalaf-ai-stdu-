@@ -816,9 +816,9 @@ onAuthStateChanged(auth, async (fbUser) => {
   try {
     localStorage.removeItem("dau_logged_out");
   } catch {}
-  const current = readCurrentUserProfile() || {};
   const isOwner =
-    fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+    !!fbUser.emailVerified && !!fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+  const isAdminEmail = !!fbUser.emailVerified && !!fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const now = new Date().toISOString();
   const syncedProfile = {
     id: sanitizeId(fbUser.uid, "usr"),
