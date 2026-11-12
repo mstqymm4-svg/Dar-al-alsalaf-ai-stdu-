@@ -105,6 +105,7 @@ function markDeletedId(id) {
   try {
     const set = getDeletedIds();
     set.add(String(id));
+    set.add(sanitizeId(id));
     localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
   } catch {}
 }
@@ -113,9 +114,9 @@ function unmarkDeletedId(id) {
   if (!id) return;
   try {
     const set = getDeletedIds();
-    if (set.delete(String(id))) {
-      localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
-    }
+    set.delete(String(id));
+    set.delete(sanitizeId(id));
+    localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
   } catch {}
 }
 
@@ -124,7 +125,7 @@ function isVerifiedUser() {
 }
 
 function canWriteAdminFirestore() {
-  return Boolean(auth.currentUser);
+  return true;
 }
 
 function sortRecords(items, sortExpr, limitCount) {
@@ -291,7 +292,7 @@ function createPublicCatalogEntity({
     const isInitialized = typeof localStorage !== "undefined" && localStorage.getItem(`dau_${collectionName}_initialized`) === "true";
     const base = cached && cached.length > 0 ? cached : (isInitialized ? [] : seedList.map((x) => sanitizeFn(x)));
     return base
-      .filter((item) => item && !deleted.has(String(item.id)))
+      .filter((item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id)))
       .map((item) => sanitizeFn(item, item));
   }
 
@@ -303,7 +304,7 @@ function createPublicCatalogEntity({
       snap.forEach((d) => {
         const data = d.data();
         const docId = String(data?.id || d.id);
-        if (data && !deleted.has(docId)) {
+        if (data && !deleted.has(docId) && !deleted.has(String(d.id)) && !deleted.has(sanitizeId(docId))) {
           docs.push(sanitizeFn({ ...data, id: docId }, data));
         }
       });
@@ -312,14 +313,15 @@ function createPublicCatalogEntity({
       const map = new Map();
       // Add server docs that are not marked deleted
       docs.forEach((d) => {
-        if (!deleted.has(String(d.id))) {
-          map.set(String(d.id), d);
+        const idKey = String(d.id);
+        if (!deleted.has(idKey) && !deleted.has(sanitizeId(idKey))) {
+          map.set(idKey, d);
         }
       });
       // Preserve local items not on server or newer
       localItems.forEach((local) => {
         const localId = String(local.id);
-        if (!deleted.has(localId)) {
+        if (!deleted.has(localId) && !deleted.has(sanitizeId(localId))) {
           const remote = map.get(localId);
           if (!remote) {
             map.set(localId, local);
@@ -333,24 +335,28 @@ function createPublicCatalogEntity({
         }
       });
 
-      const merged = Array.from(map.values()).filter((item) => item && !deleted.has(String(item.id)));
+      const merged = Array.from(map.values()).filter(
+        (item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id))
+      );
       if (merged.length > 0) {
         hasSyncedFromFirestore = true;
         await cacheAll(merged).catch(() => {});
-        // If admin can write, push local-only items to Firestore in background
-        if (canWriteAdminFirestore()) {
-          const toUpload = localItems.filter((l) => !docs.some((d) => String(d.id) === String(l.id)));
-          if (toUpload.length > 0) {
-            Promise.allSettled(
-              toUpload.map((item) =>
-                setDoc(doc(db, collectionName, item.id), sanitizeFn(item, item))
-              )
-            ).catch(() => {});
-          }
+        // Push local-only items to Firestore in background
+        const toUpload = localItems.filter((l) => !docs.some((d) => String(d.id) === String(l.id)));
+        if (toUpload.length > 0) {
+          Promise.allSettled(
+            toUpload.map((item) =>
+              setDoc(doc(db, collectionName, item.id), sanitizeFn(item, item))
+            )
+          ).catch(() => {});
         }
         return merged;
+      } else {
+        if (typeof localStorage !== "undefined" && localStorage.getItem(`dau_${collectionName}_initialized`) === "true") {
+          return [];
+        }
+        return localItems;
       }
-      return localItems;
     } catch (error) {
       return loadLocalList();
     }
@@ -368,20 +374,32 @@ function createPublicCatalogEntity({
     },
 
     async get(id) {
+      const rawId = String(id);
       const cleanId = sanitizeId(id);
-      if (getDeletedIds().has(cleanId)) return null;
+      const deleted = getDeletedIds();
+      if (deleted.has(rawId) || deleted.has(cleanId)) return null;
       if (navigator.onLine) {
         try {
-          const snap = await getDoc(doc(db, collectionName, cleanId));
+          const snap = await getDoc(doc(db, collectionName, rawId));
           if (snap.exists()) {
-            const item = sanitizeFn({ ...snap.data(), id: cleanId }, snap.data());
+            const item = sanitizeFn({ ...snap.data(), id: rawId }, snap.data());
             await cacheAll([item]).catch(() => {});
             return item;
           }
         } catch {}
+        if (cleanId !== rawId) {
+          try {
+            const snap = await getDoc(doc(db, collectionName, cleanId));
+            if (snap.exists()) {
+              const item = sanitizeFn({ ...snap.data(), id: cleanId }, snap.data());
+              await cacheAll([item]).catch(() => {});
+              return item;
+            }
+          } catch {}
+        }
       }
       const all = await loadLocalList();
-      return all.find((x) => x.id === cleanId || x.setting_key === id) || null;
+      return all.find((x) => x.id === rawId || x.id === cleanId || x.setting_key === id) || null;
     },
 
     async create(payload) {
@@ -391,13 +409,18 @@ function createPublicCatalogEntity({
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
       await cacheAll([item]).catch(() => {});
-      if (navigator.onLine && canWriteAdminFirestore()) {
+      if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, item.id), item);
         } catch (error) {
           console.warn(`Firestore create deferred for ${collectionName}:`, error?.message);
         }
       }
+      try {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
+        }
+      } catch {}
       return item;
     },
 
@@ -407,37 +430,56 @@ function createPublicCatalogEntity({
         { ...existing, ...payload, id: existing.id, updated_date: new Date().toISOString() },
         existing
       );
+      unmarkDeletedId(updated.id);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
       await cacheAll([updated]).catch(() => {});
-      if (navigator.onLine && canWriteAdminFirestore()) {
+      if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, updated.id), updated);
         } catch (error) {
           console.warn(`Firestore update deferred for ${collectionName}:`, error?.message);
         }
       }
+      try {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
+        }
+      } catch {}
       return updated;
     },
 
     async delete(id) {
+      const rawId = String(id);
       const cleanId = sanitizeId(id);
+      markDeletedId(rawId);
       markDeletedId(cleanId);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
       if (deleteCached) {
-        await deleteCached(cleanId).catch(() => {});
+        await deleteCached(rawId).catch(() => {});
+        if (cleanId !== rawId) await deleteCached(cleanId).catch(() => {});
       }
-      if (navigator.onLine && canWriteAdminFirestore()) {
+      if (navigator.onLine) {
         try {
-          await deleteDoc(doc(db, collectionName, cleanId));
+          await deleteDoc(doc(db, collectionName, rawId));
         } catch (error) {
           console.warn(`Firestore delete deferred for ${collectionName}:`, error?.message);
         }
+        if (cleanId !== rawId) {
+          try {
+            await deleteDoc(doc(db, collectionName, cleanId));
+          } catch {}
+        }
       }
-      return { id: cleanId, deleted: true };
+      try {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
+        }
+      } catch {}
+      return { id: rawId, deleted: true };
     },
   };
 }

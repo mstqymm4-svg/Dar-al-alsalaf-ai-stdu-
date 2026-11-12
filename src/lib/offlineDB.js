@@ -136,7 +136,16 @@ export async function getCachedBook(id) {
 export async function deleteCachedBook(id) {
   const store = await tx("books", "readwrite");
   store.delete(id);
+  store.delete(String(id));
   await txDone(store);
+}
+
+export async function clearAllCachedBooks() {
+  try {
+    const store = await tx("books", "readwrite");
+    store.clear();
+    await txDone(store);
+  } catch {}
 }
 
 // ─── PDFs ─────────────────────────────────────────────────────────────────────
@@ -283,6 +292,7 @@ export async function getCachedVideos() {
 export async function deleteCachedVideo(id) {
   const store = await tx("videos", "readwrite");
   store.delete(id);
+  store.delete(String(id));
   await txDone(store);
 }
 
@@ -322,10 +332,19 @@ export async function getCachedVideoChannels() {
 export async function deleteCachedVideoChannel(id) {
   const store = await tx("channels", "readwrite");
   store.delete(id);
+  store.delete(String(id));
   await txDone(store);
 }
 
 // ─── Social Channels ──────────────────────────────────────────────────────────
+export async function clearAllCachedSocialChannels() {
+  try {
+    const store = await tx("social", "readwrite");
+    store.clear();
+    await txDone(store);
+  } catch {}
+}
+
 export async function cacheSocialChannels(channels) {
   const store = await tx("social", "readwrite");
   for (const c of channels) {
@@ -348,6 +367,7 @@ export async function getCachedSocialChannels() {
 export async function deleteCachedSocialChannel(id) {
   const store = await tx("social", "readwrite");
   store.delete(id);
+  store.delete(String(id));
   await txDone(store);
 }
 
@@ -381,7 +401,16 @@ export async function getCachedSettings() {
 export async function deleteCachedSetting(key) {
   const store = await tx("settings", "readwrite");
   store.delete(key);
+  store.delete(String(key));
   await txDone(store);
+}
+
+export async function clearAllCachedSettings() {
+  try {
+    const store = await tx("settings", "readwrite");
+    store.clear();
+    await txDone(store);
+  } catch {}
 }
 
 export async function getCachedSetting(key) {

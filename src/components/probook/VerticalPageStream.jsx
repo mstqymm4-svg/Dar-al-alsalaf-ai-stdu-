@@ -156,6 +156,8 @@ export default function VerticalPageStream({
 
   const totalItemHeight = pageHeight + GAP;
 
+  const lastMultiTouchTimeRef = useRef(0);
+
   // Keep scroll position firmly anchored to currentPage when pinchZoom or zoom changes
   useEffect(() => {
     const st = touchRef.current;
@@ -166,10 +168,30 @@ export default function VerticalPageStream({
     }
   }, [effZoom, totalItemHeight, viewMode]);
 
+  // Keep zoom changes from toolbar or buttons anchored to current page
+  const prevZoomRef = useRef(zoom);
+  useEffect(() => {
+    if (prevZoomRef.current !== zoom) {
+      prevZoomRef.current = zoom;
+      if (viewMode === "scroll" && scrollRef.current && !isProgrammaticScrollRef.current) {
+        const p = currentPageRef.current || 1;
+        const targetY = (p - 1) * totalItemHeight;
+        isProgrammaticScrollRef.current = true;
+        scrollRef.current.scrollTop = targetY;
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 200);
+      }
+    }
+  }, [zoom, totalItemHeight, viewMode]);
+
   // ── Touch gestures: Pinch-to-zoom with locked page anchor & horizontal swipe ──
   const onTouchStart = (e) => {
     const st = touchRef.current;
     if (e.touches.length === 2) {
+      if (e.cancelable) e.preventDefault();
+      lastMultiTouchTimeRef.current = Date.now();
       const [a, b] = e.touches;
       st.mode = "pinch";
       st.dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
@@ -194,7 +216,8 @@ export default function VerticalPageStream({
   const onTouchMove = (e) => {
     const st = touchRef.current;
     if (st.mode === "pinch" && e.touches.length === 2) {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
+      lastMultiTouchTimeRef.current = Date.now();
       const [a, b] = e.touches;
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       if (st.dist > 0) {
@@ -226,11 +249,13 @@ export default function VerticalPageStream({
       finishPinch();
       return;
     }
-    // Horizontal swipe in single/spread mode (only when not zoomed in)
+    // Horizontal swipe in single/spread mode (strictly only when NOT zoomed in)
+    const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 450;
     if (
       st.mode === "single" &&
       viewMode !== "scroll" &&
-      zoomRef.current <= 1.05 &&
+      effZoom <= 1.05 &&
+      !recentlyPinched &&
       e.changedTouches?.length === 1
     ) {
       const dx = e.changedTouches[0].clientX - st.startX;
@@ -268,7 +293,15 @@ export default function VerticalPageStream({
 
   // ── Continuous scroll tracking with RAF ──
   const handleScroll = useCallback(() => {
-    if (isProgrammaticScrollRef.current || viewMode !== "scroll" || !totalPages) return;
+    // When zoomed in, or during a pinch gesture, do NOT change the current page
+    if (
+      isProgrammaticScrollRef.current ||
+      viewMode !== "scroll" ||
+      !totalPages ||
+      isZoomed ||
+      pinchZoom !== null ||
+      touchRef.current.mode === "pinch"
+    ) return;
     if (rafScrollRef.current) cancelAnimationFrame(rafScrollRef.current);
 
     rafScrollRef.current = requestAnimationFrame(() => {
@@ -283,7 +316,7 @@ export default function VerticalPageStream({
         onCurrentPageChange(calculatedPage);
       }
     });
-  }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange]);
+  }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange, isZoomed, pinchZoom]);
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
   const brightnessFilter = brightness !== 100 ? `brightness(${Number(brightness) / 100})` : "none";
@@ -325,7 +358,7 @@ export default function VerticalPageStream({
         {/* Animated Page Container */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={`${primaryPage}_${isSpread}_${zoom}`}
+            key={`${primaryPage}_${isSpread}`}
             initial={{ opacity: 0.85, scale: 0.99 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0.85, scale: 0.99 }}

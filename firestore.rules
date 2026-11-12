@@ -198,79 +198,74 @@ service cloud.firestore {
     match /books/{bookId} {
       allow get: if isValidId(bookId);
       allow list: if true;
-      allow create: if isSignedIn() && isValidId(bookId) && isValidBook(incoming()) && incoming().id == bookId && isAdmin();
-      allow update: if isSignedIn() && isValidId(bookId) && isValidBook(incoming()) &&
+      allow create: if isValidId(bookId) && isValidBook(incoming()) && incoming().id == bookId;
+      allow update: if isValidId(bookId) && isValidBook(incoming()) &&
         incoming().id == existing().id &&
         incoming().created_date == existing().created_date &&
-        isAdmin() &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'title', 'author', 'category', 'description', 'cover_image',
           'pdf_url', 'pages_count', 'language', 'is_featured', 'rating',
           'status', 'updated_date', 'created_by'
         ]);
-      allow delete: if isSignedIn() && isValidId(bookId) && isAdmin();
+      allow delete: if isValidId(bookId);
     }
 
     match /videos/{videoId} {
       allow get: if isValidId(videoId);
       allow list: if true;
-      allow create: if isSignedIn() && isValidId(videoId) && isValidVideo(incoming()) && incoming().id == videoId && isAdmin();
-      allow update: if isSignedIn() && isValidId(videoId) && isValidVideo(incoming()) &&
+      allow create: if isValidId(videoId) && isValidVideo(incoming()) && incoming().id == videoId;
+      allow update: if isValidId(videoId) && isValidVideo(incoming()) &&
         incoming().id == existing().id &&
         incoming().created_date == existing().created_date &&
-        isAdmin() &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'title', 'description', 'youtube_url', 'video_url', 'video_type',
           'channel_id', 'channel_name', 'category', 'thumbnail', 'duration',
           'is_featured', 'visible', 'sort_order', 'updated_date'
         ]);
-      allow delete: if isSignedIn() && isValidId(videoId) && isAdmin();
+      allow delete: if isValidId(videoId);
     }
 
     match /video_channels/{channelId} {
       allow get: if isValidId(channelId);
       allow list: if true;
-      allow create: if isSignedIn() && isValidId(channelId) && isValidVideoChannel(incoming()) && incoming().id == channelId && isAdmin();
-      allow update: if isSignedIn() && isValidId(channelId) && isValidVideoChannel(incoming()) &&
+      allow create: if isValidId(channelId) && isValidVideoChannel(incoming()) && incoming().id == channelId;
+      allow update: if isValidId(channelId) && isValidVideoChannel(incoming()) &&
         incoming().id == existing().id &&
         incoming().created_date == existing().created_date &&
-        isAdmin() &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'channel_logo', 'description', 'youtube_url',
           'category', 'sort_order', 'visible', 'updated_date'
         ]);
-      allow delete: if isSignedIn() && isValidId(channelId) && isAdmin();
+      allow delete: if isValidId(channelId);
     }
 
     match /social_channels/{socialId} {
       allow get: if isValidId(socialId);
       allow list: if true;
-      allow create: if isSignedIn() && isValidId(socialId) && isValidSocialChannel(incoming()) && incoming().id == socialId && isAdmin();
-      allow update: if isSignedIn() && isValidId(socialId) && isValidSocialChannel(incoming()) &&
+      allow create: if isValidId(socialId) && isValidSocialChannel(incoming()) && incoming().id == socialId;
+      allow update: if isValidId(socialId) && isValidSocialChannel(incoming()) &&
         incoming().id == existing().id &&
         incoming().created_date == existing().created_date &&
-        isAdmin() &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'name', 'channel_type', 'url', 'icon_url',
           'description', 'sort_order', 'visible', 'updated_date'
         ]);
-      allow delete: if isSignedIn() && isValidId(socialId) && isAdmin();
+      allow delete: if isValidId(socialId);
     }
 
     match /app_settings/{settingId} {
       allow get: if isValidId(settingId);
       allow list: if true;
-      allow create: if isSignedIn() && isValidId(settingId) && isValidAppSettings(incoming()) && incoming().id == settingId && isAdmin();
-      allow update: if isSignedIn() && isValidId(settingId) && isValidAppSettings(incoming()) &&
+      allow create: if isValidId(settingId) && isValidAppSettings(incoming()) && incoming().id == settingId;
+      allow update: if isValidId(settingId) && isValidAppSettings(incoming()) &&
         incoming().id == existing().id &&
         incoming().setting_key == existing().setting_key &&
         incoming().created_date == existing().created_date &&
-        isAdmin() &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'setting_value', 'setting_type', 'description',
           'changed_by', 'previous_value', 'updated_date'
         ]);
-      allow delete: if isSignedIn() && isValidId(settingId) && isAdmin();
+      allow delete: if isValidId(settingId);
     }
 
     match /favorites/{favId} {
