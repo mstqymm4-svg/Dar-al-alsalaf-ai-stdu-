@@ -507,6 +507,8 @@ const localFallback = {
   },
 };
 
+const WRITE_OPS = new Set(["create", "update", "delete"]);
+
 function createResilientEntities(primary, fallback) {
   return new Proxy(primary || {}, {
     get(target, modelName) {
@@ -524,6 +526,10 @@ function createResilientEntities(primary, fallback) {
             try {
               return await priFn.apply(mTarget, args);
             } catch (err) {
+              const isOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+              if (WRITE_OPS.has(String(fnName)) && isOnline) {
+                throw err;
+              }
               if (typeof fbFn === "function") {
                 return await fbFn.apply(fbModel, args);
               }

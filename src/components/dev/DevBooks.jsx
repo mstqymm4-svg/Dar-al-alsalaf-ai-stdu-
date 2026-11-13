@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { getSetting } from "@/lib/settingsStore";
-import { deleteCachedBook } from "@/lib/offlineDB";
+import { deleteCachedBook, deleteCachedPdf } from "@/lib/offlineDB";
 
 
 const DEFAULT_CATS = ["القرآن وعلومه","الحديث الشريف","الفقه الإسلامي","السيرة النبوية","العقيدة","التزكية والرقائق","التاريخ الإسلامي","أخرى"];
@@ -40,6 +40,8 @@ export default function DevBooks() {
   const [pdfProgress, setPdfProgress]       = useState(0);
   const [pdfProgressInfo, setPdfProgressInfo] = useState("");
   const [pdfSpeed, setPdfSpeed]             = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
 
   const categories = (() => { try { return JSON.parse(getSetting("categories") || "[]"); } catch(e) { return []; } })().length > 0
     ? (() => { try { return JSON.parse(getSetting("categories")); } catch(e) { return DEFAULT_CATS; } })()
@@ -90,29 +92,42 @@ export default function DevBooks() {
   };
 
   const handleDelete = async (book) => {
-    if (!confirm(`حذف "${book.title}"؟`)) return;
+    if (confirmDeleteId !== book.id) {
+      setConfirmDeleteId(book.id);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       await base44.entities.Book.delete(book.id);
       await deleteCachedBook(book.id).catch(() => {});
+      if (book.pdf_url) await deleteCachedPdf(book.pdf_url).catch(() => {});
       setBooks(prev => prev.filter(b => b.id !== book.id));
-      toast.success("تم الحذف");
+      toast.success("تم الحذف ✓");
     } catch (err) {
       toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
     }
   };
 
   const handleBulkDelete = async () => {
+    if (!confirmBulkDelete) {
+      setConfirmBulkDelete(true);
+      return;
+    }
+    setConfirmBulkDelete(false);
     const count = selected.length;
-    if (!confirm(`حذف ${count} كتاب؟`)) return;
     const ids = [...selected];
+    const selectedBooks = books.filter(b => ids.includes(b.id));
     const results = await Promise.allSettled(ids.map(id => base44.entities.Book.delete(id)));
     const failed = results.filter(r => r.status === "rejected").length;
     const succeeded = count - failed;
-    await Promise.all(ids.map(id => deleteCachedBook(id).catch(() => {})));
+    await Promise.all([
+      ...ids.map(id => deleteCachedBook(id).catch(() => {})),
+      ...selectedBooks.filter(b => b.pdf_url).map(b => deleteCachedPdf(b.pdf_url).catch(() => {})),
+    ]);
     setSelected([]);
-    setBooks(prev => prev.filter(b => !ids.includes(b.id)));
+    await loadBooks();
     if (failed > 0) toast.error(`تم حذف ${succeeded}، فشل ${failed}`);
-    else toast.success(`تم حذف ${count} كتاب`);
+    else toast.success(`تم حذف ${count} كتاب ✓`);
   };
 
   const uploadFile = async (e, field, setUploading) => {
@@ -198,9 +213,20 @@ export default function DevBooks() {
         </div>
         <div className="flex gap-2">
           {selected.length > 0 && (
-            <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="rounded-xl gap-1.5">
-              <Trash2 className="w-3.5 h-3.5" /> حذف ({selected.length})
-            </Button>
+            confirmBulkDelete ? (
+              <div className="flex gap-1.5">
+                <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="rounded-xl gap-1">
+                  <Trash2 className="w-3.5 h-3.5" /> تأكيد حذف ({selected.length})
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmBulkDelete(false)} className="rounded-xl">
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="rounded-xl gap-1.5">
+                <Trash2 className="w-3.5 h-3.5" /> حذف ({selected.length})
+              </Button>
+            )
           )}
           <Button onClick={openAdd} className="rounded-xl gap-1.5" size="sm">
             <BookPlus className="w-3.5 h-3.5" /> إضافة كتاب
@@ -243,9 +269,20 @@ export default function DevBooks() {
                       {book.status === "hidden" && <span className="text-[10px] text-red-500">مخفي</span>}
                     </div>
                   </div>
-                  <div className="flex gap-1 shrink-0">
+                  <div className="flex gap-1 shrink-0 items-center">
                     <button onClick={() => openEdit(book)} className="p-1.5 rounded-lg hover:bg-primary/10 transition-colors"><Pencil className="w-3.5 h-3.5 text-primary" /></button>
-                    <button onClick={() => handleDelete(book)} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors"><Trash2 className="w-3.5 h-3.5 text-destructive" /></button>
+                    {confirmDeleteId === book.id ? (
+                      <>
+                        <button onClick={() => handleDelete(book)} className="px-2 py-1 rounded-lg bg-destructive text-white text-[11px] font-bold">
+                          تأكيد
+                        </button>
+                        <button onClick={() => setConfirmDeleteId(null)} className="px-2 py-1 rounded-lg border border-border text-[11px]">
+                          إلغاء
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => handleDelete(book)} className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors"><Trash2 className="w-3.5 h-3.5 text-destructive" /></button>
+                    )}
                   </div>
                 </div>
               ))}

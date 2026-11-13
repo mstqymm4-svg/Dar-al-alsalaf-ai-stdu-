@@ -35,6 +35,7 @@ export default function DevSocialChannels() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [form, setForm] = useState({
     name: "", channel_type: "whatsapp", url: "", icon_url: "",
     description: "", sort_order: 0, visible: true,
@@ -62,7 +63,7 @@ export default function DevSocialChannels() {
       setShowForm(false); setEditing(null);
       setForm({ name: "", channel_type: "whatsapp", url: "", icon_url: "", description: "", sort_order: 0, visible: true });
       load();
-    } catch (e) { toast.error("فشل الحفظ"); }
+    } catch (e) { toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف")); }
   };
 
   const handleEdit = (ch) => {
@@ -85,7 +86,11 @@ export default function DevSocialChannels() {
   };
 
   const handleDelete = async (ch) => {
-    if (!confirm(`حذف "${ch.name}"؟`)) return;
+    if (confirmDeleteId !== ch.id) {
+      setConfirmDeleteId(ch.id);
+      return;
+    }
+    setConfirmDeleteId(null);
     try {
       await base44.entities.SocialChannel.delete(ch.id);
       toast.success("تم الحذف ✓");
@@ -223,9 +228,20 @@ export default function DevSocialChannels() {
                 <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(ch)}>
                   <Pencil className="w-3.5 h-3.5" />
                 </Button>
-                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDelete(ch)}>
-                  <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                </Button>
+                {confirmDeleteId === ch.id ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={() => handleDelete(ch)}>
+                      تأكيد
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setConfirmDeleteId(null)}>
+                      إلغاء
+                    </Button>
+                  </div>
+                ) : (
+                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDelete(ch)}>
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </Button>
+                )}
               </div>
             );
           })}

@@ -26,6 +26,7 @@ export default function DevAppDesign() {
     try { return JSON.parse(getSetting("categories") || "[]"); } catch(e) { return []; }
   });
   const [newCat, setNewCat]         = useState("");
+  const [confirmCat, setConfirmCat] = useState(null);
 
   useEffect(() => {
     const unsub = subscribeToSettings((s) => {
@@ -63,8 +64,13 @@ export default function DevAppDesign() {
   };
 
   const removeCategory = (cat) => {
-    if (!confirm(`حذف تصنيف "${cat}"؟`)) return;
+    if (confirmCat !== cat) {
+      setConfirmCat(cat);
+      return;
+    }
+    setConfirmCat(null);
     saveCategories(categories.filter(c => c !== cat));
+    toast.success("تم حذف التصنيف ✓");
   };
 
   return (
@@ -139,9 +145,15 @@ export default function DevAppDesign() {
             <div key={cat} className="flex items-center gap-1.5 bg-muted/70 border border-border rounded-lg px-3 py-1.5">
               <span className="text-xs font-medium">{cat}</span>
               {categories.includes(cat) && (
-                <button onClick={() => removeCategory(cat)} className="text-muted-foreground hover:text-destructive transition-colors">
-                  <X className="w-3 h-3" />
-                </button>
+                confirmCat === cat ? (
+                  <button onClick={() => removeCategory(cat)} className="px-1.5 py-0.5 rounded bg-destructive text-white text-[10px] font-bold">
+                    تأكيد الحذف
+                  </button>
+                ) : (
+                  <button onClick={() => removeCategory(cat)} className="text-muted-foreground hover:text-destructive transition-colors" title="حذف">
+                    <X className="w-3 h-3" />
+                  </button>
+                )
               )}
             </div>
           ))}

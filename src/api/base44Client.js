@@ -87,9 +87,17 @@ function sanitizeId(rawId, prefix = "doc") {
   return str || `${prefix}_${Date.now()}`;
 }
 
-function truncStr(val, maxLen, fallback = "") {
+function truncStr(val, maxBytes, fallback = "") {
   if (val === undefined || val === null) return fallback;
-  return String(val).slice(0, maxLen);
+  const str = String(val);
+  if (str.length * 3 <= maxBytes) return str;
+  const encoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+  if (!encoder) return str.slice(0, maxBytes);
+  const bytes = encoder.encode(str);
+  if (bytes.length <= maxBytes) return str;
+  let cut = maxBytes;
+  while (cut > 0 && (bytes[cut] & 0xc0) === 0x80) cut--;
+  return new TextDecoder().decode(bytes.subarray(0, cut));
 }
 
 function getDeletedIds() {
@@ -935,8 +943,23 @@ async function handleLocalOrCloudUpload({ file }) {
     return { file_url: pdfUrl, url: pdfUrl };
   }
 
-  // Image or other files: compress to Data URL so it works immediately and fits in Firestore
+  // Image files: compress to Data URL so it fits cleanly within Firestore's 500KB field limit
+  if (file.type?.startsWith("image/")) {
+    let dataUrl = await compressImageToDataUrl(file, 1200, 0.82);
+    if (dataUrl.length > 460000) {
+      dataUrl = await compressImageToDataUrl(file, 720, 0.65);
+    }
+    if (dataUrl.length > 480000) {
+      throw new Error("حجم الصورة كبير جداً بعد الضغط — يرجى اختيار صورة أصغر");
+    }
+    return { file_url: dataUrl, url: dataUrl };
+  }
+
+  // Other files (custom fonts, etc.): convert to Data URL and enforce Firestore 500KB field limit
   const dataUrl = await compressImageToDataUrl(file);
+  if (dataUrl.length > 460000) {
+    throw new Error("حجم الملف كبير جداً للتخزين السحابي (الحد الأقصى ~320 كيلوبايت)، استخدم ملفاً أصغر أو رابطاً مباشراً");
+  }
   return { file_url: dataUrl, url: dataUrl };
 }
 

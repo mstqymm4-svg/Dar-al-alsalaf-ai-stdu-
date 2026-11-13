@@ -28,6 +28,7 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
 import { useT } from "@/lib/i18n";
+import { setSetting } from "@/lib/settingsStore";
 import { bookLangLabel, BOOK_LANG_VALUES } from "@/lib/i18n-terms";
 import { getAccountEmail } from "@/lib/activeUser";
 import { setThemeMode, getThemeState, subscribeToTheme } from "@/lib/themeEngine";
@@ -121,6 +122,7 @@ export default function Settings() {
   const handleSelectAppLang = (code) => {
     setAppLang(code);
     ls.set("dev_app_lang", code);
+    setSetting("app_lang", code);
     window.dispatchEvent(new Event("app-lang-change"));
     toast.success((t.applyLang || "تم تطبيق اللغة") + " ✓");
   };

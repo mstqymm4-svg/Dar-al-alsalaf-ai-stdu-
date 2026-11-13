@@ -451,7 +451,12 @@ function ChannelsTab() {
               )}
 
               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={async () => {
-                await base44.entities.VideoChannel.update(ch.id, { visible: !ch.visible }); load();
+                try {
+                  await base44.entities.VideoChannel.update(ch.id, { visible: !ch.visible });
+                  await load();
+                } catch (err) {
+                  toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
+                }
               }}>{ch.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}</Button>
               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
                 setEditing(ch);
@@ -647,6 +652,7 @@ function VideosTab() {
               channel_name: "",
               category: "عام",
               duration: "",
+              video_type: "normal",
               is_featured: false,
               visible: true,
               sort_order: videos.length
@@ -889,10 +895,20 @@ function VideosTab() {
               </div>
               <div className="flex gap-1 mt-2.5 pt-2 border-t border-border/50 justify-end">
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  await base44.entities.Video.update(v.id, { is_featured: !v.is_featured }); load();
+                  try {
+                    await base44.entities.Video.update(v.id, { is_featured: !v.is_featured });
+                    await load();
+                  } catch (err) {
+                    toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
+                  }
                 }}>{v.is_featured ? <Star className="w-3 h-3 text-amber-500 fill-amber-500" /> : <StarOff className="w-3 h-3" />}</Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  await base44.entities.Video.update(v.id, { visible: !v.visible }); load();
+                  try {
+                    await base44.entities.Video.update(v.id, { visible: !v.visible });
+                    await load();
+                  } catch (err) {
+                    toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
+                  }
                 }}>{v.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</Button>
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
                   setEditing(v);

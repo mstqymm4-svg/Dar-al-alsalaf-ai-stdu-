@@ -4,12 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { getSetting, setSetting, setSettings, subscribeToSettings } from "@/lib/settingsStore";
+import {
+  DEFAULT_SETTINGS,
+  getSetting,
+  setSetting,
+  setSettings,
+  subscribeToSettings,
+  flushAllPendingSettings,
+} from "@/lib/settingsStore";
 
 export default function DevSystemSettings() {
   const [showDevNav, setShowDevNav] = useState(() => getSetting("show_dev_nav") !== "false");
   const [appLang, setAppLang]       = useState(() => getSetting("app_lang") || "ar");
   const [saved, setSaved]           = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing]     = useState(false);
 
   useEffect(() => {
     const unsub = subscribeToSettings((s) => {
@@ -19,38 +28,65 @@ export default function DevSystemSettings() {
     return unsub;
   }, []);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSettings({ show_dev_nav: String(showDevNav), app_lang: appLang });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    toast.success("تم حفظ الإعدادات ✓");
+    const res = await flushAllPendingSettings();
+    if (res.ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      toast.success("تم حفظ الإعدادات ✓");
+    } else {
+      toast.error("تعذر الحفظ السحابي — تحقق من الاتصال");
+    }
   };
 
-  const handleReloadSave = () => {
+  const handleReloadSave = async () => {
     setSettings({ show_dev_nav: String(showDevNav), app_lang: appLang });
+    const res = await flushAllPendingSettings();
+    if (!res.ok) {
+      toast.error("تعذر حفظ الإعدادات سحابياً — تحقق من الاتصال");
+      return;
+    }
     toast.success("تم الحفظ — جاري إعادة التحميل...");
-    setTimeout(() => window.location.reload(), 800);
+    setTimeout(() => window.location.reload(), 400);
   };
 
-  const handleClearAll = () => {
-    if (!confirm("مسح جميع الإعدادات المخصصة وإعادة التطبيق للافتراضي؟")) return;
-    try { localStorage.clear(); } catch(e) {}
-    toast.success("تم المسح — جاري إعادة التحميل...");
-    setTimeout(() => window.location.reload(), 1200);
+  const handleClearAll = async () => {
+    if (!confirmClear) {
+      setConfirmClear(true);
+      return;
+    }
+    setClearing(true);
+    try {
+      setSettings({ ...DEFAULT_SETTINGS });
+      await flushAllPendingSettings();
+      try { localStorage.clear(); } catch(e) {}
+      toast.success("تم المسح — جاري إعادة التحميل...");
+      setTimeout(() => window.location.reload(), 600);
+    } catch {
+      toast.error("فشل مسح الإعدادات");
+      setClearing(false);
+    }
   };
 
-  const handleResetTheme = () => {
+  const handleResetTheme = async () => {
     setSettings({
       color_bg: "", color_fg: "", color_primary: "", color_secondary: "",
       color_accent: "", color_card: "", color_border: "", color_button: "",
+      color_dark_bg: "", color_dark_fg: "", color_dark_primary: "", color_dark_secondary: "",
+      color_dark_accent: "", color_dark_card: "", color_dark_border: "", color_dark_button: "",
     });
-    toast.success("تم إعادة الألوان للافتراضي");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم إعادة الألوان للافتراضي");
   };
 
-  const handleResetFonts = () => {
-    const fontKeys = ["font_body","font_heading","font_title","font_nav","font_button","font_size","line_height","letter_spacing"];
-    setSettings(Object.fromEntries(fontKeys.map(k => [k, ""])));
-    toast.success("تم إعادة الخطوط للافتراضي");
+  const handleResetFonts = async () => {
+    setSettings({
+      font_body: "", font_heading: "", font_title: "", font_nav: "", font_button: "",
+      font_size: "16", line_height: "1.6", letter_spacing: "0", custom_fonts: "[]",
+    });
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم إعادة الخطوط للافتراضي");
   };
 
   return (
@@ -94,9 +130,20 @@ export default function DevSystemSettings() {
           <Trash2 className="w-4 h-4" /> منطقة الخطر
         </h3>
         <p className="text-xs text-muted-foreground">مسح جميع إعدادات التخصيص المحفوظة وإعادة التطبيق إلى الحالة الافتراضية تماماً.</p>
-        <Button onClick={handleClearAll} variant="destructive" className="w-full rounded-xl h-11 font-bold gap-2">
-          <Trash2 className="w-4 h-4" /> مسح جميع الإعدادات وإعادة التشغيل
-        </Button>
+        {confirmClear ? (
+          <div className="flex gap-2">
+            <Button onClick={handleClearAll} disabled={clearing} variant="destructive" className="flex-1 rounded-xl h-11 font-bold gap-2">
+              <Trash2 className="w-4 h-4" /> {clearing ? "جاري المسح..." : "تأكيد المسح النهائي"}
+            </Button>
+            <Button onClick={() => setConfirmClear(false)} disabled={clearing} variant="outline" className="rounded-xl h-11 font-bold">
+              إلغاء
+            </Button>
+          </div>
+        ) : (
+          <Button onClick={handleClearAll} variant="destructive" className="w-full rounded-xl h-11 font-bold gap-2">
+            <Trash2 className="w-4 h-4" /> مسح جميع الإعدادات وإعادة التشغيل
+          </Button>
+        )}
       </div>
 
       {/* Version Info */}
@@ -104,7 +151,7 @@ export default function DevSystemSettings() {
         <h3 className="font-bold text-sm mb-3">معلومات النظام</h3>
         {[
           ["الإصدار", "Enterprise v2.0"],
-          ["المنصة", "Base44"],
+          ["المنصة", "دار العلوم"],
           ["البيئة", "Production"],
           ["الإطار", "React 18 + Tailwind CSS"],
         ].map(([label, val]) => (

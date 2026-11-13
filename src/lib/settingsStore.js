@@ -8,6 +8,7 @@
  *  4. If DB fails  → localStorage backup keeps it working + retry
  */
 import { entities } from "@/lib/dataSource";
+import { toast } from "sonner";
 
 // ─── Default settings ─────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
@@ -101,8 +102,16 @@ export const DEFAULT_SETTINGS = {
   contact_address:     "",
   contact_intro:       "",
   contact_show_form:   "true",
+  whatsapp_url:        "",
   contact_telegram_url:"",
   contact_instagram_url:"",
+  // Background layers & presets
+  custom_bg_presets:   "[]",
+  hero_extra_layers:   "[]",
+  hero_custom_layers:  "[]",
+  // Translation settings
+  translation_model:          "",
+  translation_preserve_terms: "",
   // Video section visibility
   videos_enabled:      "true",
   videos_show_info:    "true",
@@ -123,6 +132,18 @@ const ls = {
       const v = ls.get(k);
       if (v !== null) result[k] = v;
     });
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const rawKey = localStorage.key(i);
+        if (rawKey && rawKey.startsWith(LS_PREFIX)) {
+          const k = rawKey.slice(LS_PREFIX.length);
+          if (k && k !== "_migrated" && !(k in result)) {
+            const v = localStorage.getItem(rawKey);
+            if (v !== null) result[k] = v;
+          }
+        }
+      }
+    } catch {}
     return result;
   },
   setAll: (obj) => { Object.entries(obj).forEach(([k,v]) => ls.set(k, v)); },
@@ -166,6 +187,23 @@ function applyColorVar(cssVar, hslValue) {
   else document.documentElement.style.removeProperty(cssVar);
 }
 
+function syncCustomFontFaces(customFonts) {
+  customFonts.forEach((f) => {
+    if (!f?.name || !f?.file_url) return;
+    const styleId = `dff-${String(f.name).replace(/\s+/g, "-")}`;
+    let style = document.getElementById(styleId);
+    const rule = `@font-face { font-family: '${f.name}'; src: url('${f.file_url}'); font-display: swap; }`;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = rule;
+      document.head.appendChild(style);
+    } else if (style.textContent !== rule) {
+      style.textContent = rule;
+    }
+  });
+}
+
 export function applySettingsToDom(settings) {
   // Dark mode — resolve first so custom colors can be skipped in dark mode
   const themeMode = settings.theme_mode || (settings.dark_mode === "true" ? "dark" : "light");
@@ -173,8 +211,7 @@ export function applySettingsToDom(settings) {
   const resolvedDark = themeMode === "dark" ? true : themeMode === "light" ? false : systemDark;
   document.documentElement.classList.toggle("dark", resolvedDark);
 
-  // Colors — only apply custom overrides in light mode; in dark mode let CSS dark vars take effect
-  const colorVars = ["--background","--foreground","--card","--popover","--accent","--secondary","--border","--input","--primary","--ring","--sidebar-primary"];
+  // Colors — only apply custom overrides in light mode; in dark mode apply dark overrides
   if (!resolvedDark) {
     applyColorVar("--background",      settings.color_bg);
     applyColorVar("--foreground",      settings.color_fg);
@@ -184,13 +221,9 @@ export function applySettingsToDom(settings) {
     applyColorVar("--secondary",       settings.color_secondary);
     applyColorVar("--border",          settings.color_border);
     applyColorVar("--input",           settings.color_border);
-    if (settings.color_primary) {
-      applyColorVar("--primary",         settings.color_primary);
-      applyColorVar("--ring",            settings.color_primary);
-      applyColorVar("--sidebar-primary", settings.color_primary);
-    } else {
-      colorVars.forEach(v => document.documentElement.style.removeProperty(v));
-    }
+    applyColorVar("--primary",         settings.color_primary);
+    applyColorVar("--ring",            settings.color_primary);
+    applyColorVar("--sidebar-primary", settings.color_primary);
   } else {
     // Dark mode — apply the dark custom overrides (removed automatically when empty)
     applyColorVar("--background",      settings.color_dark_bg);
@@ -206,18 +239,29 @@ export function applySettingsToDom(settings) {
     applyColorVar("--sidebar-primary", settings.color_dark_primary);
   }
 
-  // Fonts
+  // Custom uploaded fonts
+  let customFonts = [];
+  try {
+    const parsed = JSON.parse(settings.custom_fonts || "[]");
+    if (Array.isArray(parsed)) customFonts = parsed;
+  } catch {}
+  syncCustomFontFaces(customFonts);
+  const allFonts = [...FONT_PRESETS, ...customFonts];
+
+  // Fonts per role
   FONT_ROLES.forEach(role => {
     const fontKey = `font_${role.key}`;
     const fontName = settings[fontKey];
     if (fontName) {
-      const preset = FONT_PRESETS.find(f => f.name === fontName);
+      const preset = allFonts.find(f => f.name === fontName);
       if (preset) {
-        const linkId = `sf-font-${preset.name.replace(/\s+/g,"-")}`;
-        if (!document.getElementById(linkId)) {
-          const link = document.createElement("link");
-          link.id = linkId; link.rel = "stylesheet"; link.href = preset.url;
-          document.head.appendChild(link);
+        if (preset.url) {
+          const linkId = `sf-font-${preset.name.replace(/\s+/g,"-")}`;
+          if (!document.getElementById(linkId)) {
+            const link = document.createElement("link");
+            link.id = linkId; link.rel = "stylesheet"; link.href = preset.url;
+            document.head.appendChild(link);
+          }
         }
         document.documentElement.style.setProperty(role.cssVar, preset.value);
       }
@@ -226,10 +270,56 @@ export function applySettingsToDom(settings) {
     }
   });
 
-  // Font size
+  // Typography
   const size = settings.font_size;
   if (size && size !== "16") document.documentElement.style.setProperty("font-size", `${size}px`);
   else document.documentElement.style.removeProperty("font-size");
+
+  const lineHeight = settings.line_height;
+  if (lineHeight && lineHeight !== "1.6") document.documentElement.style.setProperty("line-height", String(lineHeight));
+  else document.documentElement.style.removeProperty("line-height");
+
+  const letterSpacing = settings.letter_spacing;
+  if (letterSpacing && letterSpacing !== "0") document.documentElement.style.setProperty("letter-spacing", `${letterSpacing}em`);
+  else document.documentElement.style.removeProperty("letter-spacing");
+
+  // Layout & Card dimensions
+  if (settings.ui_radius) document.documentElement.style.setProperty("--radius", `${settings.ui_radius}px`);
+  else document.documentElement.style.removeProperty("--radius");
+
+  if (settings.card_radius) document.documentElement.style.setProperty("--card-radius", `${settings.card_radius}px`);
+  else document.documentElement.style.removeProperty("--card-radius");
+
+  if (settings.card_padding) document.documentElement.style.setProperty("--card-padding", `${settings.card_padding}px`);
+  else document.documentElement.style.removeProperty("--card-padding");
+
+  if (settings.card_gap) document.documentElement.style.setProperty("--card-gap", `${settings.card_gap}px`);
+  else document.documentElement.style.removeProperty("--card-gap");
+
+  // Sync legacy i18n keys used by useT()
+  try {
+    if (settings.app_name !== undefined) {
+      if (settings.app_name && settings.app_name !== DEFAULT_SETTINGS.app_name) {
+        localStorage.setItem("dev_app_name", settings.app_name);
+      } else {
+        localStorage.removeItem("dev_app_name");
+      }
+    }
+    if (settings.app_subtitle !== undefined) {
+      if (settings.app_subtitle && settings.app_subtitle !== DEFAULT_SETTINGS.app_subtitle) {
+        localStorage.setItem("dev_app_subtitle", settings.app_subtitle);
+      } else {
+        localStorage.removeItem("dev_app_subtitle");
+      }
+    }
+    if (settings.app_lang) {
+      const prevLang = localStorage.getItem("dev_app_lang");
+      if (prevLang !== settings.app_lang) {
+        localStorage.setItem("dev_app_lang", settings.app_lang);
+        window.dispatchEvent(new Event("app-lang-change"));
+      }
+    }
+  } catch {}
 }
 
 // ─── Dispatch change event ────────────────────────────────────────────────────
@@ -242,8 +332,10 @@ function dispatchChange() {
 // ─── Debounce save queue ──────────────────────────────────────────────────────
 const _saveTimers = {};
 const _pendingSaves = {};
+const _inFlightSaves = new Map();
 let _saveStatus = "idle"; // idle | saving | saved | error
 const _statusListeners = [];
+let _lastErrorToastAt = 0;
 
 function emitStatus(s) {
   _saveStatus = s;
@@ -259,23 +351,69 @@ export function getSaveStatus() { return _saveStatus; }
 
 const _prevValues = {};
 
-async function flushSave(key) {
+function flushSave(key) {
+  if (_pendingSaves[key] === undefined) {
+    return _inFlightSaves.get(key) || Promise.resolve(true);
+  }
   const value = _pendingSaves[key];
-  if (value === undefined) return;
   delete _pendingSaves[key];
+  clearTimeout(_saveTimers[key]);
   const previous = _prevValues[key] ?? ls.get(key) ?? "";
   ls.set(key, value);
   emitStatus("saving");
-  const ok = await dbSet(key, value, previous, _userEmail);
-  if (!ok) {
-    // retry once
-    await new Promise(r => setTimeout(r, 800));
-    const ok2 = await dbSet(key, value, previous, _userEmail);
-    emitStatus(ok2 ? "saved" : "error");
-  } else {
-    emitStatus("saved");
-  }
-  setTimeout(() => { if (_saveStatus === "saved") emitStatus("idle"); }, 2000);
+
+  const run = (async () => {
+    let ok = await dbSet(key, value, previous, _userEmail);
+    if (!ok) {
+      await new Promise(r => setTimeout(r, 600));
+      ok = await dbSet(key, value, previous, _userEmail);
+    }
+    if (!ok) {
+      emitStatus("error");
+      const now = Date.now();
+      if (now - _lastErrorToastAt > 6000) {
+        _lastErrorToastAt = now;
+        try { toast.error("تعذر حفظ التعديلات سحابياً — تحقق من الاتصال"); } catch {}
+      }
+    } else if (Object.keys(_pendingSaves).length === 0) {
+      emitStatus("saved");
+      setTimeout(() => { if (_saveStatus === "saved") emitStatus("idle"); }, 2000);
+    }
+    return ok;
+  })().finally(() => {
+    if (_inFlightSaves.get(key) === run) {
+      _inFlightSaves.delete(key);
+    }
+  });
+
+  _inFlightSaves.set(key, run);
+  return run;
+}
+
+/** Immediately flush every pending debounced setting and await all active cloud saves */
+export async function flushAllPendingSettings() {
+  const pendingKeys = Object.keys(_pendingSaves);
+  pendingKeys.forEach((k) => clearTimeout(_saveTimers[k]));
+  const promises = [
+    ...pendingKeys.map((k) => flushSave(k)),
+    ...Array.from(_inFlightSaves.values()),
+  ];
+  if (promises.length === 0) return { ok: true };
+  const results = await Promise.all(promises);
+  return { ok: results.every((r) => r !== false) };
+}
+
+if (typeof window !== "undefined") {
+  const flushOnLeave = () => {
+    if (Object.keys(_pendingSaves).length > 0) {
+      flushAllPendingSettings().catch(() => {});
+    }
+  };
+  window.addEventListener("pagehide", flushOnLeave);
+  window.addEventListener("beforeunload", flushOnLeave);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushOnLeave();
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -297,7 +435,7 @@ export function setSetting(key, value) {
   // Debounced DB save
   clearTimeout(_saveTimers[key]);
   _pendingSaves[key] = strVal;
-  _saveTimers[key] = setTimeout(() => flushSave(key), 250);
+  _saveTimers[key] = setTimeout(() => { flushSave(key); }, 250);
 }
 
 /** Update multiple settings at once */
@@ -313,7 +451,7 @@ export function setSettings(obj) {
   Object.entries(obj).forEach(([k,v]) => {
     clearTimeout(_saveTimers[k]);
     _pendingSaves[k] = String(v ?? "");
-    _saveTimers[k] = setTimeout(() => flushSave(k), 250);
+    _saveTimers[k] = setTimeout(() => { flushSave(k); }, 250);
   });
 }
 
@@ -322,6 +460,10 @@ export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
   // 1. Apply localStorage immediately (fast path before DB resolves)
   const cached = ls.getAll();
+  let legacyLang = "";
+  try { legacyLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
+  if (!cached.app_lang && legacyLang) cached.app_lang = legacyLang;
+
   _cache = { ...DEFAULT_SETTINGS, ...cached };
   applySettingsToDom(_cache);
   dispatchChange();

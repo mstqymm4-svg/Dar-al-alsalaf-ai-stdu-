@@ -44,6 +44,7 @@ export default function Admin() {
   const [saving, setSaving] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   useEffect(() => {
     loadBooks();
@@ -90,41 +91,59 @@ export default function Admin() {
       rating: Number(form.rating) || 0,
     };
 
-    if (editingBook) {
-      await base44.entities.Book.update(editingBook.id, data);
-      toast.success("تم تحديث الكتاب");
-    } else {
-      await base44.entities.Book.create(data);
-      toast.success("تمت إضافة الكتاب");
+    try {
+      if (editingBook) {
+        await base44.entities.Book.update(editingBook.id, data);
+        toast.success("تم تحديث الكتاب ✓");
+      } else {
+        await base44.entities.Book.create(data);
+        toast.success("تمت إضافة الكتاب ✓");
+      }
+      setDialogOpen(false);
+      await loadBooks();
+    } catch (err) {
+      toast.error("فشل الحفظ: " + (err?.message || "خطأ غير معروف"));
+    } finally {
+      setSaving(false);
     }
-
-    setDialogOpen(false);
-    setSaving(false);
-    loadBooks();
   };
 
   const handleDelete = async (book) => {
-    if (!confirm(`هل أنت متأكد من حذف "${book.title}"؟`)) return;
-    await base44.entities.Book.delete(book.id);
-    toast.success("تم حذف الكتاب");
-    loadBooks();
+    if (confirmDeleteId !== book.id) {
+      setConfirmDeleteId(book.id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    try {
+      await base44.entities.Book.delete(book.id);
+      toast.success("تم حذف الكتاب ✓");
+      await loadBooks();
+    } catch (err) {
+      toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+    }
   };
 
   const handleFileUpload = async (e, type) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
-    
+
     if (type === "cover") setUploadingCover(true);
     else setUploadingPdf(true);
 
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    
-    if (type === "cover") {
-      setForm((prev) => ({ ...prev, cover_image: file_url }));
-      setUploadingCover(false);
-    } else {
-      setForm((prev) => ({ ...prev, pdf_url: file_url }));
-      setUploadingPdf(false);
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      if (type === "cover") {
+        setForm((prev) => ({ ...prev, cover_image: file_url }));
+      } else {
+        setForm((prev) => ({ ...prev, pdf_url: file_url }));
+      }
+      toast.success("تم الرفع ✓");
+    } catch (err) {
+      toast.error("فشل الرفع: " + (err?.message || "خطأ غير معروف"));
+    } finally {
+      if (type === "cover") setUploadingCover(false);
+      else setUploadingPdf(false);
+      e.target.value = "";
     }
   };
 
@@ -181,12 +200,29 @@ export default function Admin() {
                   >
                     <Pencil className="w-4 h-4 text-muted-foreground" />
                   </button>
-                  <button
-                    onClick={() => handleDelete(book)}
-                    className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4 text-destructive" />
-                  </button>
+                  {confirmDeleteId === book.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleDelete(book)}
+                        className="px-2 py-1 rounded-lg bg-destructive text-white text-xs font-bold"
+                      >
+                        تأكيد
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="px-2 py-1 rounded-lg border border-border text-xs"
+                      >
+                        إلغاء
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => handleDelete(book)}
+                      className="p-2 rounded-lg hover:bg-destructive/10 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

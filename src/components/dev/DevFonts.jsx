@@ -25,11 +25,16 @@ function injectFont(preset) {
 
 function injectCustomFontFace(name, fileUrl) {
   const styleId = `dff-${name.replace(/\s+/g,"-")}`;
-  if (document.getElementById(styleId)) return;
-  const style = document.createElement("style");
-  style.id = styleId;
-  style.textContent = `@font-face { font-family: '${name}'; src: url('${fileUrl}'); font-display: swap; }`;
-  document.head.appendChild(style);
+  const rule = `@font-face { font-family: '${name}'; src: url('${fileUrl}'); font-display: swap; }`;
+  let style = document.getElementById(styleId);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = rule;
+    document.head.appendChild(style);
+  } else if (style.textContent !== rule) {
+    style.textContent = rule;
+  }
 }
 
 export default function DevFonts() {
@@ -40,6 +45,7 @@ export default function DevFonts() {
   const [activeRole, setActiveRole]     = useState("body");
   const [fontCat, setFontCat]           = useState("الكل");
   const [uploading, setUploading]       = useState(false);
+  const [confirmDeleteName, setConfirmDeleteName] = useState(null);
   const [customFonts, setCustomFonts]   = useState(() => {
     try { return JSON.parse(getSetting("custom_fonts") || "[]"); } catch(e) { return []; }
   });
@@ -55,6 +61,9 @@ export default function DevFonts() {
       FONT_ROLES.forEach(r => { rf[r.key] = s[`font_${r.key}`] || ""; });
       setRoleFonts(rf);
       setFontSize(Number(s.font_size) || 16);
+      setLineHeight(Number(s.line_height) || 1.6);
+      setLetterSpacing(Number(s.letter_spacing) || 0);
+      try { if (s.custom_fonts) setCustomFonts(JSON.parse(s.custom_fonts)); } catch {}
     });
     return unsub;
   }, []);
@@ -86,17 +95,29 @@ export default function DevFonts() {
   };
 
   const handleCustomFontUpload = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    const fontName = file.name.replace(/\.[^.]+$/, "");
-    injectCustomFontFace(fontName, file_url);
-    const newFont = { name: fontName, label: fontName, category: "مرفوع", url: "", file_url, value: `'${fontName}', sans-serif` };
-    const updated = [...customFonts, newFont];
-    setCustomFonts(updated);
-    setSetting("custom_fonts", JSON.stringify(updated));
-    setUploading(false);
-    toast.success(`تم رفع الخط "${fontName}" ✓`);
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const fontName = file.name.replace(/\.[^.]+$/, "");
+      const newFont = { name: fontName, label: fontName, category: "مرفوع", url: "", file_url, value: `'${fontName}', sans-serif` };
+      const updated = [...customFonts.filter(f => f.name !== fontName), newFont];
+      const serialized = JSON.stringify(updated);
+      if (serialized.length > 460000) {
+        toast.error("تجاوزت الخطوط المرفوعة الحد الأقصى للتخزين السحابي — احذف خطاً قديماً أو استخدم ملفاً أصغر");
+        return;
+      }
+      injectCustomFontFace(fontName, file_url);
+      setCustomFonts(updated);
+      setSetting("custom_fonts", serialized);
+      toast.success(`تم رفع الخط "${fontName}" ✓`);
+    } catch (err) {
+      toast.error(err?.message || "فشل رفع ملف الخط");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
   };
 
   const handleResetFonts = () => {
@@ -116,7 +137,11 @@ export default function DevFonts() {
   };
 
   const deleteCustomFont = (font) => {
-    if (!confirm(`حذف الخط "${font.name}"؟`)) return;
+    if (confirmDeleteName !== font.name) {
+      setConfirmDeleteName(font.name);
+      return;
+    }
+    setConfirmDeleteName(null);
     const updated = customFonts.filter(f => f.name !== font.name);
     setCustomFonts(updated);
     setSetting("custom_fonts", JSON.stringify(updated));
@@ -251,9 +276,20 @@ export default function DevFonts() {
               <div key={f.name} className="flex items-center gap-2 text-xs bg-muted/50 px-3 py-2 rounded-lg">
                 <span className="text-green-600">✓</span>
                 <span className="font-medium" style={{ fontFamily: f.value }}>{f.name}</span>
-                <button onClick={() => deleteCustomFont(f)} className="mr-auto p-1 rounded-lg hover:bg-destructive/10 transition-colors" title="حذف الخط">
-                  <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                </button>
+                {confirmDeleteName === f.name ? (
+                  <div className="mr-auto flex items-center gap-1">
+                    <button onClick={() => deleteCustomFont(f)} className="px-2 py-0.5 rounded bg-destructive text-white text-[11px] font-bold">
+                      تأكيد الحذف
+                    </button>
+                    <button onClick={() => setConfirmDeleteName(null)} className="px-2 py-0.5 rounded border border-border text-[11px]">
+                      إلغاء
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => deleteCustomFont(f)} className="mr-auto p-1 rounded-lg hover:bg-destructive/10 transition-colors" title="حذف الخط">
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </button>
+                )}
               </div>
             ))}
           </div>

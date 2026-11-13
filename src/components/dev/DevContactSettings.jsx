@@ -1,9 +1,18 @@
 import { useState, useEffect } from "react";
-import { MessageCircle, Save } from "lucide-react";
+import { MessageCircle, Save, Check, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { getSetting, setSetting, onSaveStatus } from "@/lib/settingsStore";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import {
+  getSetting,
+  setSetting,
+  setSettings,
+  subscribeToSettings,
+  onSaveStatus,
+  flushAllPendingSettings,
+} from "@/lib/settingsStore";
 
 const FIELDS = [
   { key: "contact_email", label: "البريد الإلكتروني للتواصل", placeholder: "support@example.com" },
@@ -14,20 +23,56 @@ const FIELDS = [
   { key: "contact_instagram_url", label: "رابط إنستغرام", placeholder: "https://instagram.com/..." },
 ];
 
+const readFields = (src) =>
+  Object.fromEntries(FIELDS.map((f) => [f.key, (src ? src[f.key] : getSetting(f.key)) || ""]));
+
 export default function DevContactSettings() {
-  const [, force] = useState(0);
-  const [status, setStatus] = useState(getSetting("__status") || "idle");
-  const [showForm, setShowForm] = useState(getSetting("contact_show_form") !== "false");
-  const [intro, setIntro] = useState(getSetting("contact_intro") || "");
+  const [values, setValues] = useState(() => readFields());
+  const [status, setStatus] = useState("idle");
+  const [showForm, setShowForm] = useState(() => getSetting("contact_show_form") !== "false");
+  const [intro, setIntro] = useState(() => getSetting("contact_intro") || "");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const unsub = onSaveStatus((s) => setStatus(s));
-    return unsub;
+    const unsubStatus = onSaveStatus((s) => setStatus(s));
+    const unsubSettings = subscribeToSettings((s) => {
+      setValues(readFields(s));
+      setIntro(s.contact_intro || "");
+      setShowForm(s.contact_show_form !== "false");
+    });
+    return () => {
+      unsubStatus();
+      unsubSettings();
+    };
   }, []);
 
-  const update = (key, value) => {
+  const handleFieldChange = (key, value) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
     setSetting(key, value);
-    force((n) => n + 1);
+  };
+
+  const handleIntroChange = (value) => {
+    setIntro(value);
+    setSetting("contact_intro", value);
+  };
+
+  const handleExplicitSave = async () => {
+    setSaving(true);
+    try {
+      setSettings({
+        ...values,
+        contact_intro: intro,
+        contact_show_form: String(showForm),
+      });
+      const res = await flushAllPendingSettings();
+      if (res.ok) {
+        toast.success("تم حفظ إعدادات التواصل ✓");
+      } else {
+        toast.error("تعذر الحفظ السحابي — تحقق من الاتصال");
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -47,9 +92,10 @@ export default function DevContactSettings() {
           <div key={f.key}>
             <label className="text-sm font-medium text-foreground mb-1.5 block">{f.label}</label>
             <Input
-              defaultValue={getSetting(f.key) || ""}
+              value={values[f.key] ?? ""}
               placeholder={f.placeholder}
-              onBlur={(e) => update(f.key, e.target.value)}
+              onChange={(e) => handleFieldChange(f.key, e.target.value)}
+              onBlur={() => flushAllPendingSettings().catch(() => {})}
               className="w-full"
             />
           </div>
@@ -59,8 +105,8 @@ export default function DevContactSettings() {
           <label className="text-sm font-medium text-foreground mb-1.5 block">نص المقدمة</label>
           <Textarea
             value={intro}
-            onChange={(e) => setIntro(e.target.value)}
-            onBlur={(e) => update("contact_intro", e.target.value)}
+            onChange={(e) => handleIntroChange(e.target.value)}
+            onBlur={() => flushAllPendingSettings().catch(() => {})}
             rows={3}
             placeholder="نص يظهر تحت العنوان في صفحة التواصل"
             className="w-full resize-none"
@@ -74,15 +120,24 @@ export default function DevContactSettings() {
           </div>
           <Switch
             checked={showForm}
-            onCheckedChange={(v) => { setShowForm(v); update("contact_show_form", String(v)); }}
+            onCheckedChange={(v) => {
+              setShowForm(v);
+              setSetting("contact_show_form", String(v));
+            }}
           />
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Save className="w-3.5 h-3.5" />
-          <span>
-            {status === "saving" ? "جارٍ الحفظ…" : status === "error" ? "تعذّر الحفظ — سنحاول مجددًا" : "يُحفظ تلقائيًا"}
-          </span>
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Save className="w-3.5 h-3.5" />
+            <span>
+              {status === "saving" ? "جارٍ الحفظ…" : status === "error" ? "تعذّر الحفظ — يرجى المحاولة" : "يُحفظ تلقائيًا"}
+            </span>
+          </div>
+          <Button onClick={handleExplicitSave} disabled={saving} size="sm" className="rounded-xl gap-1.5 font-bold">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            حفظ التغييرات
+          </Button>
         </div>
       </div>
     </div>

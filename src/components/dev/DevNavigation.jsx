@@ -4,7 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getSetting, setSettings, setSetting, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, setSetting, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 import { DEFAULT_NAV_ITEMS, NAV_ICONS, readNavItems } from "@/lib/navConfig";
 
@@ -50,16 +50,25 @@ export default function DevNavigation() {
   const handleLabelChange = (id, value) => {
     const updated = navItems.map(item => item.id === id ? { ...item, label: value } : item);
     setNavItems(updated);
+    setSettings({ nav_items: JSON.stringify(updated) });
   };
 
   // Persist the edited label as soon as the field loses focus
-  const handleLabelBlur = () => setSettings({ nav_items: JSON.stringify(navItems) });
+  const handleLabelBlur = () => {
+    setSettings({ nav_items: JSON.stringify(navItems) });
+    flushAllPendingSettings().catch(() => {});
+  };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setSettings({ nav_items: JSON.stringify(navItems), show_dev_nav: String(showDevNav) });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    toast.success("تم حفظ إعدادات التنقل ✓");
+    const res = await flushAllPendingSettings();
+    if (res.ok) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      toast.success("تم حفظ إعدادات التنقل ✓");
+    } else {
+      toast.error("تعذر الحفظ السحابي — تحقق من الاتصال");
+    }
   };
 
   const handleReset = () => {

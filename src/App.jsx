@@ -57,15 +57,13 @@ const AuthenticatedApp = () => {
   );
 
   useEffect(() => {
-    base44.auth.me().
-    then((u) => {
-      loadSettings(u?.email);
-      if (u) syncPendingFavorites(getAccountEmail(u)).catch(() => {});
-    }).
-    catch(() => {
-      loadSettings();
-    }).
-    finally(() => initThemeEngine());
+    base44.auth.me()
+      .then((u) => {
+        if (u) syncPendingFavorites(getAccountEmail(u)).catch(() => {});
+        return loadSettings(u?.email);
+      })
+      .catch(() => loadSettings())
+      .finally(() => initThemeEngine());
   }, []);
 
   // Start the smart content sync engine (replaces manual fullSync calls)
