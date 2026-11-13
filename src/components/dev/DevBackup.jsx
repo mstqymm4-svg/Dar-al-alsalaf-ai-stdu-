@@ -3,7 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { Archive, Download, Upload, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { getAllSettings, setSettings } from "@/lib/settingsStore";
+import { getAllSettings, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export default function DevBackup() {
   const [exporting, setExporting] = useState(false);
@@ -43,12 +43,14 @@ export default function DevBackup() {
     const file = e.target.files[0]; if (!file) return;
     setImporting(true);
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const parsed = JSON.parse(ev.target.result);
         const settings = parsed.data || parsed;
         setSettings(settings);
-        toast.success("تم استيراد الإعدادات ✓ — يطبق فورياً");
+        const res = await flushAllPendingSettings();
+        if (res.ok) toast.success("تم استيراد الإعدادات وحفظها سحابياً ✓");
+        else toast.warning("تم الاستيراد محلياً — تعذر الحفظ السحابي");
       } catch { toast.error("ملف غير صحيح"); }
       setImporting(false);
     };

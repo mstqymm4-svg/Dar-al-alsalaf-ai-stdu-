@@ -3,7 +3,7 @@ import { Palette, Check, RotateCcw, Download, Upload, Sun, Moon, X } from "lucid
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getSetting, setSettings, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 import { getThemeState } from "@/lib/themeEngine";
 
 // HSL ↔ HEX helpers
@@ -69,7 +69,7 @@ export default function DevColors() {
     return unsub;
   }, []);
 
-  const handlePreset = (preset) => {
+  const handlePreset = async (preset) => {
     const prefix = mode === "dark" ? "color_dark_" : "color_";
     const c = {
       [prefix + "bg"]:        preset.bg,
@@ -84,7 +84,9 @@ export default function DevColors() {
     setColors(prev => ({ ...prev, ...c }));
     setActivePreset(preset.name);
     setSettings(c);
-    toast.success(`تم تطبيق ثيم "${preset.name}" ✓`);
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success(`تم تطبيق ثيم "${preset.name}" ✓`);
+    else toast.warning(`تم تطبيق "${preset.name}" محلياً — تعذر الحفظ السحابي`);
   };
 
   const handleColorChange = (key, hexVal) => {
@@ -93,12 +95,14 @@ export default function DevColors() {
     setSettings({ [key]: hsl });
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     const reset = Object.fromEntries(ALL_KEYS.map(k => [k, ""]));
     setColors(reset);
     setSettings(reset);
     setActivePreset(null);
-    toast.success("تم إعادة الألوان للافتراضي");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم إعادة الألوان للافتراضي ✓");
+    else toast.warning("تم الإعادة محلياً — تعذر الحفظ السحابي");
   };
 
   const handleExport = () => {
@@ -111,12 +115,14 @@ export default function DevColors() {
   const handleImport = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
         setColors(prev => ({ ...prev, ...data }));
         setSettings(data);
-        toast.success("تم استيراد الثيم ✓");
+        const res = await flushAllPendingSettings();
+        if (res.ok) toast.success("تم استيراد الثيم وحفظه ✓");
+        else toast.warning("تم الاستيراد محلياً — تعذر الحفظ السحابي");
       } catch { toast.error("ملف غير صحيح"); }
     };
     reader.readAsText(file);

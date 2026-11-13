@@ -6,6 +6,7 @@ import { Moon, Sun, Monitor, Check, Palette, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useTheme } from "@/hooks/useTheme";
+import { flushAllPendingSettings } from "@/lib/settingsStore";
 
 const MODES = [
   {
@@ -68,8 +69,9 @@ function ThemePreviewCard({ isDark }) {
 export default function DevTheme() {
   const { mode, isDark, setMode } = useTheme();
 
-  const handleApply = (modeId) => {
+  const handleApply = async (modeId) => {
     setMode(modeId);
+    await flushAllPendingSettings().catch(() => {});
     toast.success(
       modeId === "dark" ? "🌙 تم تفعيل الوضع الليلي على جميع الصفحات" :
       modeId === "light" ? "☀️ تم تفعيل الوضع الفاتح على جميع الصفحات" :

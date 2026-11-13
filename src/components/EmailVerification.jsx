@@ -340,6 +340,11 @@ export default function EmailVerification({
               </div>
             )}
 
+            <p className="text-[11px] text-muted-foreground bg-muted/40 border border-border/70 rounded-xl px-3 py-2 leading-relaxed">
+              سيصلك رمز التحقق من البريد الرسمي:{" "}
+              <span dir="ltr" className="font-mono font-semibold text-foreground">daraluloom258@gmail.com</span>
+            </p>
+
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
               <Button
                 type="button"

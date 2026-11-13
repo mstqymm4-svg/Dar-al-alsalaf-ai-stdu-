@@ -1,6 +1,5 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sendOtp, verifyOtp, sendContactEmail } from './server/otpManager';
@@ -43,18 +42,6 @@ async function startServer() {
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
-  });
-
-  // Configure Nodemailer transporter
-  // If SMTP environment variables are not set, fallback to a test account or JSON transport / console logging
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER || 'ethereal_user',
-      pass: process.env.SMTP_PASS || 'ethereal_pass',
-    },
   });
 
   // Helper to extract client IP

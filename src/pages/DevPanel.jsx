@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { subscribeToSettings } from "@/lib/settingsStore";
+import { subscribeToSettings, flushAllPendingSettings, getSaveStatus, onSaveStatus } from "@/lib/settingsStore";
 import { setThemeMode, getThemeState } from "@/lib/themeEngine";
 import { auth } from "@/api/base44Client";
 import { onAuthStateChanged } from "firebase/auth";
@@ -97,11 +97,13 @@ export default function DevPanel() {
   const [darkMode, setDarkMode]           = useState(() => getThemeState().isDark);
   const [fbUser, setFbUser]               = useState(() => auth.currentUser);
   const [syncingCloud, setSyncingCloud]   = useState(false);
+  const [saveStatus, setSaveStatus]       = useState(() => getSaveStatus());
 
   // Sync dark mode
   useEffect(() => {
     const unsub = subscribeToSettings(() => setDarkMode(getThemeState().isDark));
-    return unsub;
+    const unsubStatus = onSaveStatus((s) => setSaveStatus(s));
+    return () => { unsub(); unsubStatus(); };
   }, []);
 
   useEffect(() => {
@@ -111,8 +113,13 @@ export default function DevPanel() {
   const handleSyncCloud = async () => {
     setSyncingCloud(true);
     try {
+      const settingsRes = await flushAllPendingSettings();
       await forceSyncNow();
-      toast.success("تمت المزامنة بنجاح وحفظ كافة التعديلات ✓");
+      if (settingsRes?.ok === false) {
+        toast.warning("تعذر حفظ بعض الإعدادات سحابياً — تحقق من اتصال الإنترنت");
+      } else {
+        toast.success("تمت المزامنة بنجاح وحفظ كافة التعديلات ✓");
+      }
     } catch (e) {
       toast.error("حدث خطأ أثناء المزامنة: " + (e?.message || ""));
     } finally {
@@ -346,8 +353,18 @@ export default function DevPanel() {
               </Button>
             )}
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground px-1">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="hidden sm:inline">حفظ فوري</span>
+              <div className={`w-2 h-2 rounded-full ${
+                saveStatus === "saving" ? "bg-amber-500 animate-pulse" :
+                saveStatus === "error"  ? "bg-red-500" :
+                saveStatus === "saved"  ? "bg-emerald-500" :
+                "bg-emerald-500/80"
+              }`} />
+              <span className="hidden sm:inline">
+                {saveStatus === "saving" ? "جاري الحفظ..." :
+                 saveStatus === "error"  ? "بانتظار الاتصال" :
+                 saveStatus === "saved"  ? "تم الحفظ ✓" :
+                 "مزامنة تلقائية"}
+              </span>
             </div>
           </div>
         </header>

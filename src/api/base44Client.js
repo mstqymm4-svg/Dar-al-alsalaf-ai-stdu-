@@ -87,6 +87,65 @@ function sanitizeId(rawId, prefix = "doc") {
   return str || `${prefix}_${Date.now()}`;
 }
 
+const PENDING_CATALOG_OPS_KEY = "dau_pending_catalog_ops_v1";
+
+function safeNum(val, fallback = 0) {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function isNetworkLikeError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  const code = String(err?.code || "").toLowerCase();
+  return (
+    (typeof navigator !== "undefined" && navigator.onLine === false) ||
+    code === "unavailable" ||
+    msg.includes("client is offline") ||
+    msg.includes("failed to get document because the client is offline") ||
+    msg.includes("network")
+  );
+}
+
+function readPendingCatalogOps() {
+  try {
+    const raw = localStorage.getItem(PENDING_CATALOG_OPS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingCatalogOps(ops) {
+  try {
+    if (!ops || ops.length === 0) {
+      localStorage.removeItem(PENDING_CATALOG_OPS_KEY);
+    } else {
+      localStorage.setItem(PENDING_CATALOG_OPS_KEY, JSON.stringify(ops));
+    }
+  } catch {}
+}
+
+function enqueueCatalogOp(op) {
+  if (!op || op.collectionName === "app_settings") return;
+  const ops = readPendingCatalogOps().filter(
+    (item) => !(item.collectionName === op.collectionName && item.docId === op.docId)
+  );
+  ops.push({ ...op, queuedAt: Date.now() });
+  writePendingCatalogOps(ops);
+}
+
+function clearPendingCatalogOp(collectionName, docId) {
+  const ops = readPendingCatalogOps();
+  if (ops.length === 0) return;
+  const next = ops.filter(
+    (item) => !(item.collectionName === collectionName && (item.docId === docId || item.cleanId === docId))
+  );
+  if (next.length !== ops.length) {
+    writePendingCatalogOps(next);
+  }
+}
+
 function truncStr(val, maxBytes, fallback = "") {
   if (val === undefined || val === null) return fallback;
   const str = String(val);
@@ -180,10 +239,10 @@ function sanitizeBook(raw, existing = {}) {
     pages_count:
       merged.pages_count === null || merged.pages_count === undefined || merged.pages_count === ""
         ? null
-        : Number(merged.pages_count) || 0,
+        : safeNum(merged.pages_count, 0),
     language: truncStr(merged.language || "العربية", 100),
     is_featured: Boolean(merged.is_featured),
-    rating: Number(merged.rating) || 0,
+    rating: safeNum(merged.rating, 0),
     status: truncStr(merged.status || "published", 50),
     created_date: truncStr(existing.created_date || merged.created_date || now, 64),
     updated_date: truncStr(raw?.updated_date || now, 64),
@@ -210,7 +269,7 @@ function sanitizeVideo(raw, existing = {}) {
     duration: truncStr(merged.duration ?? "", 50),
     is_featured: Boolean(merged.is_featured),
     visible: merged.visible !== false,
-    sort_order: Number(merged.sort_order) || 0,
+    sort_order: safeNum(merged.sort_order, 0),
     created_date: truncStr(existing.created_date || merged.created_date || now, 64),
     updated_date: truncStr(raw?.updated_date || now, 64),
   };
@@ -227,7 +286,7 @@ function sanitizeVideoChannel(raw, existing = {}) {
     description: truncStr(merged.description ?? "", 2000),
     youtube_url: truncStr(merged.youtube_url ?? "", 2000),
     category: truncStr(merged.category || "عام", 200),
-    sort_order: Number(merged.sort_order) || 0,
+    sort_order: safeNum(merged.sort_order, 0),
     visible: merged.visible !== false,
     created_date: truncStr(existing.created_date || merged.created_date || now, 64),
     updated_date: truncStr(raw?.updated_date || now, 64),
@@ -245,7 +304,7 @@ function sanitizeSocialChannel(raw, existing = {}) {
     url: truncStr(merged.url || "https://example.com", 2000),
     icon_url: truncStr(merged.icon_url ?? "", 500000),
     description: truncStr(merged.description ?? "", 2000),
-    sort_order: Number(merged.sort_order) || 0,
+    sort_order: safeNum(merged.sort_order, 0),
     visible: merged.visible !== false,
     created_date: truncStr(existing.created_date || merged.created_date || now, 64),
     updated_date: truncStr(raw?.updated_date || now, 64),
@@ -318,9 +377,66 @@ function createPublicCatalogEntity({
       .map((item) => sanitizeFn(item, item));
   }
 
+  async function readServerDoc(rawId, cleanId) {
+    try {
+      const snap = await getDocFromServer(doc(db, collectionName, rawId)).catch(() =>
+        getDoc(doc(db, collectionName, rawId))
+      );
+      if (snap?.exists()) return { docId: snap.id, data: snap.data() };
+    } catch {}
+    if (cleanId && cleanId !== rawId) {
+      try {
+        const snap = await getDocFromServer(doc(db, collectionName, cleanId)).catch(() =>
+          getDoc(doc(db, collectionName, cleanId))
+        );
+        if (snap?.exists()) return { docId: snap.id, data: snap.data() };
+      } catch {}
+    }
+    return null;
+  }
+
+  async function flushPendingForThisCollection() {
+    if (collectionName === "app_settings" || !navigator.onLine) return;
+    const ops = readPendingCatalogOps().filter((op) => op.collectionName === collectionName);
+    if (ops.length === 0) return;
+
+    for (const op of ops) {
+      try {
+        if (op.op === "delete") {
+          await deleteDoc(doc(db, collectionName, op.docId)).catch(() => {});
+          if (op.cleanId && op.cleanId !== op.docId) {
+            await deleteDoc(doc(db, collectionName, op.cleanId)).catch(() => {});
+          }
+          clearPendingCatalogOp(collectionName, op.docId);
+        } else if (op.op === "create" || op.op === "update") {
+          const serverDoc = await readServerDoc(op.docId, op.cleanId);
+          const item = serverDoc
+            ? sanitizeFn(
+                {
+                  ...serverDoc.data,
+                  ...op.payload,
+                  id: serverDoc.docId,
+                  created_date: serverDoc.data.created_date || op.payload?.created_date,
+                  updated_date: op.payload?.updated_date || new Date().toISOString(),
+                },
+                serverDoc.data
+              )
+            : sanitizeFn(op.payload);
+          await setDoc(doc(db, collectionName, item.id), item);
+          clearPendingCatalogOp(collectionName, op.docId);
+        }
+      } catch (err) {
+        if (!isNetworkLikeError(err)) {
+          clearPendingCatalogOp(collectionName, op.docId);
+        }
+      }
+    }
+  }
+
   async function fetchFromFirestore() {
     const deleted = getDeletedIds();
     try {
+      await flushPendingForThisCollection();
       const snap = await getDocs(collection(db, collectionName));
       const docs = [];
       snap.forEach((d) => {
@@ -369,23 +485,11 @@ function createPublicCatalogEntity({
       const deleted = getDeletedIds();
       if (deleted.has(rawId) || deleted.has(cleanId)) return null;
       if (navigator.onLine) {
-        try {
-          const snap = await getDoc(doc(db, collectionName, rawId));
-          if (snap.exists()) {
-            const item = sanitizeFn({ ...snap.data(), id: rawId }, snap.data());
-            await cacheAll([item]).catch(() => {});
-            return item;
-          }
-        } catch {}
-        if (cleanId !== rawId) {
-          try {
-            const snap = await getDoc(doc(db, collectionName, cleanId));
-            if (snap.exists()) {
-              const item = sanitizeFn({ ...snap.data(), id: cleanId }, snap.data());
-              await cacheAll([item]).catch(() => {});
-              return item;
-            }
-          } catch {}
+        const serverDoc = await readServerDoc(rawId, cleanId);
+        if (serverDoc) {
+          const item = sanitizeFn({ ...serverDoc.data, id: serverDoc.docId }, serverDoc.data);
+          await cacheAll([item]).catch(() => {});
+          return item;
         }
       }
       const all = await loadLocalList();
@@ -401,9 +505,16 @@ function createPublicCatalogEntity({
       if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, item.id), item);
+          clearPendingCatalogOp(collectionName, item.id);
         } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${item.id}`);
+          if (isNetworkLikeError(error)) {
+            enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
+          } else {
+            handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${item.id}`);
+          }
         }
+      } else {
+        enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
       }
       await cacheAll([item]).catch(() => {});
       dispatchChanged();
@@ -411,9 +522,32 @@ function createPublicCatalogEntity({
     },
 
     async update(id, payload) {
-      const existing = (await this.get(id)) || { id: sanitizeId(id) };
+      const rawId = String(id);
+      const cleanId = sanitizeId(id);
+      let existing = (await this.get(id)) || { id: cleanId };
+
+      if (navigator.onLine) {
+        const serverDoc = await readServerDoc(rawId, cleanId);
+        if (serverDoc?.data) {
+          existing = {
+            ...existing,
+            ...serverDoc.data,
+            id: serverDoc.docId,
+            created_date: serverDoc.data.created_date || existing.created_date,
+            ...(serverDoc.data.setting_key ? { setting_key: serverDoc.data.setting_key } : {}),
+          };
+        }
+      }
+
       const updated = sanitizeFn(
-        { ...existing, ...payload, id: existing.id, updated_date: new Date().toISOString() },
+        {
+          ...existing,
+          ...payload,
+          id: existing.id || cleanId,
+          ...(existing.setting_key ? { setting_key: existing.setting_key } : {}),
+          created_date: existing.created_date || new Date().toISOString(),
+          updated_date: new Date().toISOString(),
+        },
         existing
       );
       unmarkDeletedId(updated.id);
@@ -423,9 +557,16 @@ function createPublicCatalogEntity({
       if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, updated.id), updated);
+          clearPendingCatalogOp(collectionName, updated.id);
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${updated.id}`);
+          if (isNetworkLikeError(error)) {
+            enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
+          } else {
+            handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${updated.id}`);
+          }
         }
+      } else {
+        enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
       }
       await cacheAll([updated]).catch(() => {});
       dispatchChanged();
@@ -456,10 +597,18 @@ function createPublicCatalogEntity({
           }
         }
         if (lastErr) {
-          unmarkDeletedId(rawId);
-          unmarkDeletedId(cleanId);
-          handleFirestoreError(lastErr, OperationType.DELETE, `${collectionName}/${rawId}`);
+          if (isNetworkLikeError(lastErr)) {
+            enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
+          } else {
+            unmarkDeletedId(rawId);
+            unmarkDeletedId(cleanId);
+            handleFirestoreError(lastErr, OperationType.DELETE, `${collectionName}/${rawId}`);
+          }
+        } else {
+          clearPendingCatalogOp(collectionName, rawId);
         }
+      } else {
+        enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
       }
       if (deleteCached) {
         await deleteCached(rawId).catch(() => {});
@@ -468,6 +617,7 @@ function createPublicCatalogEntity({
       dispatchChanged();
       return { id: rawId, deleted: true };
     },
+    flushPending: flushPendingForThisCollection,
   };
 }
 

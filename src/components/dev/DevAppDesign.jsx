@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { getSetting, setSetting, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSetting, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 import { useTheme } from "@/hooks/useTheme";
 
 const LANG_OPTIONS = [
@@ -37,40 +37,51 @@ export default function DevAppDesign() {
     return unsub;
   }, []);
 
-  const handleLang = (code) => {
+  const handleLang = async (code) => {
     setAppLang(code);
     setSetting("app_lang", code);
-    toast.success("تم حفظ اللغة ✓ — أعد تحميل الصفحة");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم حفظ اللغة ✓ — أعد تحميل الصفحة");
+    else toast.warning("تم حفظ اللغة محلياً — تعذر الحفظ السحابي");
   };
 
-  const handleRadius = (val) => {
+  const previewRadius = (val) => {
     setBorderRadius(val);
     document.documentElement.style.setProperty("--radius", `${val}px`);
-    setSetting("ui_radius", String(val));
   };
 
-  const saveCategories = (cats) => {
+  const handleRadius = async (val) => {
+    previewRadius(val);
+    setSetting("ui_radius", String(val));
+    await flushAllPendingSettings().catch(() => {});
+  };
+
+  const saveCategories = async (cats) => {
     setCategories(cats);
     setSetting("categories", JSON.stringify(cats));
     try { localStorage.setItem("dev_categories", JSON.stringify(cats)); } catch(e) {}
+    const res = await flushAllPendingSettings();
+    return res;
   };
 
-  const addCategory = () => {
+  const addCategory = async () => {
     const t = newCat.trim();
     if (!t || categories.includes(t)) { toast.error(t ? "التصنيف موجود" : "أدخل اسماً"); return; }
-    saveCategories([...categories, t]);
     setNewCat("");
-    toast.success("تم إضافة التصنيف ✓");
+    const res = await saveCategories([...categories, t]);
+    if (res.ok) toast.success("تم إضافة التصنيف ✓");
+    else toast.warning("تمت الإضافة محلياً — تعذر الحفظ السحابي");
   };
 
-  const removeCategory = (cat) => {
+  const removeCategory = async (cat) => {
     if (confirmCat !== cat) {
       setConfirmCat(cat);
       return;
     }
     setConfirmCat(null);
-    saveCategories(categories.filter(c => c !== cat));
-    toast.success("تم حذف التصنيف ✓");
+    const res = await saveCategories(categories.filter(c => c !== cat));
+    if (res.ok) toast.success("تم حذف التصنيف ✓");
+    else toast.warning("تم الحذف محلياً — تعذر الحفظ السحابي");
   };
 
   return (
@@ -118,7 +129,7 @@ export default function DevAppDesign() {
           <h3 className="font-bold text-sm flex items-center gap-2"><SlidersHorizontal className="w-4 h-4 text-primary" /> انحناء الزوايا العام</h3>
           <span className="text-xs font-mono font-bold text-primary">{borderRadius}px</span>
         </div>
-        <Slider min={0} max={24} step={2} value={[borderRadius]} onValueChange={([v]) => handleRadius(v)} />
+        <Slider min={0} max={24} step={2} value={[borderRadius]} onValueChange={([v]) => previewRadius(v)} onValueCommit={([v]) => handleRadius(v)} />
         <div className="flex flex-wrap items-center gap-2">
           {[0, 4, 8, 12, 16, 20, 24].map(r => (
             <button key={r} onClick={() => handleRadius(r)}

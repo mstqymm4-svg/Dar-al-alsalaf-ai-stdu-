@@ -123,6 +123,42 @@ const USER_LOCAL_PREF_KEYS = new Set(["theme_mode", "dark_mode", "app_lang"]);
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 const LS_PREFIX = "devs_";
+const DIRTY_KEYS_LS = "devs__dirty_keys";
+
+function readDirtyMap() {
+  try {
+    const raw = localStorage.getItem(DIRTY_KEYS_LS);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDirtyMap(map) {
+  try {
+    if (!map || Object.keys(map).length === 0) {
+      localStorage.removeItem(DIRTY_KEYS_LS);
+    } else {
+      localStorage.setItem(DIRTY_KEYS_LS, JSON.stringify(map));
+    }
+  } catch {}
+}
+
+function markDirtyKey(key, value) {
+  const map = readDirtyMap();
+  map[key] = String(value ?? "");
+  writeDirtyMap(map);
+}
+
+function clearDirtyKey(key, savedValue) {
+  const map = readDirtyMap();
+  if (key in map && map[key] === String(savedValue ?? "")) {
+    delete map[key];
+    writeDirtyMap(map);
+  }
+}
+
 const ls = {
   get: (k)    => { try { return localStorage.getItem(LS_PREFIX + k); } catch(e) { return null; } },
   set: (k, v) => { try { localStorage.setItem(LS_PREFIX + k, v); }    catch(e) {} },
@@ -137,7 +173,7 @@ const ls = {
         const rawKey = localStorage.key(i);
         if (rawKey && rawKey.startsWith(LS_PREFIX)) {
           const k = rawKey.slice(LS_PREFIX.length);
-          if (k && k !== "_migrated" && !(k in result)) {
+          if (k && k !== "_migrated" && k !== "_dirty_keys" && !(k in result)) {
             const v = localStorage.getItem(rawKey);
             if (v !== null) result[k] = v;
           }
@@ -152,7 +188,7 @@ const ls = {
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 async function dbGetAll() {
   try {
-    const rows = await entities.AppSettings.list('-updated_date', 200);
+    const rows = await entities.AppSettings.list('-updated_date', 1000);
     const map = {};
     rows.forEach(r => { if (r.setting_key) map[r.setting_key] = r.setting_value || ""; });
     return map;
@@ -160,6 +196,9 @@ async function dbGetAll() {
 }
 
 async function dbSet(key, value, previousValue, userEmail) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return false;
+  }
   try {
     await entities.AppSettings.update(key, {
       setting_key: key,
@@ -353,7 +392,11 @@ const _prevValues = {};
 
 function flushSave(key) {
   if (_pendingSaves[key] === undefined) {
-    return _inFlightSaves.get(key) || Promise.resolve(true);
+    const existingFlight = _inFlightSaves.get(key);
+    if (existingFlight) return existingFlight;
+    const dirty = readDirtyMap();
+    if (!(key in dirty)) return Promise.resolve(true);
+    _pendingSaves[key] = dirty[key];
   }
   const value = _pendingSaves[key];
   delete _pendingSaves[key];
@@ -364,18 +407,21 @@ function flushSave(key) {
 
   const run = (async () => {
     let ok = await dbSet(key, value, previous, _userEmail);
-    if (!ok) {
+    if (!ok && (typeof navigator === "undefined" || navigator.onLine !== false)) {
       await new Promise(r => setTimeout(r, 600));
       ok = await dbSet(key, value, previous, _userEmail);
+    }
+    if (ok) {
+      clearDirtyKey(key, value);
     }
     if (!ok) {
       emitStatus("error");
       const now = Date.now();
       if (now - _lastErrorToastAt > 6000) {
         _lastErrorToastAt = now;
-        try { toast.error("تعذر حفظ التعديلات سحابياً — تحقق من الاتصال"); } catch {}
+        try { toast.error("تعذر حفظ التعديلات سحابياً — سيتم الحفظ تلقائياً عند توفر الاتصال"); } catch {}
       }
-    } else if (Object.keys(_pendingSaves).length === 0) {
+    } else if (Object.keys(_pendingSaves).length === 0 && Object.keys(readDirtyMap()).length === 0) {
       emitStatus("saved");
       setTimeout(() => { if (_saveStatus === "saved") emitStatus("idle"); }, 2000);
     }
@@ -390,8 +436,14 @@ function flushSave(key) {
   return run;
 }
 
-/** Immediately flush every pending debounced setting and await all active cloud saves */
+/** Immediately flush every pending debounced setting and dirty key, awaiting all cloud saves */
 export async function flushAllPendingSettings() {
+  const dirty = readDirtyMap();
+  Object.entries(dirty).forEach(([k, v]) => {
+    if (_pendingSaves[k] === undefined) {
+      _pendingSaves[k] = v;
+    }
+  });
   const pendingKeys = Object.keys(_pendingSaves);
   pendingKeys.forEach((k) => clearTimeout(_saveTimers[k]));
   const promises = [
@@ -405,12 +457,13 @@ export async function flushAllPendingSettings() {
 
 if (typeof window !== "undefined") {
   const flushOnLeave = () => {
-    if (Object.keys(_pendingSaves).length > 0) {
+    if (Object.keys(_pendingSaves).length > 0 || Object.keys(readDirtyMap()).length > 0) {
       flushAllPendingSettings().catch(() => {});
     }
   };
   window.addEventListener("pagehide", flushOnLeave);
   window.addEventListener("beforeunload", flushOnLeave);
+  window.addEventListener("online", flushOnLeave);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushOnLeave();
   });
@@ -426,9 +479,13 @@ export function getSetting(key) {
 /** Update a setting: applies instantly + persists locally & saves to DB */
 export function setSetting(key, value) {
   const strVal = String(value ?? "");
+  if ((_cache[key] ?? "") === strVal && !(key in _pendingSaves)) {
+    return;
+  }
   _prevValues[key] = _cache[key] ?? "";
   _cache[key] = strVal;
   ls.set(key, strVal);
+  markDirtyKey(key, strVal);
   applySettingsToDom(_cache);
   dispatchChange();
 
@@ -440,35 +497,41 @@ export function setSetting(key, value) {
 
 /** Update multiple settings at once */
 export function setSettings(obj) {
-  Object.entries(obj).forEach(([k,v]) => {
+  const changed = [];
+  Object.entries(obj || {}).forEach(([k, v]) => {
     const strVal = String(v ?? "");
+    if ((_cache[k] ?? "") === strVal && !(k in _pendingSaves)) return;
     _prevValues[k] = _cache[k] ?? "";
     _cache[k] = strVal;
     ls.set(k, strVal);
+    markDirtyKey(k, strVal);
+    changed.push([k, strVal]);
   });
+  if (changed.length === 0) return;
   applySettingsToDom(_cache);
   dispatchChange();
-  Object.entries(obj).forEach(([k,v]) => {
+  changed.forEach(([k, strVal]) => {
     clearTimeout(_saveTimers[k]);
-    _pendingSaves[k] = String(v ?? "");
+    _pendingSaves[k] = strVal;
     _saveTimers[k] = setTimeout(() => { flushSave(k); }, 250);
   });
 }
 
-/** Load settings on app start — DB is authoritative for DevPanel config, localStorage fast-path */
+/** Load settings on app start — DB is authoritative for synced config, dirty local edits always win until flushed */
 export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
   // 1. Apply localStorage immediately (fast path before DB resolves)
   const cached = ls.getAll();
+  const dirty = readDirtyMap();
   let legacyLang = "";
   try { legacyLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
   if (!cached.app_lang && legacyLang) cached.app_lang = legacyLang;
 
-  _cache = { ...DEFAULT_SETTINGS, ...cached };
+  _cache = { ...DEFAULT_SETTINGS, ...cached, ...dirty };
   applySettingsToDom(_cache);
   dispatchChange();
 
-  // 2. Load from DB and let authoritative server settings take effect
+  // 2. Load from DB and merge without clobbering un-synced local edits
   const dbData = await dbGetAll();
   if (dbData && Object.keys(dbData).length > 0) {
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
@@ -478,7 +541,10 @@ export async function loadSettings(userEmail) {
         merged[k] = String(cached[k]);
       }
     });
-    // Preserve any in-flight local edits not yet flushed to DB
+    // Overlay persisted dirty edits + in-flight RAM edits so newer local changes are never overwritten
+    Object.entries(readDirtyMap()).forEach(([k, v]) => {
+      merged[k] = String(v);
+    });
     Object.entries(_pendingSaves).forEach(([k, v]) => {
       merged[k] = String(v);
     });
@@ -487,6 +553,11 @@ export async function loadSettings(userEmail) {
     applySettingsToDom(_cache);
     dispatchChange();
   }
+
+  if (Object.keys(readDirtyMap()).length > 0 && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+    flushAllPendingSettings().catch(() => {});
+  }
+
   return _cache;
 }
 

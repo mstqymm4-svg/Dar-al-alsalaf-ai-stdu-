@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { getSetting, setSettings, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 const CARD_STYLES = [
   { id: "modern",  label: "عصري",   desc: "نظيف وحديث" },
@@ -53,15 +53,17 @@ export default function DevCards() {
     return unsub;
   }, []);
 
-  const save = (key, value) => {
+  const save = async (key, value) => {
     setSettings({ [key]: String(value) });
     if (key === "card_radius") document.documentElement.style.setProperty("--card-radius", `${value}px`);
     if (key === "card_padding") document.documentElement.style.setProperty("--card-padding", `${value}px`);
     if (key === "card_gap") document.documentElement.style.setProperty("--card-gap", `${value}px`);
-    toast.success("تم الحفظ ✓");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم الحفظ ✓");
+    else toast.warning("تم التحديث محلياً — تعذر الحفظ السحابي");
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     setBorderRadius(16); setPadding(16); setGap(16);
     setCardStyle("modern"); setShadow("md"); setHover("lift");
     setSettings({
@@ -71,7 +73,9 @@ export default function DevCards() {
     document.documentElement.style.setProperty("--card-radius", "16px");
     document.documentElement.style.setProperty("--card-padding", "16px");
     document.documentElement.style.setProperty("--card-gap", "16px");
-    toast.success("تم إعادة إعدادات البطاقات للافتراضي");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم إعادة إعدادات البطاقات للافتراضي ✓");
+    else toast.warning("تم الإعادة محلياً — تعذر الحفظ السحابي");
   };
 
   const previewShadow = SHADOW_OPTIONS.find(s => s.id === shadow)?.value || "";

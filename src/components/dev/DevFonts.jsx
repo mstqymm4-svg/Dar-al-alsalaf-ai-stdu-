@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { toast } from "sonner";
-import { getSetting, setSetting, setSettings, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSetting, setSettings, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 import { FONT_PRESETS, FONT_ROLES } from "@/lib/fontConstants";
 
@@ -68,30 +68,41 @@ export default function DevFonts() {
     return unsub;
   }, []);
 
-  const applyRoleFont = (role, preset) => {
+  const applyRoleFont = async (role, preset) => {
     injectFont(preset);
     document.documentElement.style.setProperty(role.cssVar, preset.value);
     setRoleFonts(prev => ({ ...prev, [role.key]: preset.name }));
     setSetting(`font_${role.key}`, preset.name);
-    toast.success(`تم تطبيق "${preset.label}" على ${role.label} ✓`);
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success(`تم تطبيق "${preset.label}" على ${role.label} ✓`);
+    else toast.warning(`تم تطبيق "${preset.label}" محلياً — تعذر الحفظ السحابي`);
   };
 
-  const handleFontSize = (val) => {
+  const handleFontSize = (val, commit = true) => {
     setFontSize(val);
     document.documentElement.style.setProperty("font-size", `${val}px`);
-    setSetting("font_size", String(val));
+    if (commit) {
+      setSetting("font_size", String(val));
+      flushAllPendingSettings().catch(() => {});
+    }
   };
 
-  const handleLineHeight = (val) => {
+  const handleLineHeight = (val, commit = true) => {
     setLineHeight(val);
     document.documentElement.style.setProperty("line-height", String(val));
-    setSetting("line_height", String(val));
+    if (commit) {
+      setSetting("line_height", String(val));
+      flushAllPendingSettings().catch(() => {});
+    }
   };
 
-  const handleLetterSpacing = (val) => {
+  const handleLetterSpacing = (val, commit = true) => {
     setLetterSpacing(val);
     document.documentElement.style.setProperty("letter-spacing", `${val}em`);
-    setSetting("letter_spacing", String(val));
+    if (commit) {
+      setSetting("letter_spacing", String(val));
+      flushAllPendingSettings().catch(() => {});
+    }
   };
 
   const handleCustomFontUpload = async (e) => {
@@ -111,7 +122,9 @@ export default function DevFonts() {
       injectCustomFontFace(fontName, file_url);
       setCustomFonts(updated);
       setSetting("custom_fonts", serialized);
-      toast.success(`تم رفع الخط "${fontName}" ✓`);
+      const res = await flushAllPendingSettings();
+      if (res.ok) toast.success(`تم رفع وحفظ الخط "${fontName}" ✓`);
+      else toast.warning(`تم رفع الخط "${fontName}" محلياً — تعذر الحفظ السحابي`);
     } catch (err) {
       toast.error(err?.message || "فشل رفع ملف الخط");
     } finally {
@@ -120,23 +133,26 @@ export default function DevFonts() {
     }
   };
 
-  const handleResetFonts = () => {
+  const handleResetFonts = async () => {
+    const updates = { font_size: "16", line_height: "1.6", letter_spacing: "0" };
     FONT_ROLES.forEach(r => {
       document.documentElement.style.removeProperty(r.cssVar);
-      setSetting(`font_${r.key}`, "");
+      updates[`font_${r.key}`] = "";
     });
     document.documentElement.style.removeProperty("font-size");
     document.documentElement.style.removeProperty("line-height");
     document.documentElement.style.removeProperty("letter-spacing");
-    setSettings({ font_size: "16", line_height: "1.6", letter_spacing: "0" });
+    setSettings(updates);
     setRoleFonts(Object.fromEntries(FONT_ROLES.map(r => [r.key, ""])));
     setFontSize(16);
     setLineHeight(1.6);
     setLetterSpacing(0);
-    toast.success("تم إعادة جميع الخطوط والطباعة للافتراضي");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم إعادة جميع الخطوط والطباعة للافتراضي ✓");
+    else toast.warning("تم الإعادة محلياً — تعذر الحفظ السحابي");
   };
 
-  const deleteCustomFont = (font) => {
+  const deleteCustomFont = async (font) => {
     if (confirmDeleteName !== font.name) {
       setConfirmDeleteName(font.name);
       return;
@@ -144,16 +160,19 @@ export default function DevFonts() {
     setConfirmDeleteName(null);
     const updated = customFonts.filter(f => f.name !== font.name);
     setCustomFonts(updated);
-    setSetting("custom_fonts", JSON.stringify(updated));
+    const updates = { custom_fonts: JSON.stringify(updated) };
     // Clear any role still pointing at the removed font
     FONT_ROLES.forEach(r => {
       if (roleFonts[r.key] === font.name) {
         document.documentElement.style.removeProperty(r.cssVar);
-        setSetting(`font_${r.key}`, "");
+        updates[`font_${r.key}`] = "";
         setRoleFonts(prev => ({ ...prev, [r.key]: "" }));
       }
     });
-    toast.success("تم حذف الخط");
+    setSettings(updates);
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم حذف الخط ✓");
+    else toast.warning("تم الحذف محلياً — تعذر الحفظ السحابي");
   };
 
   const allFonts = [...FONT_PRESETS, ...customFonts];
@@ -193,10 +212,12 @@ export default function DevFonts() {
         
         <div className="space-y-2">
           <div className="flex justify-between"><Label className="text-xs">حجم الخط الأساسي</Label><span className="text-xs font-mono font-bold text-primary">{fontSize}px</span></div>
-          <Slider min={12} max={24} step={1} value={[fontSize]} onValueChange={([v]) => handleFontSize(v)} />
+          <Slider min={12} max={24} step={1} value={[fontSize]}
+            onValueChange={([v]) => handleFontSize(v, false)}
+            onValueCommit={([v]) => handleFontSize(v, true)} />
           <div className="flex gap-2 flex-wrap">
             {[13, 14, 15, 16, 17, 18, 20].map(s => (
-              <button key={s} onClick={() => handleFontSize(s)}
+              <button key={s} onClick={() => handleFontSize(s, true)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${fontSize === s ? "border-primary bg-primary text-primary-foreground" : "border-border hover:border-primary/40"}`}>{s}px</button>
             ))}
           </div>
@@ -204,12 +225,16 @@ export default function DevFonts() {
 
         <div className="space-y-2">
           <div className="flex justify-between"><Label className="text-xs">ارتفاع السطر</Label><span className="text-xs font-mono font-bold text-primary">{lineHeight}</span></div>
-          <Slider min={1.2} max={2.4} step={0.1} value={[lineHeight]} onValueChange={([v]) => handleLineHeight(parseFloat(v.toFixed(1)))} />
+          <Slider min={1.2} max={2.4} step={0.1} value={[lineHeight]}
+            onValueChange={([v]) => handleLineHeight(parseFloat(v.toFixed(1)), false)}
+            onValueCommit={([v]) => handleLineHeight(parseFloat(v.toFixed(1)), true)} />
         </div>
 
         <div className="space-y-2">
           <div className="flex justify-between"><Label className="text-xs">تباعد الحروف</Label><span className="text-xs font-mono font-bold text-primary">{letterSpacing}em</span></div>
-          <Slider min={-0.05} max={0.2} step={0.01} value={[letterSpacing]} onValueChange={([v]) => handleLetterSpacing(parseFloat(v.toFixed(2)))} />
+          <Slider min={-0.05} max={0.2} step={0.01} value={[letterSpacing]}
+            onValueChange={([v]) => handleLetterSpacing(parseFloat(v.toFixed(2)), false)}
+            onValueCommit={([v]) => handleLetterSpacing(parseFloat(v.toFixed(2)), true)} />
         </div>
       </div>
 

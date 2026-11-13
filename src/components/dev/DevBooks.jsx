@@ -84,6 +84,7 @@ export default function DevBooks() {
         toast.success("تمت الإضافة ✓");
       }
       setShowAdd(false);
+      await loadBooks();
     } catch (err) {
       toast.error("فشل الحفظ: " + (err?.message || "خطأ غير معروف"));
     } finally {
@@ -153,7 +154,11 @@ export default function DevBooks() {
         }
         return next;
       });
-      toast.success("تم رفع " + (isPdf ? "الملف" : "الغلاف") + " ✓");
+      if (isPdf && String(file_url || "").startsWith("https://local.daraluloom.app/")) {
+        toast.warning("تم حفظ ملف PDF على هذا الجهاز فقط — لمزامنة الملف مع كل الأجهزة والتحديثات يُفضّل وضع رابط PDF مباشر (https://)");
+      } else {
+        toast.success("تم رفع " + (isPdf ? "الملف" : "الغلاف") + " ✓");
+      }
     } catch (err) {
       toast.error("فشل الرفع: " + (err?.message || "خطأ غير معروف"));
     } finally {
@@ -171,9 +176,9 @@ export default function DevBooks() {
 
   const handleAutoUploadFromUrl = async (url) => {
     if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) return;
-    if (url.includes("base44") || url.startsWith("blob:")) return;
+    if (url.includes("base44") || url.startsWith("blob:") || url.startsWith("https://local.daraluloom.app/")) return;
     setPdfUploading(true);
-    setPdfProgressInfo("جاري جلب ورفع الملف من الرابط...");
+    setPdfProgressInfo("جاري جلب وتخزين نسخة محلية من الرابط...");
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch");
@@ -182,14 +187,20 @@ export default function DevBooks() {
       const file = new File([blob], filename, { type: "application/pdf" });
 
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      setForm(p => ({
-        ...p,
-        pdf_url: file_url,
-        title: p.title || titleFromPdfUrl(url)
-      }));
-      toast.success("تم جلب ورفع ملف PDF تلقائياً من الرابط ✓");
+      if (String(file_url || "").startsWith("https://local.daraluloom.app/")) {
+        // Keep the shareable HTTPS URL instead of replacing it with a device-only local URL
+        setForm(p => ({ ...p, title: p.title || titleFromPdfUrl(url) }));
+        toast.success("تم تخزين نسخة أوفلاين مع الإبقاء على الرابط السحابي المباشر ✓");
+      } else {
+        setForm(p => ({
+          ...p,
+          pdf_url: file_url,
+          title: p.title || titleFromPdfUrl(url)
+        }));
+        toast.success("تم جلب ورفع ملف PDF من الرابط ✓");
+      }
     } catch (err) {
-      toast.info("تم حفظ الرابط المباشر (تعذر الجلب المباشر بسبب قيود CORS، الرابط يعمل مباشرة)");
+      toast.info("تم الإبقاء على الرابط المباشر (الرابط يعمل مباشرة عبر السحابة)");
       setForm(p => ({
         ...p,
         pdf_url: url,
@@ -352,32 +363,40 @@ export default function DevBooks() {
                 </label>
               </div>
             </div>
-            <div className="flex gap-2 items-center">
-              <Input
-                value={form.pdf_url}
-                onChange={e=>{
-                  const val = e.target.value;
-                  setForm(p=>({...p, pdf_url:val, title: p.title || titleFromPdfUrl(val)}));
-                }}
-                onBlur={e=>{
-                  const val = e.target.value.trim();
-                  if (val && (val.startsWith("http://") || val.startsWith("https://")) && !val.includes("base44")) {
-                    handleAutoUploadFromUrl(val);
-                  }
-                }}
-                placeholder="أو رابط PDF مباشر — يُرفع تلقائياً ويُستخرج العنوان"
-                className="text-xs h-8 flex-1"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={!form.pdf_url || pdfUploading || form.pdf_url.startsWith("blob:") || form.pdf_url.includes("base44")}
-                onClick={() => handleAutoUploadFromUrl(form.pdf_url)}
-                className="text-xs h-8 shrink-0 gap-1 rounded-lg"
-              >
-                <Upload className="w-3.5 h-3.5" /> رفع تلقائي
-              </Button>
+            <div className="space-y-1.5">
+              <div className="flex gap-2 items-center">
+                <Input
+                  value={form.pdf_url}
+                  onChange={e=>{
+                    const val = e.target.value;
+                    setForm(p=>({...p, pdf_url:val, title: p.title || titleFromPdfUrl(val)}));
+                  }}
+                  onBlur={e=>{
+                    const val = e.target.value.trim();
+                    if (val) {
+                      setForm(p=>({...p, pdf_url: val, title: p.title || titleFromPdfUrl(val)}));
+                    }
+                  }}
+                  placeholder="أو الصق رابط PDF مباشر (https://...)"
+                  className="text-xs h-8 flex-1"
+                  dir="ltr"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!form.pdf_url || pdfUploading || form.pdf_url.startsWith("blob:") || form.pdf_url.includes("base44") || form.pdf_url.startsWith("https://local.daraluloom.app/")}
+                  onClick={() => handleAutoUploadFromUrl(form.pdf_url)}
+                  className="text-xs h-8 shrink-0 gap-1 rounded-lg"
+                >
+                  <Upload className="w-3.5 h-3.5" /> حفظ نسخة أوفلاين
+                </Button>
+              </div>
+              {String(form.pdf_url || "").startsWith("https://local.daraluloom.app/") && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  تنبيه: هذا الملف محفوظ محلياً على هذا الجهاز فقط — لمشاركته في جميع الأجهزة والإصدارات استخدم رابط PDF مباشر (https://).
+                </p>
+              )}
             </div>
             <div className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
               <Label className="text-sm cursor-pointer">كتاب مميز ⭐</Label>

@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { downloadMultiplePdfs, checkForUpdates, fullSync,
   isOfflineModeEnabled,
 } from "@/lib/offlineSync";
-import { setSetting, subscribeToSettings } from "@/lib/settingsStore";
+import { setSetting, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 import * as db from "@/lib/offlineDB";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
@@ -22,6 +22,8 @@ export default function DevOffline() {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [downloadedBooks, setDownloadedBooks] = useState([]);
+  const [confirmClearCache, setConfirmClearCache] = useState(false);
+  const [confirmDownloadAll, setConfirmDownloadAll] = useState(null); // number | null
 
   const refreshStats = useCallback(async () => {
     const s = await db.getStorageEstimate();
@@ -39,10 +41,11 @@ export default function DevOffline() {
     return unsub;
   }, [refreshStats]);
 
-  const handleToggleOffline = () => {
+  const handleToggleOffline = async () => {
     const val = !offlineEnabled;
     setOfflineEnabled(val);
     setSetting("offline_mode", String(val));
+    await flushAllPendingSettings().catch(() => {});
     toast.success(val ? "تم تفعيل وضع عدم الاتصال" : "تم إيقاف وضع عدم الاتصال");
   };
 
@@ -83,9 +86,13 @@ export default function DevOffline() {
   };
 
   const handleClearCache = async () => {
-    if (!confirm("هل أنت متأكد من حذف جميع البيانات المخزنة محلياً؟")) return;
+    if (!confirmClearCache) {
+      setConfirmClearCache(true);
+      return;
+    }
+    setConfirmClearCache(false);
     await db.clearAllCache();
-    toast.success("تم حذف ذاكرة التخزين المؤقت");
+    toast.success("تم حذف ذاكرة التخزين المؤقت ✓");
     refreshStats();
   };
 
@@ -94,7 +101,11 @@ export default function DevOffline() {
     const cached = await db.getCachedBooks();
     const withPdf = cached.filter(b => b.pdf_url);
     if (withPdf.length === 0) { toast.info("لا توجد كتب لتنزيلها"); return; }
-    if (!confirm(`سيتم تنزيل ${withPdf.length} كتاب. قد يستغرق هذا وقتاً طويلاً. متابعة؟`)) return;
+    if (confirmDownloadAll === null) {
+      setConfirmDownloadAll(withPdf.length);
+      return;
+    }
+    setConfirmDownloadAll(null);
     setSyncing(true);
     setSyncProgress("جاري تنزيل الكتب...");
     try {
@@ -189,19 +200,27 @@ export default function DevOffline() {
         />
         <ActionCard
           icon={Download}
-          title="تنزيل جميع الكتب"
+          title={confirmDownloadAll !== null ? `تأكيد تنزيل ${confirmDownloadAll} كتاب؟ (اضغط للتأكيد)` : "تنزيل جميع الكتب"}
           desc="تنزيل ملفات PDF لجميع الكتب للقراءة بدون إنترنت"
           onClick={handleDownloadAllPdfs}
           disabled={syncing || !isOnline}
         />
         <ActionCard
           icon={Trash2}
-          title="حذف الذاكرة المؤقتة"
+          title={confirmClearCache ? "تأكيد حذف الذاكرة المؤقتة؟ (اضغط للتأكيد)" : "حذف الذاكرة المؤقتة"}
           desc="مسح جميع البيانات المحفوظة محلياً"
           onClick={handleClearCache}
           danger
         />
       </div>
+
+      {(confirmClearCache || confirmDownloadAll !== null) && (
+        <div className="flex justify-end">
+          <Button size="sm" variant="outline" onClick={() => { setConfirmClearCache(false); setConfirmDownloadAll(null); }} className="text-xs">
+            إلغاء التأكيد
+          </Button>
+        </div>
+      )}
 
       {/* Sync Progress */}
       <AnimatePresence>

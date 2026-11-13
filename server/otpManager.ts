@@ -95,18 +95,25 @@ export function checkIpRateLimit(ip: string): boolean {
   return true;
 }
 
-// Configure Gmail SMTP transporter
-function getTransporter() {
-  loadEnv();
-  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
-  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || 'jtdjjxasqtswagnr';
-  const pass = rawPass.replace(/\s+/g, '').trim();
+const OFFICIAL_GMAIL_SENDER = 'daraluloom258@gmail.com';
 
+// Configure Gmail SMTP transporter
+function getGmailCredentials() {
+  loadEnv();
+  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || OFFICIAL_GMAIL_SENDER).trim();
+  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '';
+  const pass = rawPass.replace(/\s+/g, '').trim();
+  const senderAddress = (process.env.SENDER_EMAIL || user || OFFICIAL_GMAIL_SENDER).trim();
+  const senderName = (process.env.SENDER_NAME || 'Dar Al Uloom | دار العلوم').trim();
+  return { user, pass, senderAddress, senderName };
+}
+
+function getTransporter(user: string, pass: string) {
   return nodemailer.createTransport({
     service: 'gmail',
     auth: {
-      user: user,
-      pass: pass,
+      user,
+      pass,
     },
   });
 }
@@ -261,19 +268,25 @@ export async function sendOtp(email: string, clientIp: string) {
     attempts: 0,
   });
 
-  // 6. Send email via Gmail SMTP
-  loadEnv();
-  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
-  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || 'jtdjjxasqtswagnr';
-  const pass = rawPass.replace(/\s+/g, '').trim();
+  // 6. Send email via Gmail SMTP from daraluloom258@gmail.com
+  const { user, pass, senderAddress, senderName } = getGmailCredentials();
+  if (!pass) {
+    otpStore.delete(normalizedEmail);
+    return {
+      status: 503,
+      data: {
+        success: false,
+        error: `إعداد كلمة مرور التطبيق (GMAIL_APP_PASSWORD) مطلوب في الخادم للإرسال من البريد ${senderAddress}.`,
+      },
+    };
+  }
 
   try {
-    const transporter = getTransporter();
-    const senderName = process.env.SENDER_NAME || 'Dar Al Uloom';
-    const senderAddress = (process.env.SENDER_EMAIL || user).trim();
+    const transporter = getTransporter(user, pass);
 
     await transporter.sendMail({
       from: `"${senderName}" <${senderAddress}>`,
+      replyTo: senderAddress,
       to: normalizedEmail,
       subject: `Dar Al Uloom — Your Verification Code: ${otpCode}`,
       text: [
@@ -292,12 +305,13 @@ export async function sendOtp(email: string, clientIp: string) {
       html: createEmailTemplate(otpCode),
     });
 
-    console.log(`[OTP Service] Email successfully sent to ${normalizedEmail}`);
+    console.log(`[OTP Service] Email successfully sent from ${senderAddress} to ${normalizedEmail}`);
     return {
       status: 200,
       data: {
         success: true,
-        message: 'تم إرسال رمز التحقق إلى بريدك الإلكتروني بنجاح',
+        sender: senderAddress,
+        message: `تم إرسال رمز التحقق بنجاح من ${senderAddress}`,
       },
     };
   } catch (err: any) {
@@ -306,7 +320,7 @@ export async function sendOtp(email: string, clientIp: string) {
       status: 500,
       data: {
         success: false,
-        error: 'تعذر إرسال البريد الإلكتروني حالياً. يرجى التأكد من إعدادات كلمة مرور التطبيق (App Password).',
+        error: `تعذر إرسال رمز التحقق من ${senderAddress}. تأكد من تفعيل كلمة مرور تطبيقات Google (GMAIL_APP_PASSWORD) الصالحة.`,
         details: err?.message,
       },
     };
@@ -436,16 +450,25 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
     };
   }
 
-  loadEnv();
-  const officialRecipient = (process.env.CONTACT_EMAIL || process.env.GMAIL_USER || 'daraluloom258@gmail.com').trim();
-  const smtpUser = (process.env.GMAIL_USER || process.env.SMTP_USER || 'daraluloom258@gmail.com').trim();
+  const { user: smtpUser, pass, senderAddress } = getGmailCredentials();
+  const officialRecipient = (process.env.CONTACT_EMAIL || smtpUser || OFFICIAL_GMAIL_SENDER).trim();
+
+  if (!pass) {
+    return {
+      status: 503,
+      data: {
+        success: false,
+        error: `تعذر إرسال الرسالة لأن كلمة مرور تطبيق Gmail غير مضبوطة للحساب ${senderAddress}.`,
+      },
+    };
+  }
 
   try {
-    const transporter = getTransporter();
+    const transporter = getTransporter(smtpUser, pass);
     const mailSubject = subject || `[دار العلوم — رسالة تواصل جديدة]: ${senderName}`;
 
     await transporter.sendMail({
-      from: `"تطبيق دار العلوم" <${smtpUser}>`,
+      from: `"تطبيق دار العلوم" <${senderAddress}>`,
       replyTo: normalizedEmail,
       to: officialRecipient,
       subject: mailSubject,

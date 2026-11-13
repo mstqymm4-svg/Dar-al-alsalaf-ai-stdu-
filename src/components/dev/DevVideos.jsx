@@ -22,7 +22,7 @@ import {
   fetchChannelVideos
 } from "@/lib/youtubeMeta";
 import ChannelVideosImportModal from "@/components/dev/ChannelVideosImportModal";
-import { getSetting, setSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export { extractYoutubeId, getThumbnail };
 
@@ -40,6 +40,7 @@ function ChannelsTab() {
   const [autoImportOnCreate, setAutoImportOnCreate] = useState(false);
   const [autoImportLimit, setAutoImportLimit] = useState(10);
   const [savingAndImporting, setSavingAndImporting] = useState(false);
+  const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState(null);
   const [form, setForm] = useState({
     name: "", channel_logo: "", description: "", youtube_url: "",
     category: "عام", sort_order: 0, visible: true,
@@ -170,7 +171,7 @@ function ChannelsTab() {
         setEditing(null);
         setAutoImportOnCreate(false);
         setForm({ name: "", channel_logo: "", description: "", youtube_url: "", category: "عام", sort_order: 0, visible: true });
-        load();
+        await load();
       }
     } catch (e) {
       toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف"));
@@ -472,15 +473,27 @@ function ChannelsTab() {
                 });
                 setShowForm(true);
               }}><Pencil className="w-3.5 h-3.5" /></Button>
-              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={async () => {
-                try {
-                  await base44.entities.VideoChannel.delete(ch.id);
-                  toast.success("تم حذف القناة بنجاح");
-                  load();
-                } catch (err) {
-                  toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
-                }
-              }}><Trash2 className="w-3.5 h-3.5 text-destructive" /></Button>
+              {confirmDeleteChannelId === ch.id ? (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={async () => {
+                    setConfirmDeleteChannelId(null);
+                    try {
+                      await base44.entities.VideoChannel.delete(ch.id);
+                      toast.success("تم حذف القناة بنجاح ✓");
+                      await load();
+                    } catch (err) {
+                      toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+                    }
+                  }}>تأكيد</Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setConfirmDeleteChannelId(null)}>
+                    إلغاء
+                  </Button>
+                </div>
+              ) : (
+                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setConfirmDeleteChannelId(ch.id)}>
+                  <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -507,6 +520,8 @@ function VideosTab() {
   const [search, setSearch] = useState("");
   const [fetchingMeta, setFetchingMeta] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDeleteVideoId, setConfirmDeleteVideoId] = useState(null);
   const lastFetchedVideoId = useRef("");
 
   const [form, setForm] = useState({
@@ -589,6 +604,7 @@ function VideosTab() {
 
   const handleSave = async () => {
     if (!form.title || !form.youtube_url) { toast.error("أدخل العنوان والرابط"); return; }
+    setSaving(true);
     const thumbnail = getThumbnail(form.youtube_url);
     const ch = channels.find((c) => c.id === form.channel_id);
     const data = {
@@ -600,10 +616,10 @@ function VideosTab() {
     try {
       if (editing) {
         await base44.entities.Video.update(editing.id, data);
-        toast.success("تم تحديث الفيديو");
+        toast.success("تم تحديث الفيديو ✓");
       } else {
         await base44.entities.Video.create(data);
-        toast.success("تمت إضافة الفيديو");
+        toast.success("تمت إضافة الفيديو ✓");
       }
       setShowForm(false);
       setEditing(null);
@@ -621,8 +637,12 @@ function VideosTab() {
         visible: true,
         sort_order: 0,
       });
-      load();
-    } catch (e) { toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف")); }
+      await load();
+    } catch (e) {
+      toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const filtered = videos.filter((v) =>
@@ -853,10 +873,11 @@ function VideosTab() {
           </div>
 
           <div className="flex gap-2 pt-1">
-            <Button size="sm" onClick={handleSave} className="gap-1.5">
-              <Save className="w-4 h-4 ml-1" /> حفظ الفيديو
+            <Button size="sm" onClick={handleSave} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="w-4 h-4 ml-1 animate-spin" /> : <Save className="w-4 h-4 ml-1" />}
+              {saving ? "جاري الحفظ..." : "حفظ الفيديو"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => { setShowForm(false); setEditing(null); }}>
+            <Button size="sm" variant="outline" disabled={saving} onClick={() => { setShowForm(false); setEditing(null); }}>
               إلغاء
             </Button>
           </div>
@@ -928,15 +949,27 @@ function VideosTab() {
                   });
                   setShowForm(true);
                 }}><Pencil className="w-3 h-3" /></Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  try {
-                    await base44.entities.Video.delete(v.id);
-                    toast.success("تم حذف الفيديو بنجاح");
-                    load();
-                  } catch (err) {
-                    toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
-                  }
-                }}><Trash2 className="w-3 h-3 text-destructive" /></Button>
+                {confirmDeleteVideoId === v.id ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={async () => {
+                      setConfirmDeleteVideoId(null);
+                      try {
+                        await base44.entities.Video.delete(v.id);
+                        toast.success("تم حذف الفيديو بنجاح ✓");
+                        await load();
+                      } catch (err) {
+                        toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+                      }
+                    }}>تأكيد</Button>
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setConfirmDeleteVideoId(null)}>
+                      إلغاء
+                    </Button>
+                  </div>
+                ) : (
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setConfirmDeleteVideoId(v.id)}>
+                    <Trash2 className="w-3 h-3 text-destructive" />
+                  </Button>
+                )}
               </div>
             </div>
           ))}
@@ -950,13 +983,21 @@ function VideosTab() {
 function VideoSettingsTab() {
   const [enabled, setEnabled] = useState(() => getSetting("videos_enabled") !== "false");
   const [showInfo, setShowInfo] = useState(() => getSetting("videos_show_info") !== "false");
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    setSettings({
-      videos_enabled: String(enabled),
-      videos_show_info: String(showInfo),
-    });
-    toast.success("تم حفظ الإعدادات ✓");
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      setSettings({
+        videos_enabled: String(enabled),
+        videos_show_info: String(showInfo),
+      });
+      const res = await flushAllPendingSettings();
+      if (res.ok) toast.success("تم حفظ الإعدادات ✓");
+      else toast.error("تعذر الحفظ السحابي — سيتم المزامنة عند عودة الاتصال");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -977,7 +1018,10 @@ function VideoSettingsTab() {
           </div>
           <Switch checked={showInfo} onCheckedChange={setShowInfo} />
         </div>
-        <Button onClick={handleSave} className="w-full"><Save className="w-4 h-4 ml-2" /> حفظ الإعدادات</Button>
+        <Button onClick={handleSave} disabled={saving} className="w-full">
+          {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Save className="w-4 h-4 ml-2" />}
+          {saving ? "جاري الحفظ..." : "حفظ الإعدادات"}
+        </Button>
       </div>
     </div>
   );

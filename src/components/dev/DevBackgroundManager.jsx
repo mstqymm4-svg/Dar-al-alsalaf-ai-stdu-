@@ -14,7 +14,7 @@ import {
   Layers, Eye, Settings, RotateCcw, Maximize2,
   ImageIcon, Sparkles, Globe, Star
 } from "lucide-react";
-import { getSetting, setSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 import { base44 } from "@/api/base44Client";
 import HeroBanner from "@/components/HeroBanner";
 import UserLayer, { USER_LAYER_EFFECTS } from "@/components/hero/UserLayer";
@@ -172,8 +172,11 @@ export default function DevBackgroundManager() {
     });
   }, [persist]);
 
-  const reset = () => {
-    const d = buildState();
+  const previewPatch = useCallback((patch) => {
+    setSt(prev => ({ ...prev, ...patch }));
+  }, []);
+
+  const reset = async () => {
     // Reset to defaults
     const def = {
       bgType: "gradient_anim", title: "", subtitle: "", btnText: "", btnLink: "/books",
@@ -184,7 +187,9 @@ export default function DevBackgroundManager() {
       gradFrom: "#134e2a", gradTo: "#1a6b3c", customHtml: "", extraLayers: [], customLayers: [],
     };
     setSt(def); persist(def);
-    toast.success("تمت الاستعادة للإعدادات الافتراضية");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تمت الاستعادة للإعدادات الافتراضية ✓");
+    else toast.warning("تمت الاستعادة محلياً — تعذر الحفظ السحابي");
   };
 
   // ── User-defined custom layers ──
@@ -393,7 +398,7 @@ export default function DevBackgroundManager() {
         {(isAnim || isGrad) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
             <Label className="text-xs">⚡ سرعة الحركة: {st.animSpeed}x</Label>
-            <Slider min={1} max={10} step={1} value={[st.animSpeed]} onValueChange={([v]) => update({ animSpeed: v })} />
+            <Slider min={1} max={10} step={1} value={[st.animSpeed]} onValueChange={([v]) => previewPatch({ animSpeed: v })} onValueCommit={([v]) => update({ animSpeed: v })} />
           </div>
         )}
         {st.bgType === "custom_html" && (
@@ -733,7 +738,7 @@ export default function DevBackgroundManager() {
                 </div>
                 <div>
                   <Label className="text-xs mb-1 block">مدة كل شريحة: {st.slideDur} ثانية</Label>
-                  <Slider min={2} max={15} step={1} value={[st.slideDur]} onValueChange={([v]) => update({ slideDur: v })} />
+                  <Slider min={2} max={15} step={1} value={[st.slideDur]} onValueChange={([v]) => previewPatch({ slideDur: v })} onValueCommit={([v]) => update({ slideDur: v })} />
                 </div>
               </div>
             )}
@@ -772,7 +777,7 @@ export default function DevBackgroundManager() {
               <Label className="text-xs">{label}</Label>
               <span className="text-xs font-mono font-bold text-primary">{st[key]}{unit}</span>
             </div>
-            <Slider min={min} max={max} value={[st[key]]} onValueChange={([v]) => update({ [key]: v })} />
+            <Slider min={min} max={max} value={[st[key]]} onValueChange={([v]) => previewPatch({ [key]: v })} onValueCommit={([v]) => update({ [key]: v })} />
           </div>
         ))}
       </div>
@@ -793,7 +798,7 @@ export default function DevBackgroundManager() {
             <Label className="text-xs">شدة التعتيم</Label>
             <span className="text-xs font-mono font-bold text-primary">{st.overlayAlpha}%</span>
           </div>
-          <Slider min={0} max={90} value={[st.overlayAlpha]} onValueChange={([v]) => update({ overlayAlpha: v })} />
+          <Slider min={0} max={90} value={[st.overlayAlpha]} onValueChange={([v]) => previewPatch({ overlayAlpha: v })} onValueCommit={([v]) => update({ overlayAlpha: v })} />
         </div>
         {/* Overlay preview */}
         <div className="h-12 rounded-xl border border-border relative overflow-hidden">
@@ -837,14 +842,14 @@ export default function DevBackgroundManager() {
               <Label className="text-xs">سطوع الفيديو</Label>
               <span className="text-xs font-mono font-bold text-primary">{st.videoBright}%</span>
             </div>
-            <Slider min={20} max={150} value={[st.videoBright]} onValueChange={([v]) => update({ videoBright: v })} />
+            <Slider min={20} max={150} value={[st.videoBright]} onValueChange={([v]) => previewPatch({ videoBright: v })} onValueCommit={([v]) => update({ videoBright: v })} />
           </div>
           <div className="space-y-1.5">
             <div className="flex justify-between">
               <Label className="text-xs">سرعة التشغيل</Label>
               <span className="text-xs font-mono font-bold text-primary">{st.videoSpeed}x</span>
             </div>
-            <Slider min={0.5} max={2} step={0.25} value={[st.videoSpeed]} onValueChange={([v]) => update({ videoSpeed: v })} />
+            <Slider min={0.5} max={2} step={0.25} value={[st.videoSpeed]} onValueChange={([v]) => previewPatch({ videoSpeed: v })} onValueCommit={([v]) => update({ videoSpeed: v })} />
           </div>
         </div>
       )}
@@ -934,7 +939,12 @@ export default function DevBackgroundManager() {
           <Button size="sm" variant="ghost" onClick={reset} className="gap-1.5 text-xs">
             <RotateCcw className="w-3.5 h-3.5" /> استعادة
           </Button>
-          <Button size="sm" onClick={() => { persist(st); toast.success("✓ تم الحفظ"); }} className="gap-1.5 text-xs">
+          <Button size="sm" onClick={async () => {
+            persist(st);
+            const res = await flushAllPendingSettings();
+            if (res.ok) toast.success("✓ تم الحفظ سحابياً");
+            else toast.error("تعذر الحفظ السحابي — سيتم الحفظ عند توفر الاتصال");
+          }} className="gap-1.5 text-xs">
             <Check className="w-3.5 h-3.5" /> حفظ الآن
           </Button>
         </div>

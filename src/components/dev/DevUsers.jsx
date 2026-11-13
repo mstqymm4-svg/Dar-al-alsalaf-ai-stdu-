@@ -12,6 +12,7 @@ export default function DevUsers() {
   const [inviteRole, setInviteRole]   = useState("user");
   const [inviting, setInviting]       = useState(false);
   const [search, setSearch]           = useState("");
+  const [confirmAction, setConfirmAction] = useState(null); // { id, type: 'role' | 'remove' }
 
   useEffect(() => { loadUsers(); }, []);
 
@@ -33,8 +34,12 @@ export default function DevUsers() {
   };
 
   const changeRole = async (u) => {
+    if (confirmAction?.id !== u.id || confirmAction?.type !== "role") {
+      setConfirmAction({ id: u.id, type: "role" });
+      return;
+    }
+    setConfirmAction(null);
     const nextRole = u.role === "admin" ? "user" : "admin";
-    if (!confirm(`تغيير دور ${u.email} إلى ${nextRole === "admin" ? "مدير" : "مستخدم"}؟`)) return;
     try {
       await base44.entities.User.update(u.id, { role: nextRole });
       setUsers(prev => prev.map(x => x.id === u.id ? { ...x, role: nextRole } : x));
@@ -45,11 +50,15 @@ export default function DevUsers() {
   };
 
   const removeUser = async (u) => {
-    if (!confirm(`إزالة ${u.email} من التطبيق؟`)) return;
+    if (confirmAction?.id !== u.id || confirmAction?.type !== "remove") {
+      setConfirmAction({ id: u.id, type: "remove" });
+      return;
+    }
+    setConfirmAction(null);
     try {
       await base44.entities.User.delete(u.id);
       setUsers(prev => prev.filter(x => x.id !== u.id));
-      toast.success("تمت الإزالة");
+      toast.success("تمت الإزالة ✓");
     } catch (e) {
       toast.error("فشل الحذف");
     }
@@ -120,15 +129,37 @@ export default function DevUsers() {
                     <p className="text-sm font-bold truncate">{user.full_name || "—"}</p>
                     <p className="text-xs text-muted-foreground truncate">{user.email}</p>
                   </div>
-                  <button onClick={() => changeRole(user)} title="تغيير الدور"
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold transition-opacity hover:opacity-80 ${user.role==="admin"?"bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400":"bg-muted text-muted-foreground"}`}>
-                    {user.role === "admin" ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                    {user.role === "admin" ? "مدير" : "مستخدم"}
-                  </button>
-                  <button onClick={() => removeUser(user)} title="إزالة المستخدم"
-                    className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors shrink-0">
-                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                  </button>
+                  {confirmAction?.id === user.id && confirmAction?.type === "role" ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => changeRole(user)} className="px-2 py-1 rounded-lg bg-primary text-primary-foreground text-[10px] font-bold">
+                        {user.role === "admin" ? "تحويل لمستخدم" : "ترقية لمدير"}
+                      </button>
+                      <button onClick={() => setConfirmAction(null)} className="px-2 py-1 rounded-lg border border-border text-[10px]">
+                        إلغاء
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => changeRole(user)} title="تغيير الدور"
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold transition-opacity hover:opacity-80 ${user.role==="admin"?"bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400":"bg-muted text-muted-foreground"}`}>
+                      {user.role === "admin" ? <Shield className="w-3 h-3" /> : <User className="w-3 h-3" />}
+                      {user.role === "admin" ? "مدير" : "مستخدم"}
+                    </button>
+                  )}
+                  {confirmAction?.id === user.id && confirmAction?.type === "remove" ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => removeUser(user)} className="px-2 py-1 rounded-lg bg-destructive text-white text-[10px] font-bold">
+                        تأكيد الإزالة
+                      </button>
+                      <button onClick={() => setConfirmAction(null)} className="px-2 py-1 rounded-lg border border-border text-[10px]">
+                        إلغاء
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={() => removeUser(user)} title="إزالة المستخدم"
+                      className="p-1.5 rounded-lg hover:bg-destructive/10 transition-colors shrink-0">
+                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                    </button>
+                  )}
                 </div>
               ))}
               {filtered.length === 0 && <p className="text-center text-sm text-muted-foreground py-10">لا توجد نتائج</p>}

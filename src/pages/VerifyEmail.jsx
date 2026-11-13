@@ -362,7 +362,9 @@ export default function VerifyEmail() {
                 <div className="p-3.5 rounded-xl bg-muted/40 border border-border/80 text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2.5">
                   <Lock className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                   <span>
-                    {t.gmailOtpNotice || "يُرسل الرمز مباشرة عبر خادم Gmail الرسمي لدار العلوم، وصالح للاستخدام لمدة 10 دقائق."}
+                    {t.gmailOtpNotice || "يُرسل الرمز مباشرة من البريد الرسمي لدار العلوم"}{" "}
+                    <span dir="ltr" className="font-mono font-semibold text-foreground">daraluloom258@gmail.com</span>{" "}
+                    — صالح لمدة 10 دقائق.
                   </span>
                 </div>
 

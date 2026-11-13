@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { Check, Zap, Plus, X } from "lucide-react";
-import { setSettings, getSetting } from "@/lib/settingsStore";
+import { setSettings, getSetting, flushAllPendingSettings } from "@/lib/settingsStore";
 
 // ── Preset library ─────────────────────────────────────────────────────────────
 const PRESETS = [
@@ -51,20 +51,24 @@ export default function DevBackgroundLibrary() {
   const allPresets = [...PRESETS, ...custom];
   const filtered = activeCategory === "الكل" ? allPresets : allPresets.filter((p) => p.category === activeCategory);
 
-  const applyPreset = (preset) => {
+  const applyPreset = async (preset) => {
     setSettings({ ...preset.settings, hero_bg_preset: preset.id });
     setApplied(preset.id);
-    toast.success(`✓ تم تطبيق "${preset.label}" على الصفحة الرئيسية`);
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success(`✓ تم تطبيق "${preset.label}" على الصفحة الرئيسية`);
+    else toast.warning(`تم تطبيق "${preset.label}" محلياً — تعذر الحفظ السحابي`);
   };
 
-  const deleteCustom = (id) => {
+  const deleteCustom = async (id) => {
     const next = custom.filter((p) => p.id !== id);
     setCustom(next);
     saveCustom(next);
-    toast.success("تم حذف الخلفية المخصصة");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تم حذف الخلفية المخصصة ✓");
+    else toast.warning("تم الحذف محلياً — تعذر الحفظ السحابي");
   };
 
-  const createPreset = () => {
+  const createPreset = async () => {
     if (!form.label.trim()) { toast.error("أدخل اسم الخلفية"); return; }
     const isImg = form.type === "static_image";
     if (isImg && !form.bgUrl.trim()) { toast.error("أدخل رابط الصورة"); return; }
@@ -84,7 +88,9 @@ export default function DevBackgroundLibrary() {
     setForm({ label: "", type: "gradient_anim", gradFrom: "#0d3b2e", gradTo: "#1a6b3c", bgUrl: "" });
     setCreating(false);
     setActiveCategory("مخصص");
-    toast.success("تمت إضافة الخلفية المخصصة");
+    const res = await flushAllPendingSettings();
+    if (res.ok) toast.success("تمت إضافة الخلفية المخصصة وحفظها ✓");
+    else toast.warning("تمت الإضافة محلياً — تعذر الحفظ السحابي");
   };
 
   return (

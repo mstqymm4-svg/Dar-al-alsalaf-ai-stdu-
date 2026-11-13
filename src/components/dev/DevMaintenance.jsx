@@ -11,6 +11,8 @@ export default function DevMaintenance() {
   const [optimizing, setOptimizing] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
   const [cleaningOrphans, setCleaningOrphans] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null); // 'cleanLS' | 'clearCache' | 'cleanOrphans'
+  const [orphanIds, setOrphanIds] = useState([]);
 
   useEffect(() => {
     loadStats();
@@ -36,19 +38,28 @@ export default function DevMaintenance() {
   };
 
   const cleanLocalStorage = async () => {
-    if (!confirm("تنظيف البيانات المحلية المؤقتة؟ (لن يتم حذف الكتب أو الإعدادات)")) return;
+    setConfirmAction(null);
     setCleaning(true);
     try {
-      const keysToKeep = ["dev_panel_password", "devs_theme_mode", "devs_dark_mode", "dev_app_lang", "dev_categories", "dev_settings"];
+      const preservePrefixes = [
+        "devs_",
+        "dau_",
+        "dev_",
+        "bookmarks_",
+        "lastpage_",
+        "video_pos_",
+        "email_verified_",
+        "firebase:",
+      ];
       const allKeys = Object.keys(localStorage);
       let removed = 0;
       allKeys.forEach((key) => {
-        if (!keysToKeep.some((keep) => key.startsWith(keep)) && !key.startsWith("bookmarks_") && !key.startsWith("lastpage_") && !key.startsWith("video_pos_")) {
+        if (!preservePrefixes.some((p) => key.startsWith(p))) {
           localStorage.removeItem(key);
           removed++;
         }
       });
-      toast.success(`تم تنظيف ${removed} عنصر مؤقت`);
+      toast.success(`تم تنظيف ${removed} عنصر مؤقت مع الحفاظ على الإعدادات ✓`);
     } catch(e) {
       toast.error("فشل التنظيف");
     }
@@ -56,7 +67,7 @@ export default function DevMaintenance() {
   };
 
   const clearPageCache = async () => {
-    if (!confirm("مسح ذاكرة المتصفح المؤقتة للتطبيق؟ (الكتب المحفوظة للقراءة دون اتصال تبقى كما هي)")) return;
+    setConfirmAction(null);
     setClearingCache(true);
     try {
       let cleared = 0;
@@ -67,17 +78,25 @@ export default function DevMaintenance() {
           cleared++;
         }
       }
-      toast.success(cleared > 0 ? `تم مسح ${cleared} ذاكرة مؤقتة` : "لا توجد ذاكرة مؤقتة لمسحها");
+      toast.success(cleared > 0 ? `تم مسح ${cleared} ذاكرة مؤقتة ✓` : "لا توجد ذاكرة مؤقتة لمسحها");
     } catch (e) {
       toast.error("فشل مسح الذاكرة المؤقتة");
     }
     setClearingCache(false);
   };
 
-  // Remove favorites pointing at books that no longer exist
-  const cleanOrphanFavorites = async () => {
+  // Scan or delete favorites pointing at books that no longer exist
+  const cleanOrphanFavorites = async (executeDelete = false) => {
     setCleaningOrphans(true);
     try {
+      if (executeDelete && orphanIds.length > 0) {
+        setConfirmAction(null);
+        await Promise.allSettled(orphanIds.map(id => base44.entities.Favorite.delete(id)));
+        toast.success(`تم حذف ${orphanIds.length} مفضلة معلّقة ✓`);
+        setOrphanIds([]);
+        await loadStats();
+        return;
+      }
       const [books, favs] = await Promise.all([
         base44.entities.Book.list("-created_date", 1000),
         base44.entities.Favorite.list("-created_date", 1000),
@@ -85,16 +104,18 @@ export default function DevMaintenance() {
       const ids = new Set(books.map(b => b.id));
       const orphans = favs.filter(f => f.book_id && !ids.has(f.book_id));
       if (orphans.length === 0) {
+        setOrphanIds([]);
+        setConfirmAction(null);
         toast.success("لا توجد مفضلات معلّقة ✓");
-      } else if (confirm(`حذف ${orphans.length} مفضلة تشير إلى كتب محذوفة؟`)) {
-        await Promise.allSettled(orphans.map(f => base44.entities.Favorite.delete(f.id)));
-        toast.success(`تم حذف ${orphans.length} مفضلة معلّقة`);
-        loadStats();
+      } else {
+        setOrphanIds(orphans.map(o => o.id));
+        setConfirmAction("cleanOrphans");
       }
     } catch (e) {
       toast.error("فشل الفحص");
+    } finally {
+      setCleaningOrphans(false);
     }
-    setCleaningOrphans(false);
   };
 
   const optimizeDB = async () => {
@@ -161,10 +182,21 @@ export default function DevMaintenance() {
                 <p className="text-xs text-muted-foreground mt-0.5">حذف الذاكرة المؤقتة المحلية</p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={cleanLocalStorage} disabled={cleaning} className="w-full rounded-xl gap-1.5">
-              {cleaning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              تنظيف
-            </Button>
+            {confirmAction === "cleanLS" ? (
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={cleanLocalStorage} disabled={cleaning} className="flex-1 rounded-xl text-xs font-bold">
+                  تأكيد التنظيف
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmAction(null)} className="rounded-xl text-xs">
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setConfirmAction("cleanLS")} disabled={cleaning} className="w-full rounded-xl gap-1.5">
+                {cleaning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                تنظيف
+              </Button>
+            )}
           </div>
 
           {/* Clear page cache */}
@@ -178,10 +210,21 @@ export default function DevMaintenance() {
                 <p className="text-xs text-muted-foreground mt-0.5">حذف الملفات المؤقتة المخزّنة</p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={clearPageCache} disabled={clearingCache} className="w-full rounded-xl gap-1.5">
-              {clearingCache ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              مسح
-            </Button>
+            {confirmAction === "clearCache" ? (
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={clearPageCache} disabled={clearingCache} className="flex-1 rounded-xl text-xs font-bold">
+                  تأكيد المسح
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmAction(null)} className="rounded-xl text-xs">
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setConfirmAction("clearCache")} disabled={clearingCache} className="w-full rounded-xl gap-1.5">
+                {clearingCache ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                مسح
+              </Button>
+            )}
           </div>
 
           {/* Orphan favorites */}
@@ -195,10 +238,21 @@ export default function DevMaintenance() {
                 <p className="text-xs text-muted-foreground mt-0.5">مفضلات لكتب تم حذفها</p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={cleanOrphanFavorites} disabled={cleaningOrphans} className="w-full rounded-xl gap-1.5">
-              {cleaningOrphans ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              فحص وتنظيف
-            </Button>
+            {confirmAction === "cleanOrphans" ? (
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={() => cleanOrphanFavorites(true)} disabled={cleaningOrphans} className="flex-1 rounded-xl text-xs font-bold">
+                  حذف ({orphanIds.length})
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => { setConfirmAction(null); setOrphanIds([]); }} className="rounded-xl text-xs">
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => cleanOrphanFavorites(false)} disabled={cleaningOrphans} className="w-full rounded-xl gap-1.5">
+                {cleaningOrphans ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                فحص وتنظيف
+              </Button>
+            )}
           </div>
 
           {/* DB Health Check */}

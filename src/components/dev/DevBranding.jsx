@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { getSetting, setSettings, setSetting, subscribeToSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, setSetting, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export default function DevBranding() {
   const [logoUrl, setLogoUrl]       = useState(() => getSetting("logo_url"));
@@ -15,6 +15,7 @@ export default function DevBranding() {
   const [youtubeLabel, setYoutubeLabel] = useState(() => getSetting("youtube_label") || "قناتنا على يوتيوب");
   const [youtubeSub, setYoutubeSub] = useState(() => getSetting("youtube_sub") || "تابعونا على قناتنا لمزيد من المحتوى الإسلامي");
   const [uploading, setUploading]   = useState(false);
+  const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
 
   useEffect(() => {
@@ -36,7 +37,9 @@ export default function DevBranding() {
       const { file_url } = await uploads.upload({ file, kind: "misc" });
       setLogoUrl(file_url);
       setSetting("logo_url", file_url);
-      toast.success("تم رفع الشعار ✓");
+      const res = await flushAllPendingSettings();
+      if (res.ok) toast.success("تم رفع وحفظ الشعار ✓");
+      else toast.warning("تم الرفع محلياً — تعذر الحفظ السحابي");
     } catch {
       toast.error("فشل رفع الشعار — حاول مرة أخرى");
     } finally {
@@ -44,11 +47,28 @@ export default function DevBranding() {
     }
   };
 
-  const handleSave = () => {
-    setSettings({ app_name: appName, app_subtitle: appSubtitle, youtube_url: youtubeUrl, youtube_label: youtubeLabel, youtube_sub: youtubeSub });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    toast.success("تم حفظ الهوية البصرية ✓");
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      setSettings({
+        logo_url: logoUrl,
+        app_name: appName,
+        app_subtitle: appSubtitle,
+        youtube_url: youtubeUrl,
+        youtube_label: youtubeLabel,
+        youtube_sub: youtubeSub,
+      });
+      const res = await flushAllPendingSettings();
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        toast.success("تم حفظ الهوية البصرية ✓");
+      } else {
+        toast.error("تعذر الحفظ السحابي — سيتم الحفظ عند توفر الاتصال");
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -83,8 +103,8 @@ export default function DevBranding() {
                   : <><Upload className="w-4 h-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">رفع شعار جديد</span></>}
               </div>
             </label>
-            <Input value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} onBlur={()=>setSetting("logo_url",logoUrl)} placeholder="أو أدخل رابط الصورة" className="text-xs h-9" dir="ltr" />
-            {logoUrl && <button onClick={()=>{setLogoUrl(""); setSetting("logo_url","");}} className="text-xs text-destructive hover:underline">حذف الشعار</button>}
+            <Input value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} onBlur={()=>{ setSetting("logo_url",logoUrl); flushAllPendingSettings().catch(()=>{}); }} placeholder="أو أدخل رابط الصورة" className="text-xs h-9" dir="ltr" />
+            {logoUrl && <button onClick={async ()=>{ setLogoUrl(""); setSetting("logo_url",""); await flushAllPendingSettings().catch(()=>{}); toast.success("تم حذف الشعار ✓"); }} className="text-xs text-destructive hover:underline">حذف الشعار</button>}
           </div>
         </div>
       </div>
@@ -134,8 +154,8 @@ export default function DevBranding() {
         )}
       </div>
 
-      <Button onClick={handleSave} className={`w-full h-12 rounded-xl font-bold gap-2 transition-all ${saved?"bg-green-600 hover:bg-green-700":""}`}>
-        {saved ? <><Check className="w-4 h-4" />تم الحفظ!</> : <><Image className="w-4 h-4" />حفظ الهوية البصرية</>}
+      <Button onClick={handleSave} disabled={saving} className={`w-full h-12 rounded-xl font-bold gap-2 transition-all ${saved?"bg-green-600 hover:bg-green-700":""}`}>
+        {saving ? "جاري الحفظ..." : saved ? <><Check className="w-4 h-4" />تم الحفظ!</> : <><Image className="w-4 h-4" />حفظ الهوية البصرية</>}
       </Button>
     </div>
   );
