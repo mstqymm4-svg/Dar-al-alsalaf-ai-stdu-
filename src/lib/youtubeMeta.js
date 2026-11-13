@@ -3,6 +3,7 @@
  * Supports auto-fetching video title, duration, channel name, thumbnail,
  * as well as YouTube channel name, logo, and description.
  */
+import { apiUrl } from "@/lib/apiBase";
 
 export function extractYoutubeId(url) {
   if (!url) return null;
@@ -55,7 +56,7 @@ export async function fetchVideoMetadata(url) {
 
   // 1. Try our backend Express proxy endpoint first
   try {
-    const res = await fetch(`/api/youtube-meta?type=video&url=${encodeURIComponent(url)}`);
+    const res = await fetch(apiUrl(`/api/youtube-meta?type=video&url=${encodeURIComponent(url)}`));
     if (res.ok) {
       const data = await res.json();
       if (data && data.success) {
@@ -115,7 +116,7 @@ export async function fetchChannelMetadata(url) {
 
   // 1. Try backend proxy
   try {
-    const res = await fetch(`/api/youtube-meta?type=channel&url=${encodeURIComponent(normalizedUrl)}`);
+    const res = await fetch(apiUrl(`/api/youtube-meta?type=channel&url=${encodeURIComponent(normalizedUrl)}`));
     if (res.ok) {
       const data = await res.json();
       if (data && data.success) {
@@ -157,7 +158,7 @@ export async function fetchChannelMetadata(url) {
 export async function autoUploadChannelLogo(logoUrl, channelName = "channel") {
   if (!logoUrl) return "";
   try {
-    const proxyUrl = `/api/proxy-image?url=${encodeURIComponent(logoUrl)}`;
+    const proxyUrl = apiUrl(`/api/proxy-image?url=${encodeURIComponent(logoUrl)}`);
     let blob = null;
     try {
       const res = await fetch(proxyUrl);
@@ -198,7 +199,7 @@ export async function fetchChannelVideos(channelUrl, limit = 30) {
   if (!channelUrl) return [];
   const normalized = normalizeChannelUrl(channelUrl);
   try {
-    const res = await fetch(`/api/youtube-channel-videos?url=${encodeURIComponent(normalized)}&limit=${limit}`);
+    const res = await fetch(apiUrl(`/api/youtube-channel-videos?url=${encodeURIComponent(normalized)}&limit=${limit}`));
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.videos)) {

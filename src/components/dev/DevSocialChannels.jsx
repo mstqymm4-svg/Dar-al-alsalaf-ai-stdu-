@@ -76,15 +76,23 @@ export default function DevSocialChannels() {
   };
 
   const handleToggleVisible = async (ch) => {
-    await base44.entities.SocialChannel.update(ch.id, { visible: !ch.visible });
-    load();
+    try {
+      await base44.entities.SocialChannel.update(ch.id, { visible: !ch.visible });
+      load();
+    } catch (e) {
+      toast.error("فشل التحديث: " + (e?.message || ""));
+    }
   };
 
   const handleDelete = async (ch) => {
     if (!confirm(`حذف "${ch.name}"؟`)) return;
-    await base44.entities.SocialChannel.delete(ch.id);
-    toast.success("تم الحذف");
-    load();
+    try {
+      await base44.entities.SocialChannel.delete(ch.id);
+      toast.success("تم الحذف ✓");
+      load();
+    } catch (e) {
+      toast.error("فشل الحذف: " + (e?.message || ""));
+    }
   };
 
   const handleUploadIcon = async (e) => {
@@ -103,9 +111,13 @@ export default function DevSocialChannels() {
     const swapIdx = idx + dir;
     if (swapIdx < 0 || swapIdx >= channels.length) return;
     const swapCh = channels[swapIdx];
-    await base44.entities.SocialChannel.update(ch.id, { sort_order: swapCh.sort_order });
-    await base44.entities.SocialChannel.update(swapCh.id, { sort_order: ch.sort_order });
-    load();
+    try {
+      await base44.entities.SocialChannel.update(ch.id, { sort_order: swapCh.sort_order });
+      await base44.entities.SocialChannel.update(swapCh.id, { sort_order: ch.sort_order });
+      load();
+    } catch (e) {
+      toast.error("فشل تغيير الترتيب");
+    }
   };
 
   return (

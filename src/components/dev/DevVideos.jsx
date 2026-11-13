@@ -22,6 +22,7 @@ import {
   fetchChannelVideos
 } from "@/lib/youtubeMeta";
 import ChannelVideosImportModal from "@/components/dev/ChannelVideosImportModal";
+import { getSetting, setSettings } from "@/lib/settingsStore";
 
 export { extractYoutubeId, getThumbnail };
 
@@ -172,7 +173,7 @@ function ChannelsTab() {
         load();
       }
     } catch (e) {
-      toast.error("فشل الحفظ");
+      toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف"));
     } finally {
       setSavingAndImporting(false);
     }
@@ -616,7 +617,7 @@ function VideosTab() {
         sort_order: 0,
       });
       load();
-    } catch (e) { toast.error("فشل الحفظ"); }
+    } catch (e) { toast.error("فشل الحفظ: " + (e?.message || "خطأ غير معروف")); }
   };
 
   const filtered = videos.filter((v) =>
@@ -931,14 +932,15 @@ function VideosTab() {
 
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 function VideoSettingsTab() {
-  const [enabled, setEnabled] = useState(() => localStorage.getItem("devs_videos_enabled") !== "false");
-  const [showInfo, setShowInfo] = useState(() => localStorage.getItem("devs_videos_show_info") !== "false");
+  const [enabled, setEnabled] = useState(() => getSetting("videos_enabled") !== "false");
+  const [showInfo, setShowInfo] = useState(() => getSetting("videos_show_info") !== "false");
 
   const handleSave = () => {
-    localStorage.setItem("devs_videos_enabled", String(enabled));
-    localStorage.setItem("devs_videos_show_info", String(showInfo));
-    toast.success("تم حفظ الإعدادات");
-    window.dispatchEvent(new Event("app-settings-changed"));
+    setSettings({
+      videos_enabled: String(enabled),
+      videos_show_info: String(showInfo),
+    });
+    toast.success("تم حفظ الإعدادات ✓");
   };
 
   return (

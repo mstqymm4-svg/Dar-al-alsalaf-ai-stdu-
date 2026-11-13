@@ -103,7 +103,14 @@ export const DEFAULT_SETTINGS = {
   contact_show_form:   "true",
   contact_telegram_url:"",
   contact_instagram_url:"",
+  // Video section visibility
+  videos_enabled:      "true",
+  videos_show_info:    "true",
 };
+
+// End-user local preference keys that should not overwrite global admin settings on other devices,
+// while still persisting per-user display preferences on this device.
+const USER_LOCAL_PREF_KEYS = new Set(["theme_mode", "dark_mode", "app_lang"]);
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 const LS_PREFIX = "devs_";
@@ -133,24 +140,18 @@ async function dbGetAll() {
 
 async function dbSet(key, value, previousValue, userEmail) {
   try {
-    const rows = await entities.AppSettings.filter({ setting_key: key });
-    if (rows && rows.length > 0) {
-      await entities.AppSettings.update(rows[0].id, {
-        setting_value: value,
-        previous_value: previousValue,
-        changed_by: userEmail || "admin",
-      });
-    } else {
-      await entities.AppSettings.create({
-        setting_key: key,
-        setting_value: value,
-        setting_type: "text",
-        changed_by: userEmail || "admin",
-        previous_value: previousValue,
-      });
-    }
+    await entities.AppSettings.update(key, {
+      setting_key: key,
+      setting_value: String(value ?? ""),
+      setting_type: "text",
+      previous_value: previousValue ? String(previousValue) : "",
+      changed_by: userEmail || "admin",
+    });
     return true;
-  } catch(e) { return false; }
+  } catch (e) {
+    console.error("Failed saving setting:", key, e?.message);
+    return false;
+  }
 }
 
 // ─── In-memory cache ──────────────────────────────────────────────────────────
@@ -256,22 +257,25 @@ export function onSaveStatus(fn) {
 
 export function getSaveStatus() { return _saveStatus; }
 
+const _prevValues = {};
+
 async function flushSave(key) {
   const value = _pendingSaves[key];
+  if (value === undefined) return;
   delete _pendingSaves[key];
-  const previous = ls.get(key) || "";
+  const previous = _prevValues[key] ?? ls.get(key) ?? "";
   ls.set(key, value);
   emitStatus("saving");
   const ok = await dbSet(key, value, previous, _userEmail);
   if (!ok) {
     // retry once
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 800));
     const ok2 = await dbSet(key, value, previous, _userEmail);
     emitStatus(ok2 ? "saved" : "error");
   } else {
     emitStatus("saved");
   }
-  setTimeout(() => { if (_saveStatus === "saved") emitStatus("idle"); }, 2500);
+  setTimeout(() => { if (_saveStatus === "saved") emitStatus("idle"); }, 2000);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -281,49 +285,60 @@ export function getSetting(key) {
   return _cache[key] ?? DEFAULT_SETTINGS[key] ?? "";
 }
 
-/** Update a setting: applies instantly + saves to DB */
+/** Update a setting: applies instantly + persists locally & saves to DB */
 export function setSetting(key, value) {
-  const strVal = String(value);
+  const strVal = String(value ?? "");
+  _prevValues[key] = _cache[key] ?? "";
   _cache[key] = strVal;
+  ls.set(key, strVal);
   applySettingsToDom(_cache);
   dispatchChange();
 
   // Debounced DB save
   clearTimeout(_saveTimers[key]);
   _pendingSaves[key] = strVal;
-  _saveTimers[key] = setTimeout(() => flushSave(key), 500);
+  _saveTimers[key] = setTimeout(() => flushSave(key), 250);
 }
 
 /** Update multiple settings at once */
 export function setSettings(obj) {
-  Object.entries(obj).forEach(([k,v]) => { _cache[k] = String(v); });
+  Object.entries(obj).forEach(([k,v]) => {
+    const strVal = String(v ?? "");
+    _prevValues[k] = _cache[k] ?? "";
+    _cache[k] = strVal;
+    ls.set(k, strVal);
+  });
   applySettingsToDom(_cache);
   dispatchChange();
   Object.entries(obj).forEach(([k,v]) => {
     clearTimeout(_saveTimers[k]);
-    _pendingSaves[k] = String(v);
-    _saveTimers[k] = setTimeout(() => flushSave(k), 500);
+    _pendingSaves[k] = String(v ?? "");
+    _saveTimers[k] = setTimeout(() => flushSave(k), 250);
   });
 }
 
-/** Load settings on app start — DB + localStorage merge (user edits in cached win) */
+/** Load settings on app start — DB is authoritative for DevPanel config, localStorage fast-path */
 export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
-  // 1. Apply localStorage immediately (fast path)
+  // 1. Apply localStorage immediately (fast path before DB resolves)
   const cached = ls.getAll();
   _cache = { ...DEFAULT_SETTINGS, ...cached };
   applySettingsToDom(_cache);
   dispatchChange();
 
-  // 2. Load from DB and merge without clobbering user customization
+  // 2. Load from DB and let authoritative server settings take effect
   const dbData = await dbGetAll();
   if (dbData && Object.keys(dbData).length > 0) {
-    // dbData applied first, but cached user custom values take precedence
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
-    Object.entries(cached).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== "") {
-        merged[k] = String(v);
+    // Preserve device-local user display preferences if previously set
+    USER_LOCAL_PREF_KEYS.forEach((k) => {
+      if (cached[k] !== undefined && cached[k] !== null && cached[k] !== "") {
+        merged[k] = String(cached[k]);
       }
+    });
+    // Preserve any in-flight local edits not yet flushed to DB
+    Object.entries(_pendingSaves).forEach(([k, v]) => {
+      merged[k] = String(v);
     });
     _cache = merged;
     ls.setAll(_cache);

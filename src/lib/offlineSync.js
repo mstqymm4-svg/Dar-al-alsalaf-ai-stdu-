@@ -53,7 +53,7 @@ export async function syncBooks(onProgress) {
     }
   }
 
-  await db.cacheBooks(toCache);
+  await db.replaceCachedBooks(allBooks);
 
   // Cache cover images in background
   let imagesCached = 0;
@@ -142,7 +142,7 @@ export async function downloadMultiplePdfs(books, onProgress) {
 export async function syncVideos(onProgress) {
   const allVideos = await entities.Video.list('-created_date', 1000);
   const visibleVideos = allVideos.filter(v => v.visible !== false);
-  await db.cacheVideos(visibleVideos);
+  await db.replaceCachedVideos(visibleVideos);
 
   // Cache thumbnails
   for (const v of visibleVideos) {
@@ -171,7 +171,7 @@ export async function getVideos() {
     try {
       const videos = await entities.Video.list('-sort_order', 1000);
       const visible = videos.filter(v => v.visible !== false);
-      db.cacheVideos(visible).catch(() => {});
+      db.replaceCachedVideos(visible).catch(() => {});
       return visible;
     } catch(e) {
       return db.getCachedVideos();
@@ -184,7 +184,7 @@ export async function getVideos() {
 export async function syncVideoChannels(onProgress) {
   const allChannels = await entities.VideoChannel.list('-sort_order', 1000);
   const visibleChannels = allChannels.filter(c => c.visible !== false);
-  await db.cacheVideoChannels(visibleChannels);
+  await db.replaceCachedVideoChannels(visibleChannels);
 
   // Cache channel logos
   for (const c of visibleChannels) {
@@ -213,7 +213,7 @@ export async function getVideoChannels() {
     try {
       const channels = await entities.VideoChannel.list('-sort_order', 1000);
       const visible = channels.filter(c => c.visible !== false);
-      db.cacheVideoChannels(visible).catch(() => {});
+      db.replaceCachedVideoChannels(visible).catch(() => {});
       return visible;
     } catch(e) {
       return db.getCachedVideoChannels();
@@ -226,7 +226,7 @@ export async function getVideoChannels() {
 export async function syncSocialChannels() {
   const allChannels = await entities.SocialChannel.list('-sort_order', 1000);
   const visibleChannels = allChannels.filter(c => c.visible !== false);
-  await db.cacheSocialChannels(visibleChannels);
+  await db.replaceCachedSocialChannels(visibleChannels);
 
   // Cache icons
   for (const c of visibleChannels) {
@@ -254,7 +254,7 @@ export async function getSocialChannels() {
     try {
       const channels = await entities.SocialChannel.list('-sort_order', 1000);
       const visible = channels.filter(c => c.visible !== false);
-      db.cacheSocialChannels(visible).catch(() => {});
+      db.replaceCachedSocialChannels(visible).catch(() => {});
       return visible;
     } catch(e) {
       return db.getCachedSocialChannels();
@@ -371,8 +371,7 @@ export async function getBooks() {
   if (isOnline()) {
     try {
       const books = await entities.Book.list('-created_date', 1000);
-      // Cache in background
-      db.cacheBooks(books).catch(() => {});
+      db.replaceCachedBooks(books).catch(() => {});
       return books;
     } catch(e) {
       // Network failed — fall back to cache

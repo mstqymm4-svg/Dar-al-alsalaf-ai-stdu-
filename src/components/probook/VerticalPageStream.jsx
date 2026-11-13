@@ -63,10 +63,24 @@ export default function VerticalPageStream({
   const scrollRef = useRef(null);
   const [baseRatio, setBaseRatio] = useState(DEFAULT_RATIO);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const touchRef = useRef({ mode: "idle", startX: 0, startY: 0, dist: 0, baseZoom: 1 });
+  const touchRef = useRef({
+    mode: "idle",
+    hadMultiTouch: false,
+    startX: 0,
+    startY: 0,
+    dist: 0,
+    baseZoom: 1,
+    startEffZoom: 1,
+    midX: 0,
+    midY: 0,
+    startContentX: 0,
+    startContentY: 0,
+  });
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
   const [pinchZoom, setPinchZoom] = useState(null);
+  const pinchZoomRef = useRef(null);
+  pinchZoomRef.current = pinchZoom;
 
   const isProgrammaticScrollRef = useRef(false);
   const scrollTimeoutRef = useRef(null);
@@ -104,9 +118,11 @@ export default function VerticalPageStream({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [viewMode]);
 
   const effZoom = pinchZoom ?? zoom;
+  const effZoomRef = useRef(effZoom);
+  effZoomRef.current = effZoom;
   const isZoomed = effZoom > 1.05;
 
   // ── Calculate dimensions efficiently ──
@@ -157,121 +173,172 @@ export default function VerticalPageStream({
   const totalItemHeight = pageHeight + GAP;
 
   const lastMultiTouchTimeRef = useRef(0);
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
+  const isRTLRef = useRef(isRTL);
+  isRTLRef.current = isRTL;
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
+  const onNextPageRef = useRef(onNextPage);
+  onNextPageRef.current = onNextPage;
+  const onPrevPageRef = useRef(onPrevPage);
+  onPrevPageRef.current = onPrevPage;
 
-  // Keep scroll position firmly anchored to currentPage when pinchZoom or zoom changes
+  // Keep viewport anchored around the two-finger pinch midpoint while scaling
   useEffect(() => {
     const st = touchRef.current;
-    if (st.mode === "pinch" && scrollRef.current && st.anchorPage && viewMode === "scroll") {
-      const newPageTop = (st.anchorPage - 1) * totalItemHeight;
-      const ratio = st.oldItemH > 0 ? totalItemHeight / st.oldItemH : 1;
-      scrollRef.current.scrollTop = newPageTop + (st.offsetInPage * ratio);
+    const el = scrollRef.current;
+    if (st.mode === "pinch" && el && st.startEffZoom > 0) {
+      const ratio = effZoom / st.startEffZoom;
+      el.scrollLeft = Math.max(0, st.startContentX * ratio - st.midX);
+      el.scrollTop = Math.max(0, st.startContentY * ratio - st.midY);
     }
-  }, [effZoom, totalItemHeight, viewMode]);
+  }, [effZoom]);
 
-  // Keep zoom changes from toolbar or buttons anchored to current page
+  // Preserve reading position cleanly when zoom changes via toolbar +/- buttons, wheel, or double-tap
   const prevZoomRef = useRef(zoom);
   useEffect(() => {
-    if (prevZoomRef.current !== zoom) {
+    const prevZ = prevZoomRef.current;
+    if (prevZ !== zoom) {
       prevZoomRef.current = zoom;
-      if (viewMode === "scroll" && scrollRef.current && !isProgrammaticScrollRef.current) {
-        const p = currentPageRef.current || 1;
-        const targetY = (p - 1) * totalItemHeight;
-        isProgrammaticScrollRef.current = true;
-        scrollRef.current.scrollTop = targetY;
-        clearTimeout(scrollTimeoutRef.current);
-        scrollTimeoutRef.current = setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-        }, 200);
-      }
-    }
-  }, [zoom, totalItemHeight, viewMode]);
-
-  // ── Touch gestures: Pinch-to-zoom with locked page anchor & horizontal swipe ──
-  const onTouchStart = (e) => {
-    const st = touchRef.current;
-    if (e.touches.length === 2) {
-      if (e.cancelable) e.preventDefault();
-      lastMultiTouchTimeRef.current = Date.now();
-      const [a, b] = e.touches;
-      st.mode = "pinch";
-      st.dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      st.baseZoom = zoomRef.current;
-      isProgrammaticScrollRef.current = true;
-      st.anchorPage = currentPageRef.current || 1;
-      const curH = totalItemHeight;
-      st.oldItemH = curH;
-      if (scrollRef.current && curH > 0) {
-        const oldPageTop = (st.anchorPage - 1) * curH;
-        st.offsetInPage = Math.max(0, scrollRef.current.scrollTop - oldPageTop);
-      } else {
-        st.offsetInPage = 0;
-      }
-    } else if (e.touches.length === 1) {
-      st.mode = "single";
-      st.startX = e.touches[0].clientX;
-      st.startY = e.touches[0].clientY;
-    }
-  };
-
-  const onTouchMove = (e) => {
-    const st = touchRef.current;
-    if (st.mode === "pinch" && e.touches.length === 2) {
-      if (e.cancelable) e.preventDefault();
-      lastMultiTouchTimeRef.current = Date.now();
-      const [a, b] = e.touches;
-      const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      if (st.dist > 0) {
-        const nextZ = clampZoom(st.baseZoom * (d / st.dist));
-        setPinchZoom(nextZ);
-      }
-    }
-  };
-
-  const finishPinch = () => {
-    const targetZoom = pinchZoom ?? zoom;
-    if (pinchZoom != null) onZoomChange?.(pinchZoom);
-    setPinchZoom(null);
-    if (scrollRef.current && touchRef.current.anchorPage && viewMode === "scroll") {
-      const p = touchRef.current.anchorPage;
-      const targetY = (p - 1) * totalItemHeight;
-      scrollRef.current.scrollTop = targetY;
-    }
-    clearTimeout(scrollTimeoutRef.current);
-    scrollTimeoutRef.current = setTimeout(() => {
-      isProgrammaticScrollRef.current = false;
-    }, 250);
-  };
-
-  const onTouchEnd = (e) => {
-    const st = touchRef.current;
-    if (st.mode === "pinch") {
-      st.mode = "idle";
-      finishPinch();
-      return;
-    }
-    // Horizontal swipe in single/spread mode (strictly only when NOT zoomed in)
-    const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 450;
-    if (
-      st.mode === "single" &&
-      viewMode !== "scroll" &&
-      effZoom <= 1.05 &&
-      !recentlyPinched &&
-      e.changedTouches?.length === 1
-    ) {
-      const dx = e.changedTouches[0].clientX - st.startX;
-      const dy = e.changedTouches[0].clientY - st.startY;
-      if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.25) {
-        if (isRTL) {
-          if (dx > 0) onNextPage?.();
-          else onPrevPage?.();
-        } else {
-          if (dx < 0) onNextPage?.();
-          else onPrevPage?.();
+      const el = scrollRef.current;
+      // If ending a pinch, anchor was already maintained frame-by-frame
+      if (el && prevZ > 0 && touchRef.current.mode !== "pinch") {
+        const wasPinchCommit = Date.now() - lastMultiTouchTimeRef.current < 150;
+        if (!wasPinchCommit) {
+          const ratio = zoom / prevZ;
+          const cx = el.scrollLeft + el.clientWidth / 2;
+          const cy = el.scrollTop + el.clientHeight / 2;
+          isProgrammaticScrollRef.current = true;
+          requestAnimationFrame(() => {
+            if (!scrollRef.current) return;
+            scrollRef.current.scrollLeft = Math.max(0, cx * ratio - scrollRef.current.clientWidth / 2);
+            scrollRef.current.scrollTop = Math.max(0, cy * ratio - scrollRef.current.clientHeight / 2);
+          });
+          clearTimeout(scrollTimeoutRef.current);
+          scrollTimeoutRef.current = setTimeout(() => {
+            isProgrammaticScrollRef.current = false;
+          }, 350);
         }
       }
     }
-    st.mode = "idle";
-  };
+  }, [zoom]);
+
+  // ── Native non-passive touch listeners so pinch NEVER triggers browser scroll/page-flip ──
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const finishPinch = () => {
+      const finalZoom = pinchZoomRef.current;
+      if (finalZoom != null) {
+        onZoomChangeRef.current?.(finalZoom);
+      }
+      pinchZoomRef.current = null;
+      setPinchZoom(null);
+      clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 450);
+    };
+
+    const handleTouchStart = (e) => {
+      const st = touchRef.current;
+      if (e.touches.length >= 2) {
+        if (e.cancelable) e.preventDefault();
+        lastMultiTouchTimeRef.current = Date.now();
+        st.hadMultiTouch = true;
+        st.mode = "pinch";
+        isProgrammaticScrollRef.current = true;
+
+        const [a, b] = e.touches;
+        st.dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        st.baseZoom = effZoomRef.current;
+        st.startEffZoom = effZoomRef.current;
+
+        const rect = el.getBoundingClientRect();
+        st.midX = (a.clientX + b.clientX) / 2 - rect.left;
+        st.midY = (a.clientY + b.clientY) / 2 - rect.top;
+        st.startContentX = el.scrollLeft + st.midX;
+        st.startContentY = el.scrollTop + st.midY;
+      } else if (e.touches.length === 1) {
+        st.mode = "single";
+        st.hadMultiTouch = false;
+        st.startX = e.touches[0].clientX;
+        st.startY = e.touches[0].clientY;
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      const st = touchRef.current;
+      if (st.mode === "pinch" || e.touches.length >= 2) {
+        if (e.cancelable) e.preventDefault();
+        if (e.touches.length < 2) return;
+        lastMultiTouchTimeRef.current = Date.now();
+        const [a, b] = e.touches;
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (st.dist > 10) {
+          const nextZ = clampZoom(st.baseZoom * (d / st.dist));
+          pinchZoomRef.current = nextZ;
+          setPinchZoom(nextZ);
+        }
+      }
+    };
+
+    const handleTouchEnd = (e) => {
+      const st = touchRef.current;
+      if (st.mode === "pinch") {
+        if (e.touches.length === 0) {
+          st.mode = "idle";
+          finishPinch();
+        } else if (e.touches.length === 1) {
+          // One finger still down after releasing pinch — commit zoom and lock swipe
+          lastMultiTouchTimeRef.current = Date.now();
+          st.mode = "idle";
+          finishPinch();
+        }
+        return;
+      }
+
+      // Horizontal swipe in single/spread mode (strictly ONLY when unzoomed and not post-pinch)
+      const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 500;
+      if (
+        st.mode === "single" &&
+        !st.hadMultiTouch &&
+        viewModeRef.current !== "scroll" &&
+        effZoomRef.current <= 1.05 &&
+        !recentlyPinched &&
+        e.changedTouches?.length === 1 &&
+        e.touches.length === 0
+      ) {
+        const dx = e.changedTouches[0].clientX - st.startX;
+        const dy = e.changedTouches[0].clientY - st.startY;
+        if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.3) {
+          if (isRTLRef.current) {
+            if (dx > 0) onNextPageRef.current?.();
+            else onPrevPageRef.current?.();
+          } else {
+            if (dx < 0) onNextPageRef.current?.();
+            else onPrevPageRef.current?.();
+          }
+        }
+      }
+      if (e.touches.length === 0) {
+        st.mode = "idle";
+      }
+    };
+
+    el.addEventListener("touchstart", handleTouchStart, { passive: false });
+    el.addEventListener("touchmove", handleTouchMove, { passive: false });
+    el.addEventListener("touchend", handleTouchEnd, { passive: false });
+    el.addEventListener("touchcancel", handleTouchEnd, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", handleTouchStart);
+      el.removeEventListener("touchmove", handleTouchMove);
+      el.removeEventListener("touchend", handleTouchEnd);
+      el.removeEventListener("touchcancel", handleTouchEnd);
+    };
+  }, [viewMode]);
 
   // ── Expose scrollToPage to parent ──
   useEffect(() => {
@@ -293,14 +360,15 @@ export default function VerticalPageStream({
 
   // ── Continuous scroll tracking with RAF ──
   const handleScroll = useCallback(() => {
-    // When zoomed in, or during a pinch gesture, do NOT change the current page
+    // During programmatic scroll, active pinch, or right after pinching, do NOT change page
+    const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 500;
     if (
       isProgrammaticScrollRef.current ||
       viewMode !== "scroll" ||
       !totalPages ||
-      isZoomed ||
       pinchZoom !== null ||
-      touchRef.current.mode === "pinch"
+      touchRef.current.mode === "pinch" ||
+      recentlyPinched
     ) return;
     if (rafScrollRef.current) cancelAnimationFrame(rafScrollRef.current);
 
@@ -316,7 +384,7 @@ export default function VerticalPageStream({
         onCurrentPageChange(calculatedPage);
       }
     });
-  }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange, isZoomed, pinchZoom]);
+  }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange, pinchZoom]);
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
   const brightnessFilter = brightness !== 100 ? `brightness(${Number(brightness) / 100})` : "none";
@@ -334,6 +402,7 @@ export default function VerticalPageStream({
     const pagesToShow = secondaryPage ? [primaryPage, secondaryPage] : [primaryPage];
 
     const handleZoneClick = (zone) => {
+      if (Date.now() - lastMultiTouchTimeRef.current < 500) return;
       if (zone === "next") {
         isRTL ? onPrevPage?.() : onNextPage?.();
       } else if (zone === "prev") {
@@ -347,15 +416,12 @@ export default function VerticalPageStream({
       <div
         ref={scrollRef}
         className={`flex-1 transition-colors duration-200 select-none relative ${themeConfig.canvasBg} ${
-          isZoomed ? "overflow-auto p-4 flex items-center justify-center min-w-full min-h-full" : "overflow-hidden flex flex-col items-center justify-center"
+          isZoomed ? "overflow-auto overscroll-contain flex p-3 sm:p-4" : "overflow-hidden flex flex-col items-center justify-center"
         }`}
-        style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
+        style={{ touchAction: isZoomed ? "pan-x pan-y" : "manipulation", filter: brightnessFilter }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        {/* Animated Page Container */}
+        {/* Animated Page Container (m-auto safely centers when small without clipping top/left when zoomed) */}
         <AnimatePresence mode="wait">
           <motion.div
             key={`${primaryPage}_${isSpread}`}
@@ -364,7 +430,7 @@ export default function VerticalPageStream({
             exit={{ opacity: 0.85, scale: 0.99 }}
             transition={{ duration: 0.15 }}
             dir={isRTL ? "rtl" : "ltr"}
-            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto min-w-full min-h-full"
+            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto shrink-0"
           >
             {pagesToShow.map((p) => {
               const isBookmarked = bookmarks.includes(p);
@@ -456,9 +522,6 @@ export default function VerticalPageStream({
       onScroll={handleScroll}
       className={`flex-1 overflow-auto overscroll-contain transition-colors duration-200 select-none ${themeConfig.canvasBg}`}
       style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
       onContextMenu={(e) => e.preventDefault()}
     >
       <div dir="ltr" className="flex flex-col items-center py-4 px-2 sm:px-6 min-w-max mx-auto">

@@ -1,5 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
+import {
+  getAuth,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const SCOPES = [
@@ -68,8 +75,41 @@ export const subscribeToGmailAuth = (listener) => {
   return () => authListeners.delete(listener);
 };
 
+function isEmbeddedNativeWebView() {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (window.Capacitor?.isNativePlatform?.()) return true;
+    const { protocol, hostname, port } = window.location || {};
+    if (protocol === 'capacitor:' || protocol === 'ionic:' || protocol === 'file:') return true;
+    if (hostname === 'localhost' && !port) return true;
+    const ua = navigator.userAgent || '';
+    if (/;\s*wv\)/i.test(ua)) return true;
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 // Initialize auth state listener. Call this on app load.
 export const initAuth = (onAuthSuccess, onAuthFailure) => {
+  getRedirectResult(auth)
+    .then((result) => {
+      if (result) {
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+          cachedAccessToken = credential.accessToken;
+        }
+        currentGoogleUser = result.user;
+        notifyListeners();
+        if (cachedAccessToken && onAuthSuccess) {
+          onAuthSuccess(result.user, cachedAccessToken);
+        }
+      }
+    })
+    .catch(() => {
+      // ignore redirect errors on boot
+    });
+
   return onAuthStateChanged(auth, async (user) => {
     currentGoogleUser = user;
     if (user) {
@@ -102,6 +142,32 @@ export const googleSignIn = async () => {
     notifyListeners();
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error) {
+    const code = error?.code || '';
+    const msg = String(error?.message || '');
+    const inWebView = isEmbeddedNativeWebView();
+
+    // Standard mobile browser blocked popup -> retry with redirect
+    if (
+      !inWebView &&
+      (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment')
+    ) {
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
+
+    if (
+      inWebView ||
+      code === 'auth/unauthorized-domain' ||
+      code === 'auth/operation-not-supported-in-this-environment' ||
+      msg.includes('disallowed_useragent')
+    ) {
+      const friendly = new Error(
+        'تسجيل الدخول عبر نافذة Google غير مدعوم داخل تطبيق الأندرويد. يرجى تسجيل الدخول عبر التحقق بالبريد الإلكتروني (رمز OTP).'
+      );
+      friendly.code = 'WEBVIEW_GOOGLE_BLOCKED';
+      throw friendly;
+    }
+
     console.error('Sign in error:', error);
     throw error;
   } finally {

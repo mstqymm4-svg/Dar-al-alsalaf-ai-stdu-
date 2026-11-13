@@ -106,7 +106,17 @@ export async function cacheBooks(books) {
   await txDone(store);
 }
 
+export async function replaceCachedBooks(books) {
+  const store = await tx("books", "readwrite");
+  store.clear();
+  for (const book of books) {
+    store.put({ ...book, _cached_at: Date.now() });
+  }
+  await txDone(store);
+}
+
 export async function getCachedBooks() {
+  await purgeOldSeedMediaOnce();
   const store = await tx("books");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
@@ -122,8 +132,9 @@ export async function getCachedBooks() {
 }
 
 export async function getCachedBook(id) {
+  await purgeOldSeedMediaOnce();
   const store = await tx("books");
-  let book = await reqAsPromise(store.get(id));
+  let book = (await reqAsPromise(store.get(id))) || (await reqAsPromise(store.get(String(id))));
   if (!book && Array.isArray(initialBooks)) {
     book = initialBooks.find((b) => b.id === id) || null;
     if (book) {
@@ -245,6 +256,15 @@ export async function cacheVideos(videos) {
   await txDone(store);
 }
 
+export async function replaceCachedVideos(videos) {
+  const store = await tx("videos", "readwrite");
+  store.clear();
+  for (const v of videos) {
+    store.put({ ...v, _cached_at: Date.now() });
+  }
+  await txDone(store);
+}
+
 export async function clearAllCachedVideos() {
   try {
     const store = await tx("videos", "readwrite");
@@ -253,24 +273,36 @@ export async function clearAllCachedVideos() {
   } catch {}
 }
 
-let _mediaPurged = false;
+let _catalogPurgePromise = null;
 export async function purgeOldSeedMediaOnce() {
-  if (_mediaPurged) return;
-  _mediaPurged = true;
-  try {
-    if (typeof localStorage !== "undefined" && localStorage.getItem("dau_media_purged_v3") !== "true") {
-      localStorage.setItem("dau_media_purged_v3", "true");
-      await clearAllCachedVideos();
-      await clearAllCachedVideoChannels();
-      try {
-        localStorage.removeItem("dau_store_Video");
-        localStorage.removeItem("dau_store_VideoChannel");
-        localStorage.removeItem("dau_store_videos");
-        localStorage.removeItem("dau_store_video_channels");
-        localStorage.removeItem("video_favorites");
-      } catch {}
-    }
-  } catch {}
+  if (_catalogPurgePromise) return _catalogPurgePromise;
+  _catalogPurgePromise = (async () => {
+    try {
+      if (typeof localStorage !== "undefined" && localStorage.getItem("dau_catalog_reset_v4") !== "true") {
+        localStorage.setItem("dau_catalog_reset_v4", "true");
+        localStorage.setItem("dau_media_purged_v3", "true");
+        localStorage.setItem("dau_books_initialized", "true");
+        localStorage.setItem("dau_videos_initialized", "true");
+        localStorage.setItem("dau_video_channels_initialized", "true");
+        await Promise.allSettled([
+          clearAllCachedBooks(),
+          clearAllCachedVideos(),
+          clearAllCachedVideoChannels(),
+        ]);
+        try {
+          localStorage.removeItem("dau_store_Book");
+          localStorage.removeItem("dau_store_Video");
+          localStorage.removeItem("dau_store_VideoChannel");
+          localStorage.removeItem("dau_store_books");
+          localStorage.removeItem("dau_store_videos");
+          localStorage.removeItem("dau_store_video_channels");
+          localStorage.removeItem("dau_deleted_entity_ids_v1");
+          localStorage.removeItem("video_favorites");
+        } catch {}
+      }
+    } catch {}
+  })();
+  return _catalogPurgePromise;
 }
 
 export async function getCachedVideos() {
@@ -307,6 +339,15 @@ export async function clearAllCachedVideoChannels() {
 
 export async function cacheVideoChannels(channels) {
   const store = await tx("channels", "readwrite");
+  for (const c of channels) {
+    store.put({ ...c, _cached_at: Date.now() });
+  }
+  await txDone(store);
+}
+
+export async function replaceCachedVideoChannels(channels) {
+  const store = await tx("channels", "readwrite");
+  store.clear();
   for (const c of channels) {
     store.put({ ...c, _cached_at: Date.now() });
   }
@@ -353,10 +394,22 @@ export async function cacheSocialChannels(channels) {
   await txDone(store);
 }
 
+export async function replaceCachedSocialChannels(channels) {
+  const store = await tx("social", "readwrite");
+  store.clear();
+  for (const c of channels) {
+    store.put({ ...c, _cached_at: Date.now() });
+  }
+  await txDone(store);
+}
+
 export async function getCachedSocialChannels() {
   const store = await tx("social");
   const items = await reqAsPromise(store.getAll());
   if (items && items.length > 0) return items;
+  if (typeof localStorage !== "undefined" && localStorage.getItem("dau_social_channels_initialized") === "true") {
+    return [];
+  }
   if (Array.isArray(initialSocialChannels) && initialSocialChannels.length > 0) {
     await cacheSocialChannels(initialSocialChannels);
     return initialSocialChannels;
@@ -374,6 +427,15 @@ export async function deleteCachedSocialChannel(id) {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 export async function cacheSettings(settings) {
   const store = await tx("settings", "readwrite");
+  for (const s of settings) {
+    store.put({ ...s, _cached_at: Date.now() });
+  }
+  await txDone(store);
+}
+
+export async function replaceCachedSettings(settings) {
+  const store = await tx("settings", "readwrite");
+  store.clear();
   for (const s of settings) {
     store.put({ ...s, _cached_at: Date.now() });
   }

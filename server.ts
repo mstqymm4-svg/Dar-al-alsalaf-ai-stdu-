@@ -11,22 +11,35 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
-  // CORS: the Android app (Capacitor) loads pages from https://localhost, so its
-  // requests to this server are cross-origin. Only these origins are allowed.
-  // Add your website's own origin via the ALLOWED_ORIGINS env var (comma-separated).
-  const allowedOrigins = new Set([
+  // CORS: the Android app (Capacitor) loads pages from https://localhost or capacitor://localhost,
+  // so its requests to this server are cross-origin.
+  const exactAllowedOrigins = new Set([
     'https://localhost',
     'http://localhost',
     'capacitor://localhost',
+    'ionic://localhost',
     ...(process.env.ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean),
   ]);
+  const isOriginAllowed = (origin?: string) => {
+    if (!origin) return false;
+    if (exactAllowedOrigins.has(origin)) return true;
+    try {
+      const u = new URL(origin);
+      if (u.protocol === 'capacitor:' || u.protocol === 'ionic:') return true;
+      if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return true;
+      if (u.hostname.endsWith('.run.app')) return true;
+    } catch {
+      return false;
+    }
+    return false;
+  };
   app.use((req, res, next) => {
     const origin = req.headers.origin as string | undefined;
-    if (origin && allowedOrigins.has(origin)) {
+    if (origin && isOriginAllowed(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();

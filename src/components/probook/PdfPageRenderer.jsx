@@ -119,46 +119,55 @@ function PdfPageRenderer({
         const renderScale = Math.min(rawRenderScale, maxAllowedScale);
 
         const viewport = page.getViewport({ scale: renderScale });
-        const cssViewport = page.getViewport({ scale: cssScale });
 
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
 
-        const ctx = canvas.getContext("2d", { alpha: false });
-        if (!ctx) return;
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-
         const pxWidth = Math.floor(viewport.width);
         const pxHeight = Math.floor(viewport.height);
 
+        // Render to an offscreen canvas first so visible canvas NEVER clears/flashes white on zoom
+        const offscreen = document.createElement("canvas");
+        offscreen.width = pxWidth;
+        offscreen.height = pxHeight;
+        const offCtx = offscreen.getContext("2d", { alpha: false });
+        if (!offCtx) return;
+
+        offCtx.imageSmoothingEnabled = true;
+        offCtx.imageSmoothingQuality = "high";
+
+        const task = page.render({ canvasContext: offCtx, viewport });
+        renderTaskRef.current = task;
+        await task.promise;
+
+        if (cancelled) return;
+
+        // Atomic swap into visible canvas
         if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
           canvas.width = pxWidth;
           canvas.height = pxHeight;
         }
-
-        canvas.style.width = `${Math.floor(cssViewport.width)}px`;
-        canvas.style.height = `${Math.floor(cssViewport.height)}px`;
-
-        const task = page.render({ canvasContext: ctx, viewport });
-        renderTaskRef.current = task;
-        await task.promise;
-
-        if (!cancelled) {
-          setRendering(false);
-          setHasRenderedOnce(true);
-
-          // Save snapshot to memory cache asynchronously
-          setTimeout(() => {
-            if (!cancelled && canvas) {
-              try {
-                const dataUrl = canvas.toDataURL("image/webp", 0.85);
-                setCachedPageImage(cacheKey, dataUrl);
-              } catch {}
-            }
-          }, 60);
+        canvas.style.width = "100%";
+        canvas.style.height = "100%";
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(offscreen, 0, 0);
         }
+
+        setRendering(false);
+        setHasRenderedOnce(true);
+
+        // Save snapshot to memory cache asynchronously
+        setTimeout(() => {
+          if (!cancelled && canvas) {
+            try {
+              const dataUrl = canvas.toDataURL("image/webp", 0.85);
+              setCachedPageImage(cacheKey, dataUrl);
+            } catch {}
+          }
+        }, 60);
       } catch (e) {
         if (e?.name !== "RenderingCancelledException" && !cancelled) {
           setError(true);
@@ -189,21 +198,21 @@ function PdfPageRenderer({
   return (
     <div className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${containerBg}`}>
       {/* If cached image exists, display it instantly */}
-      {cachedUrl && !hasRenderedOnce && (
+      {cachedUrl && (
         <img
           src={cachedUrl}
           alt=""
           style={{ filter: canvasFilter }}
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${containerBg}`}
+          className={`w-full h-full object-contain pointer-events-none ${containerBg}`}
         />
       )}
 
       <canvas
         ref={canvasRef}
         style={{ filter: canvasFilter }}
-        className={`block transition-opacity duration-150 ${containerBg} ${
-          hasRenderedOnce ? "opacity-100" : "opacity-0"
-        }`}
+        className={`w-full h-full block transition-opacity duration-150 ${containerBg} ${
+          hasRenderedOnce && !cachedUrl ? "opacity-100" : "opacity-0"
+        } ${cachedUrl ? "hidden" : ""}`}
       />
 
       {rendering && !hasRenderedOnce && !cachedUrl && !error && (

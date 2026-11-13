@@ -262,14 +262,18 @@ export default function VerifyEmail() {
         return;
       }
 
-      // Link email and mark verified in localStorage, notify listeners
+      // Link email, establish authenticated session, and mark verified
       const em = email.trim().toLowerCase();
       try {
-        setAccountEmail(em);
-        localStorage.setItem(`email_verified_${em}`, "1");
-        window.dispatchEvent(new Event("dau-email-verified"));
-        window.dispatchEvent(new Event("dau-email-change"));
-      } catch (err) {}
+        await base44.auth.signInWithVerifiedEmail(em);
+      } catch (err) {
+        try {
+          setAccountEmail(em);
+          localStorage.setItem(`email_verified_${em}`, "1");
+          window.dispatchEvent(new Event("dau-email-verified"));
+          window.dispatchEvent(new Event("dau-email-change"));
+        } catch {}
+      }
 
       toast.success(data.message || (t.linkedSuccess || "تم التحقق من البريد بنجاح ✓"));
       setStep("success");

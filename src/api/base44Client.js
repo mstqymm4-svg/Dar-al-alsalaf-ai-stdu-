@@ -281,16 +281,30 @@ function createPublicCatalogEntity({
   sanitizeFn,
   getCachedAll,
   cacheAll,
+  replaceCachedAll,
   deleteCached,
   seedList,
 }) {
-  let hasSyncedFromFirestore = false;
+  const dispatchChanged = () => {
+    try {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
+      }
+    } catch {}
+  };
 
   async function loadLocalList() {
     const deleted = getDeletedIds();
     const cached = await getCachedAll().catch(() => []);
-    const isInitialized = typeof localStorage !== "undefined" && localStorage.getItem(`dau_${collectionName}_initialized`) === "true";
-    const base = cached && cached.length > 0 ? cached : (isInitialized ? [] : seedList.map((x) => sanitizeFn(x)));
+    const isInitialized =
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem(`dau_${collectionName}_initialized`) === "true";
+    const base =
+      cached && cached.length > 0
+        ? cached
+        : isInitialized
+        ? []
+        : seedList.map((x) => sanitizeFn(x));
     return base
       .filter((item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id)))
       .map((item) => sanitizeFn(item, item));
@@ -303,60 +317,28 @@ function createPublicCatalogEntity({
       const docs = [];
       snap.forEach((d) => {
         const data = d.data();
-        const docId = String(data?.id || d.id);
-        if (data && !deleted.has(docId) && !deleted.has(String(d.id)) && !deleted.has(sanitizeId(docId))) {
+        const docId = String(d.id || data?.id);
+        if (
+          data &&
+          !deleted.has(docId) &&
+          !deleted.has(String(data?.id || "")) &&
+          !deleted.has(sanitizeId(docId))
+        ) {
           docs.push(sanitizeFn({ ...data, id: docId }, data));
         }
       });
 
-      const localItems = await loadLocalList();
-      const map = new Map();
-      // Add server docs that are not marked deleted
-      docs.forEach((d) => {
-        const idKey = String(d.id);
-        if (!deleted.has(idKey) && !deleted.has(sanitizeId(idKey))) {
-          map.set(idKey, d);
-        }
-      });
-      // Preserve local items not on server or newer
-      localItems.forEach((local) => {
-        const localId = String(local.id);
-        if (!deleted.has(localId) && !deleted.has(sanitizeId(localId))) {
-          const remote = map.get(localId);
-          if (!remote) {
-            map.set(localId, local);
-          } else {
-            const localTime = new Date(local.updated_date || 0).getTime();
-            const remoteTime = new Date(remote.updated_date || 0).getTime();
-            if (localTime >= remoteTime) {
-              map.set(localId, local);
-            }
-          }
-        }
-      });
-
-      const merged = Array.from(map.values()).filter(
-        (item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id))
-      );
-      if (merged.length > 0) {
-        hasSyncedFromFirestore = true;
-        await cacheAll(merged).catch(() => {});
-        // Push local-only items to Firestore in background
-        const toUpload = localItems.filter((l) => !docs.some((d) => String(d.id) === String(l.id)));
-        if (toUpload.length > 0) {
-          Promise.allSettled(
-            toUpload.map((item) =>
-              setDoc(doc(db, collectionName, item.id), sanitizeFn(item, item))
-            )
-          ).catch(() => {});
-        }
-        return merged;
-      } else {
-        if (typeof localStorage !== "undefined" && localStorage.getItem(`dau_${collectionName}_initialized`) === "true") {
-          return [];
-        }
-        return localItems;
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
+
+      if (typeof replaceCachedAll === "function") {
+        await replaceCachedAll(docs).catch(() => {});
+      } else if (docs.length > 0) {
+        await cacheAll(docs).catch(() => {});
+      }
+
+      return docs;
     } catch (error) {
       return loadLocalList();
     }
@@ -408,19 +390,15 @@ function createPublicCatalogEntity({
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
-      await cacheAll([item]).catch(() => {});
       if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, item.id), item);
         } catch (error) {
-          console.warn(`Firestore create deferred for ${collectionName}:`, error?.message);
+          handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${item.id}`);
         }
       }
-      try {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
-        }
-      } catch {}
+      await cacheAll([item]).catch(() => {});
+      dispatchChanged();
       return item;
     },
 
@@ -434,19 +412,15 @@ function createPublicCatalogEntity({
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
-      await cacheAll([updated]).catch(() => {});
       if (navigator.onLine) {
         try {
           await setDoc(doc(db, collectionName, updated.id), updated);
         } catch (error) {
-          console.warn(`Firestore update deferred for ${collectionName}:`, error?.message);
+          handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${updated.id}`);
         }
       }
-      try {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
-        }
-      } catch {}
+      await cacheAll([updated]).catch(() => {});
+      dispatchChanged();
       return updated;
     },
 
@@ -458,27 +432,32 @@ function createPublicCatalogEntity({
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
-      if (deleteCached) {
-        await deleteCached(rawId).catch(() => {});
-        if (cleanId !== rawId) await deleteCached(cleanId).catch(() => {});
-      }
       if (navigator.onLine) {
+        let lastErr = null;
         try {
           await deleteDoc(doc(db, collectionName, rawId));
         } catch (error) {
-          console.warn(`Firestore delete deferred for ${collectionName}:`, error?.message);
+          lastErr = error;
         }
         if (cleanId !== rawId) {
           try {
             await deleteDoc(doc(db, collectionName, cleanId));
-          } catch {}
+            lastErr = null;
+          } catch (error) {
+            lastErr = lastErr || error;
+          }
+        }
+        if (lastErr) {
+          unmarkDeletedId(rawId);
+          unmarkDeletedId(cleanId);
+          handleFirestoreError(lastErr, OperationType.DELETE, `${collectionName}/${rawId}`);
         }
       }
-      try {
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(new CustomEvent("dau_content_changed", { detail: { entity: collectionName } }));
-        }
-      } catch {}
+      if (deleteCached) {
+        await deleteCached(rawId).catch(() => {});
+        if (cleanId !== rawId) await deleteCached(cleanId).catch(() => {});
+      }
+      dispatchChanged();
       return { id: rawId, deleted: true };
     },
   };
@@ -865,9 +844,9 @@ onAuthStateChanged(auth, async (fbUser) => {
   try {
     localStorage.removeItem("dau_logged_out");
   } catch {}
+  const current = readCurrentUserProfile() || {};
   const isOwner =
     !!fbUser.emailVerified && !!fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
-  const isAdminEmail = !!fbUser.emailVerified && !!fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const now = new Date().toISOString();
   const syncedProfile = {
     id: sanitizeId(fbUser.uid, "usr"),
@@ -1002,6 +981,7 @@ const BookEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeBook,
   getCachedAll: offlineDB.getCachedBooks,
   cacheAll: offlineDB.cacheBooks,
+  replaceCachedAll: offlineDB.replaceCachedBooks,
   deleteCached: offlineDB.deleteCachedBook,
   seedList: seedBooks || [],
 });
@@ -1011,6 +991,7 @@ const VideoEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeVideo,
   getCachedAll: offlineDB.getCachedVideos,
   cacheAll: offlineDB.cacheVideos,
+  replaceCachedAll: offlineDB.replaceCachedVideos,
   deleteCached: offlineDB.deleteCachedVideo,
   seedList: seedVideos || [],
 });
@@ -1020,6 +1001,7 @@ const VideoChannelEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeVideoChannel,
   getCachedAll: offlineDB.getCachedVideoChannels,
   cacheAll: offlineDB.cacheVideoChannels,
+  replaceCachedAll: offlineDB.replaceCachedVideoChannels,
   deleteCached: offlineDB.deleteCachedVideoChannel,
   seedList: seedVideoChannels || [],
 });
@@ -1029,6 +1011,7 @@ const SocialChannelEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeSocialChannel,
   getCachedAll: offlineDB.getCachedSocialChannels,
   cacheAll: offlineDB.cacheSocialChannels,
+  replaceCachedAll: offlineDB.replaceCachedSocialChannels,
   deleteCached: offlineDB.deleteCachedSocialChannel,
   seedList: seedSocialChannels || [],
 });
@@ -1038,6 +1021,7 @@ const AppSettingsEntity = createPublicCatalogEntity({
   sanitizeFn: sanitizeAppSetting,
   getCachedAll: offlineDB.getCachedSettings,
   cacheAll: offlineDB.cacheSettings,
+  replaceCachedAll: offlineDB.replaceCachedSettings,
   deleteCached: offlineDB.deleteCachedSetting,
   seedList: dedupedSeedSettings,
 });
@@ -1140,11 +1124,48 @@ export const base44 = {
       }
     },
 
+    async signInWithVerifiedEmail(email, fullName) {
+      const normalized = truncStr(String(email || "").trim().toLowerCase(), 256);
+      if (!normalized) return null;
+      try {
+        localStorage.removeItem("dau_logged_out");
+        localStorage.setItem("dau_account_email", normalized);
+        localStorage.setItem(`email_verified_${normalized}`, "1");
+      } catch {}
+      const current = readCurrentUserProfile() || {};
+      const now = new Date().toISOString();
+      const profileId = sanitizeId(`otp_${normalized}`, "usr");
+      const profile = {
+        ...current,
+        id: current.id || profileId,
+        uid: current.uid || profileId,
+        email: normalized,
+        full_name: truncStr(fullName || current.full_name || normalized.split("@")[0] || "مستخدم دار العلوم", 200),
+        role: normalized === OWNER_EMAIL.toLowerCase() ? "admin" : current.role || "user",
+        notifications_enabled: current.notifications_enabled ?? true,
+        preferred_language: truncStr(current.preferred_language || "العربية", 64),
+        verified: true,
+        created_date: truncStr(current.created_date || now, 64),
+        updated_date: now,
+      };
+      writeCurrentUserProfile(profile);
+      await UserEntity.update(profile.id, profile).catch(() => {});
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("dau-email-change"));
+        window.dispatchEvent(new Event("dau-email-verified"));
+      }
+      return profile;
+    },
+
     async redirectToLogin() {
       try {
         localStorage.removeItem("dau_logged_out");
         await googleSignIn();
-      } catch {}
+      } catch (err) {
+        if (typeof window !== "undefined") {
+          window.location.href = "/verify-email";
+        }
+      }
     },
   },
 

@@ -1,4 +1,5 @@
 # Build Android APK and AAB
+name: Android CI
 
 on:
   push:
@@ -13,17 +14,33 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://ais-pre-taxhi5e3sszvdhq5syo3ia-174510247368.europe-west3.run.app' }}
+          VITE_BASE44_APP_ID: ${{ vars.VITE_BASE44_APP_ID }}
+          VITE_BASE44_APP_BASE_URL: ${{ vars.VITE_BASE44_APP_BASE_URL }}
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
 
       - name: Find and setup gradlew
         run: find . -name "gradlew" -exec chmod +x {} \; || true
-
-      - name: Generate dummy debug keystore
-        run: keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Build Debug APK and AAB
         run: |

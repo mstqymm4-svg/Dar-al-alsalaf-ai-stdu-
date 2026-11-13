@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { useT } from "@/lib/i18n";
+import { base44 } from "@/api/base44Client";
 
 export default function EmailVerification({
   currentEmail = "",
@@ -245,6 +246,10 @@ export default function EmailVerification({
         }
         return;
       }
+
+      try {
+        await base44.auth.signInWithVerifiedEmail(targetEmail);
+      } catch {}
 
       setStep("success");
       toast.success(t.linkedSuccess || "تم التحقق من الرمز وربط البريد بنجاح ✓");

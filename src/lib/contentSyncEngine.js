@@ -100,13 +100,15 @@ async function reconcile({
 
   if (toCache.length > 0) await cacheFn(toCache);
 
-  // Delete items: ONLY if explicitly deleted locally (in deleted entity tracker)
+  // Delete cached items that were removed on the server or marked deleted locally
   let deletedCount = 0;
   let deletedIds = new Set();
   try {
     deletedIds = new Set(JSON.parse(localStorage.getItem("dau_deleted_entity_ids_v1") || "[]"));
   } catch {}
-  const toDelete = cached.filter((c) => deletedIds.has(String(c.id)));
+  const toDelete = cached.filter(
+    (c) => !serverIds.has(String(c.id)) || deletedIds.has(String(c.id))
+  );
   for (const item of toDelete) {
     await deleteFn(item.id);
     deletedCount++;
@@ -172,14 +174,12 @@ async function syncSocialChannelsIncremental() {
 
 async function syncSettingsIncremental() {
   const serverSettings = await entities.AppSettings.list("-created_date", 1000).catch(() => []);
+  if (Array.isArray(serverSettings) && serverSettings.length > 0) {
+    await db.replaceCachedSettings(serverSettings).catch(() => {});
+    return { total: serverSettings.length };
+  }
   const cachedSettings = await db.getCachedSettings().catch(() => []);
-  const map = new Map();
-  serverSettings.forEach(s => { if (s?.setting_key) map.set(s.setting_key, s); });
-  // Local settings customized by user take precedence
-  cachedSettings.forEach(s => { if (s?.setting_key) map.set(s.setting_key, s); });
-  const merged = Array.from(map.values());
-  await db.cacheSettings(merged);
-  return { total: merged.length };
+  return { total: cachedSettings.length };
 }
 
 // ─── Main sync ────────────────────────────────────────────────────────────────
@@ -273,11 +273,27 @@ export function startContentSyncEngine() {
   };
   document.addEventListener("visibilitychange", handleVisibility);
 
+  // Forward local entity CRUD changes directly to all subscribed pages
+  const handleLocalContentChanged = (e) => {
+    const rawEntity = e?.detail?.entity;
+    const mapped =
+      rawEntity === "video_channels"
+        ? "channels"
+        : rawEntity === "social_channels"
+        ? "social"
+        : rawEntity;
+    if (mapped) {
+      emit({ type: "content_changed", entity: mapped, new: 1, updated: 1, deleted: 1 });
+    }
+  };
+  window.addEventListener("dau_content_changed", handleLocalContentChanged);
+
   cleanupFns = [
     () => clearTimeout(initialTimer),
     () => clearInterval(pollTimer),
     () => window.removeEventListener("online", handleOnline),
     () => document.removeEventListener("visibilitychange", handleVisibility),
+    () => window.removeEventListener("dau_content_changed", handleLocalContentChanged),
   ];
 
   return () => {
