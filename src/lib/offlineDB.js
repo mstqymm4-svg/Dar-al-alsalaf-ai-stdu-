@@ -284,38 +284,7 @@ export async function clearAllCachedVideos() {
 let _catalogPurgePromise = null;
 export async function purgeOldSeedMediaOnce() {
   if (_catalogPurgePromise) return _catalogPurgePromise;
-  _catalogPurgePromise = (async () => {
-    try {
-      if (typeof localStorage !== "undefined" && localStorage.getItem("dau_catalog_reset_v5") !== "true") {
-        localStorage.setItem("dau_catalog_reset_v5", "true");
-        localStorage.setItem("dau_catalog_reset_v4", "true");
-        localStorage.setItem("dau_media_purged_v3", "true");
-        localStorage.setItem("dau_books_initialized", "true");
-        localStorage.setItem("dau_videos_initialized", "true");
-        localStorage.setItem("dau_video_channels_initialized", "true");
-        localStorage.setItem("dau_social_channels_initialized", "true");
-        await Promise.allSettled([
-          clearAllCachedBooks(),
-          clearAllCachedPdfs(),
-          clearAllCachedVideos(),
-          clearAllCachedVideoChannels(),
-          clearAllCachedSocialChannels(),
-        ]);
-        try {
-          localStorage.removeItem("dau_store_Book");
-          localStorage.removeItem("dau_store_Video");
-          localStorage.removeItem("dau_store_VideoChannel");
-          localStorage.removeItem("dau_store_SocialChannel");
-          localStorage.removeItem("dau_store_books");
-          localStorage.removeItem("dau_store_videos");
-          localStorage.removeItem("dau_store_video_channels");
-          localStorage.removeItem("dau_store_social_channels");
-          localStorage.removeItem("dau_deleted_entity_ids_v1");
-          localStorage.removeItem("video_favorites");
-        } catch {}
-      }
-    } catch {}
-  })();
+  _catalogPurgePromise = Promise.resolve();
   return _catalogPurgePromise;
 }
 

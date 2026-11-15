@@ -1,6 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Heart, Star, BookOpen, BookMarked } from "lucide-react";
-import { motion } from "framer-motion";
 import { useT } from "@/lib/i18n";
 import { catLabel } from "@/lib/i18n-terms";
 import SmartImage from "./SmartImage";
@@ -16,34 +15,33 @@ const categoryColors = {
   "أخرى": "from-gray-500/20 to-gray-600/5"
 };
 
-export default function BookCard({ book, isFavorite, onToggleFavorite, index = 0 }) {
+export default function BookCard({ book, isFavorite, onToggleFavorite }) {
   const t = useT();
   const navigate = useNavigate();
   const gradient = categoryColors[book.category] || categoryColors["أخرى"];
 
-  const handleRead = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // Warm the PDF chunk, worker and document while the reader page loads —
-    // the book opens visibly faster.
+  const warmPdf = () => {
     if (book.pdf_url) {
       import("@/lib/pdfLoader")
         .then(({ prefetchPdf }) => prefetchPdf(book.pdf_url, { bookId: book.id, title: book.title }))
         .catch(() => {});
     }
+  };
+
+  const handleRead = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    warmPdf();
     navigate(`/read/${book.id}`);
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: Math.min(index * 0.05, 0.3) }}
-      className="h-full">
-      
+    <div className="h-full">
       <Link
         to={`/book/${book.id}`}
-        className="group relative block h-full bg-card rounded-2xl border border-border overflow-hidden hover:shadow-2xl hover:shadow-primary/10 hover:border-primary/30 transition-all duration-300 hover:-translate-y-1.5">
+        onMouseEnter={warmPdf}
+        onTouchStart={warmPdf}
+        className="group relative block h-full bg-card rounded-2xl border border-border overflow-hidden hover:shadow-xl hover:shadow-primary/10 hover:border-primary/30 transition-transform duration-200 hover:-translate-y-1">
         
         {/* Cover Image */}
         <div className={`relative h-48 bg-gradient-to-br ${gradient} flex items-center justify-center overflow-hidden`}>
@@ -51,14 +49,14 @@ export default function BookCard({ book, isFavorite, onToggleFavorite, index = 0
           <SmartImage
             src={book.cover_image}
             alt={book.title}
-            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
             fallback={() => <BookOpen className="w-12 h-12 text-primary/30" />} /> :
 
 
           <BookOpen className="w-12 h-12 text-primary/30" />
           }
           {/* Gradient overlay for better text legibility */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-300" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60 group-hover:opacity-80 transition-opacity duration-200" />
 
           {onToggleFavorite &&
           <button
@@ -67,7 +65,7 @@ export default function BookCard({ book, isFavorite, onToggleFavorite, index = 0
               e.stopPropagation();
               onToggleFavorite(book.id);
             }}
-            className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white/80 dark:bg-black/50 backdrop-blur-md flex items-center justify-center shadow-lg hover:scale-110 active:scale-90 transition-all border border-white/20">
+            className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white/80 dark:bg-black/50 backdrop-blur-md flex items-center justify-center shadow-lg hover:scale-110 active:scale-90 transition-transform border border-white/20">
             
               <Heart className={`w-4 h-4 transition-colors ${isFavorite ? "fill-red-500 text-red-500" : "text-gray-600 dark:text-gray-300"}`} />
             </button>
@@ -94,7 +92,7 @@ export default function BookCard({ book, isFavorite, onToggleFavorite, index = 0
             {catLabel(book.category, t.langCode)}
           </span>
           <h3
-            className="font-bold text-foreground text-sm leading-relaxed line-clamp-2 mb-1 group-hover:text-primary transition-colors"
+            className="font-bold text-foreground text-sm leading-loose line-clamp-2 mb-1.5 pt-0.5 group-hover:text-primary transition-colors"
             style={{ fontFamily: "var(--font-title, var(--font-heading, inherit))" }}>
             
             {book.title}
@@ -120,13 +118,13 @@ export default function BookCard({ book, isFavorite, onToggleFavorite, index = 0
 
           <button
             onClick={handleRead}
-            className="w-full flex items-center justify-center gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95 shadow-sm hover:shadow-md hover:shadow-primary/20 text-xs font-bold py-2 rounded-[4px_20px_4px_20px]">
+            className="w-full flex items-center justify-center gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95 shadow-sm hover:shadow-md hover:shadow-primary/20 text-xs font-bold py-2 mt-2 rounded-[4px_20px_4px_20px]">
             
             <BookMarked className="w-3.5 h-3.5" />
             {t.readBook}
           </button>
         </div>
       </Link>
-    </motion.div>);
+    </div>);
 
 }

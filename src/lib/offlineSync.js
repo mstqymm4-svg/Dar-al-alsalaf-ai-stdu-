@@ -164,20 +164,15 @@ export async function syncVideos(onProgress) {
 }
 
 /**
- * Get all videos — from API if online, from cache if offline.
+ * Get all videos — from fast memory/cache + background sync.
  */
 export async function getVideos() {
-  if (isOnline()) {
-    try {
-      const videos = await entities.Video.list('-sort_order', 1000);
-      const visible = videos.filter(v => v.visible !== false);
-      db.replaceCachedVideos(visible).catch(() => {});
-      return visible;
-    } catch(e) {
-      return db.getCachedVideos();
-    }
+  try {
+    const videos = await entities.Video.list('-sort_order', 1000);
+    return (videos || []).filter(v => v.visible !== false);
+  } catch (e) {
+    return db.getCachedVideos();
   }
-  return db.getCachedVideos();
 }
 
 // ─── Video Channels sync ──────────────────────────────────────────────────────
@@ -206,20 +201,15 @@ export async function syncVideoChannels(onProgress) {
 }
 
 /**
- * Get video channels — from API if online, from cache if offline.
+ * Get video channels — from fast memory/cache + background sync.
  */
 export async function getVideoChannels() {
-  if (isOnline()) {
-    try {
-      const channels = await entities.VideoChannel.list('-sort_order', 1000);
-      const visible = channels.filter(c => c.visible !== false);
-      db.replaceCachedVideoChannels(visible).catch(() => {});
-      return visible;
-    } catch(e) {
-      return db.getCachedVideoChannels();
-    }
+  try {
+    const channels = await entities.VideoChannel.list('-sort_order', 1000);
+    return (channels || []).filter(c => c.visible !== false);
+  } catch (e) {
+    return db.getCachedVideoChannels();
   }
-  return db.getCachedVideoChannels();
 }
 
 // ─── Social Channels sync ─────────────────────────────────────────────────────
@@ -247,20 +237,15 @@ export async function syncSocialChannels() {
 }
 
 /**
- * Get social channels — from API if online, from cache if offline.
+ * Get social channels — from fast memory/cache + background sync.
  */
 export async function getSocialChannels() {
-  if (isOnline()) {
-    try {
-      const channels = await entities.SocialChannel.list('-sort_order', 1000);
-      const visible = channels.filter(c => c.visible !== false);
-      db.replaceCachedSocialChannels(visible).catch(() => {});
-      return visible;
-    } catch(e) {
-      return db.getCachedSocialChannels();
-    }
+  try {
+    const channels = await entities.SocialChannel.list('-sort_order', 1000);
+    return (channels || []).filter(c => c.visible !== false);
+  } catch (e) {
+    return db.getCachedSocialChannels();
   }
-  return db.getCachedSocialChannels();
 }
 
 // ─── Settings sync ────────────────────────────────────────────────────────────
@@ -274,17 +259,12 @@ export async function syncSettings() {
  * Get setting value — from API if online, from cache if offline.
  */
 export async function getSettingValue(key) {
-  if (isOnline()) {
-    try {
-      const settings = await entities.AppSettings.filter({ setting_key: key });
-      if (settings.length > 0) {
-        db.cacheSettings(settings).catch(() => {});
-        return settings[0].setting_value;
-      }
-    } catch(e) {
-      return db.getCachedSetting(key);
+  try {
+    const settings = await entities.AppSettings.filter({ setting_key: key });
+    if (settings.length > 0) {
+      return settings[0].setting_value;
     }
-  }
+  } catch(e) {}
   return db.getCachedSetting(key);
 }
 
@@ -302,19 +282,9 @@ export async function getImageUrl(originalUrl) {
 // ─── Check for updates ────────────────────────────────────────────────────────
 export async function checkForUpdates() {
   const lastSync = await db.getMeta("lastSync");
-  const cachedCount = await db.getMeta("booksCount") || 0;
 
   try {
-    const serverBooks = await entities.Book.list('-created_date', 1);
-    const serverCount = serverBooks.length; // This returns array, not total count — approximation
     const cached = await db.getCachedBooks();
-
-    // Compare: any book with newer updated_date than lastSync?
-    const newBooks = cached.length > 0
-      ? []
-      : [];
-
-    // Fetch a fresh list to compare
     const freshBooks = await entities.Book.list('-created_date', 1000);
     const cachedMap = {};
     cached.forEach(b => { cachedMap[b.id] = b; });
@@ -365,24 +335,18 @@ export async function syncPendingFavorites(userEmail) {
 // ─── Offline-aware data access ────────────────────────────────────────────────
 
 /**
- * Get all books — from API if online, from cache if offline.
+ * Get all books — from fast memory/cache + background sync.
  */
 export async function getBooks() {
-  if (isOnline()) {
-    try {
-      const books = await entities.Book.list('-created_date', 1000);
-      db.replaceCachedBooks(books).catch(() => {});
-      return books;
-    } catch(e) {
-      // Network failed — fall back to cache
-      return db.getCachedBooks();
-    }
+  try {
+    return await entities.Book.list('-created_date', 1000);
+  } catch(e) {
+    return db.getCachedBooks();
   }
-  return db.getCachedBooks();
 }
 
 /**
- * Get featured books — from API if online, from cache if offline.
+ * Get featured books — from fast memory/cache.
  */
 export async function getFeaturedBooks() {
   const books = await getBooks();
@@ -390,7 +354,7 @@ export async function getFeaturedBooks() {
 }
 
 /**
- * Get recent books — from API if online, from cache if offline.
+ * Get recent books — from fast memory/cache.
  */
 export async function getRecentBooks() {
   const books = await getBooks();
@@ -398,92 +362,65 @@ export async function getRecentBooks() {
 }
 
 /**
- * Get a single book by id.
+ * Get a single book by id (instant lookup via memory/IndexedDB, fallback to server).
  */
 export async function getBook(id) {
-  if (isOnline()) {
-    try {
-      const books = await entities.Book.filter({ id });
-      if (books.length > 0) {
-        db.cacheBooks([books[0]]).catch(() => {});
-        return books[0];
-      }
-    } catch(e) {
-      // fall through to cache
-    }
-  }
+  if (!id) return null;
+  try {
+    const book = await entities.Book.get(id);
+    if (book) return book;
+  } catch(e) {}
   return db.getCachedBook(id);
 }
 
 /**
- * Get user's favorite book IDs — from API if online, from local cache if offline.
+ * Get user's favorite book IDs — instant local read + background cloud reconcile.
  */
 export async function getFavoriteIds(userEmail) {
   if (!userEmail) return [];
 
+  const localIds = await db.getLocalFavoriteIds().catch(() => []);
   if (isOnline()) {
-    try {
-      const favs = await entities.Favorite.filter({ user_email: userEmail });
-      const ids = favs.map(f => f.book_id);
-      // Sync to local cache
-      const localFavs = await db.getLocalFavorites();
-      const localIds = localFavs.map(f => f.bookId);
-      // Reconcile: add missing, remove extra
-      for (const id of ids) {
-        if (!localIds.includes(id)) await db.saveLocalFavorite(id, userEmail);
-      }
-      for (const id of localIds) {
-        if (!ids.includes(id)) await db.removeLocalFavorite(id);
-      }
-      return ids;
-    } catch(e) {
-      return db.getLocalFavoriteIds();
-    }
+    entities.Favorite.filter({ user_email: userEmail })
+      .then(async (favs) => {
+        const ids = favs.map((f) => f.book_id);
+        for (const id of ids) {
+          if (!localIds.includes(id)) await db.saveLocalFavorite(id, userEmail).catch(() => {});
+        }
+      })
+      .catch(() => {});
   }
-  return db.getLocalFavoriteIds();
+  return localIds;
 }
 
 /**
- * Toggle favorite — works both online and offline.
+ * Toggle favorite — instant local update + background cloud sync.
  */
 export async function toggleFavorite(bookId, userEmail) {
   if (!userEmail) return null;
 
-  if (isOnline()) {
-    try {
-      const existing = await entities.Favorite.filter({ book_id: bookId, user_email: userEmail });
-      if (existing.length > 0) {
-        await entities.Favorite.delete(existing[0].id);
-        await db.removeLocalFavorite(bookId);
-        return false; // removed
-      } else {
-        await entities.Favorite.create({ book_id: bookId, user_email: userEmail });
-        await db.saveLocalFavorite(bookId, userEmail);
-        return true; // added
-      }
-    } catch(e) {
-      // Network failed — do locally + queue
-      const localFavs = await db.getLocalFavoriteIds();
-      if (localFavs.includes(bookId)) {
-        await db.removeLocalFavorite(bookId);
-        await db.addPendingOp({ type: "favorite_remove", bookId });
-      } else {
-        await db.saveLocalFavorite(bookId, userEmail);
-        await db.addPendingOp({ type: "favorite_add", bookId });
-      }
-      return !localFavs.includes(bookId);
-    }
-  }
+  const localFavs = await db.getLocalFavoriteIds().catch(() => []);
+  const isCurrentlyFav = localFavs.includes(bookId);
 
-  // Offline — local + queue
-  const localFavs = await db.getLocalFavoriteIds();
-  if (localFavs.includes(bookId)) {
-    await db.removeLocalFavorite(bookId);
-    await db.addPendingOp({ type: "favorite_remove", bookId });
+  if (isCurrentlyFav) {
+    await db.removeLocalFavorite(bookId).catch(() => {});
+    if (isOnline()) {
+      entities.Favorite.delete(bookId).catch(() => {
+        db.addPendingOp({ type: "favorite_remove", bookId }).catch(() => {});
+      });
+    } else {
+      await db.addPendingOp({ type: "favorite_remove", bookId }).catch(() => {});
+    }
     return false;
   } else {
-    await db.saveLocalFavorite(bookId, userEmail);
-    await db.addPendingOp({ type: "favorite_add", bookId });
+    await db.saveLocalFavorite(bookId, userEmail).catch(() => {});
+    if (isOnline()) {
+      entities.Favorite.create({ book_id: bookId, user_email: userEmail }).catch(() => {
+        db.addPendingOp({ type: "favorite_add", bookId }).catch(() => {});
+      });
+    } else {
+      await db.addPendingOp({ type: "favorite_add", bookId }).catch(() => {});
+    }
     return true;
   }
 }

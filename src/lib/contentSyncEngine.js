@@ -51,8 +51,8 @@ function setSyncing(isSyncing, extra = {}) {
 async function cacheNewImages(urls) {
   let cached = 0;
   for (const url of urls) {
-    if (!url) continue;
-    const existing = await db.getCachedImage(url);
+    if (!url || String(url).startsWith("data:")) continue;
+    const existing = await db.getCachedImage(url).catch(() => null);
     if (existing) continue;
     try {
       const res = await fetch(url);
@@ -114,22 +114,24 @@ async function reconcile({
     deletedCount++;
   }
 
-  // Cache images only for new/changed items
-  let imagesCached = 0;
+  // Cache external images asynchronously in background so sync never blocks UI
   if (imageField && toCache.length > 0) {
-    imagesCached = await cacheNewImages(toCache.map((i) => i[imageField]).filter(Boolean));
+    const urls = toCache.map((i) => i[imageField]).filter((u) => u && !String(u).startsWith("data:"));
+    if (urls.length > 0) {
+      setTimeout(() => { cacheNewImages(urls).catch(() => {}); }, 500);
+    }
   }
 
   if (countMetaKey) await db.setMeta(countMetaKey, visible.length);
 
-  return { new: newCount, updated: updatedCount, deleted: deletedCount, imagesCached, total: visible.length };
+  return { new: newCount, updated: updatedCount, deleted: deletedCount, imagesCached: 0, total: visible.length };
 }
 
 // ─── Per-entity sync ──────────────────────────────────────────────────────────
 
 async function syncBooksIncremental() {
   return reconcile({
-    listFn: () => entities.Book.list("-created_date", 1000),
+    listFn: () => (entities.Book.syncFromServer ? entities.Book.syncFromServer() : entities.Book.list("-created_date", 1000)),
     cacheFn: db.cacheBooks,
     getCachedFn: db.getCachedBooks,
     deleteFn: db.deleteCachedBook,
@@ -140,7 +142,7 @@ async function syncBooksIncremental() {
 
 async function syncVideosIncremental() {
   return reconcile({
-    listFn: () => entities.Video.list("-sort_order", 1000),
+    listFn: () => (entities.Video.syncFromServer ? entities.Video.syncFromServer() : entities.Video.list("-sort_order", 1000)),
     cacheFn: db.cacheVideos,
     getCachedFn: db.getCachedVideos,
     deleteFn: db.deleteCachedVideo,
@@ -152,7 +154,7 @@ async function syncVideosIncremental() {
 
 async function syncVideoChannelsIncremental() {
   return reconcile({
-    listFn: () => entities.VideoChannel.list("-sort_order", 1000),
+    listFn: () => (entities.VideoChannel.syncFromServer ? entities.VideoChannel.syncFromServer() : entities.VideoChannel.list("-sort_order", 1000)),
     cacheFn: db.cacheVideoChannels,
     getCachedFn: db.getCachedVideoChannels,
     deleteFn: db.deleteCachedVideoChannel,
@@ -163,7 +165,7 @@ async function syncVideoChannelsIncremental() {
 
 async function syncSocialChannelsIncremental() {
   return reconcile({
-    listFn: () => entities.SocialChannel.list("-sort_order", 1000),
+    listFn: () => (entities.SocialChannel.syncFromServer ? entities.SocialChannel.syncFromServer() : entities.SocialChannel.list("-sort_order", 1000)),
     cacheFn: db.cacheSocialChannels,
     getCachedFn: db.getCachedSocialChannels,
     deleteFn: db.deleteCachedSocialChannel,

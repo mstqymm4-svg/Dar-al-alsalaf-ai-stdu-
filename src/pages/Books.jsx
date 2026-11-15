@@ -39,18 +39,21 @@ export default function Books() {
   }, [categoryParam]);
 
   const loadData = async () => {
-    const u = await base44.auth.me().catch(() => null);
+    const [allBooks, u] = await Promise.all([
+      getBooks(),
+      base44.auth.me().catch(() => null),
+    ]);
     setUser(u);
-    const allBooks = await getBooks();
     setBooks(allBooks || []);
     if (u?.preferred_language && u.preferred_language !== "الكل") {
       setPreferredLanguage(u.preferred_language);
     }
-    if (u) {
-      const favIds = await getFavoriteIds(getAccountEmail(u));
-      setFavorites(favIds);
-    }
     setLoading(false);
+    if (u) {
+      getFavoriteIds(getAccountEmail(u))
+        .then((favIds) => setFavorites(favIds || []))
+        .catch(() => {});
+    }
   };
 
   useEffect(() => {

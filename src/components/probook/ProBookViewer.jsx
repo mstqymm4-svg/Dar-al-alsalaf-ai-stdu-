@@ -138,6 +138,7 @@ export default function ProBookViewer({
   // ── Load PDF document ──
   useEffect(() => {
     let cancelled = false;
+    let outlineTimer = null;
     didRestoreRef.current = false;
     setLoading(true);
     setError(false);
@@ -151,25 +152,30 @@ export default function ProBookViewer({
         setPdf(doc);
         setTotalPages(doc.numPages);
         setLoading(false);
-        doc
-          .getOutline()
-          .then(async (out) => {
-            if (cancelled) return [];
-            let items = await normalizeOutline(out, doc);
-            if (!items || items.length === 0 || items.every((x) => !x.pageNumber)) {
-              items = await generateSmartOutline(doc, doc.numPages, title, language);
-            }
-            return items;
-          })
-          .then((items) => {
-            if (!cancelled) setOutline(items || []);
-          })
-          .catch(async () => {
-            if (!cancelled) {
-              const fallback = await generateSmartOutline(doc, doc.numPages, title, language);
-              setOutline(fallback || []);
-            }
-          });
+
+        // Defer outline parsing so initial visible pages get 100% of PDF worker priority
+        outlineTimer = setTimeout(() => {
+          if (cancelled) return;
+          doc
+            .getOutline()
+            .then(async (out) => {
+              if (cancelled) return [];
+              let items = await normalizeOutline(out, doc);
+              if (!items || items.length === 0 || items.every((x) => !x.pageNumber)) {
+                items = await generateSmartOutline(doc, doc.numPages, title, language);
+              }
+              return items;
+            })
+            .then((items) => {
+              if (!cancelled) setOutline(items || []);
+            })
+            .catch(async () => {
+              if (!cancelled) {
+                const fallback = await generateSmartOutline(doc, doc.numPages, title, language);
+                if (!cancelled) setOutline(fallback || []);
+              }
+            });
+        }, 900);
       })
       .catch(() => {
         if (!cancelled) {
@@ -180,8 +186,9 @@ export default function ProBookViewer({
 
     return () => {
       cancelled = true;
+      if (outlineTimer) clearTimeout(outlineTimer);
     };
-  }, [pdfUrl, bookId, title, reloadKey]);
+  }, [pdfUrl, bookId, title, reloadKey, language]);
 
   useEffect(() => {
     totalPagesRef.current = totalPages;

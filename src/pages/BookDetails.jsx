@@ -25,21 +25,35 @@ export default function BookDetails() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const { isOnline } = useOnlineStatus();
 
-  useEffect(() => {loadBook();}, [id]);
+  useEffect(() => {
+    let active = true;
+    loadBook(() => active);
+    return () => { active = false; };
+  }, [id]);
 
-  const loadBook = async () => {
-    const u = await base44.auth.me().catch(() => null);
-    setUser(u);
-    const b = await getBook(id);
+  const loadBook = async (isActive = () => true) => {
+    const [b, u] = await Promise.all([
+      getBook(id),
+      base44.auth.me().catch(() => null),
+    ]);
+    if (!isActive()) return;
     if (b) setBook(b);
-    if (u) {
-      const favIds = await getFavoriteIds(getAccountEmail(u));
-      setIsFavorite(favIds.includes(id));
-    }
-    if (b?.pdf_url) {
-      setPdfDownloaded(await isPdfDownloaded(b.pdf_url));
-    }
+    setUser(u);
     setLoading(false);
+
+    if (b?.pdf_url) {
+      isPdfDownloaded(b.pdf_url)
+        .then((downloaded) => { if (isActive()) setPdfDownloaded(downloaded); })
+        .catch(() => {});
+      import("@/lib/pdfLoader")
+        .then(({ prefetchPdf }) => prefetchPdf(b.pdf_url, { bookId: b.id, title: b.title }))
+        .catch(() => {});
+    }
+    if (u) {
+      getFavoriteIds(getAccountEmail(u))
+        .then((favIds) => { if (isActive()) setIsFavorite(favIds.includes(id)); })
+        .catch(() => {});
+    }
   };
 
   const handleToggleFavorite = async () => {

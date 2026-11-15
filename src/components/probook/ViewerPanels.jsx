@@ -318,7 +318,7 @@ export function SearchPanel({
           initial={{ opacity: 0, y: -16 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -16 }}
-          className={`absolute top-3 left-1/2 -translate-x-1/2 w-96 max-w-[94%] border rounded-2xl shadow-2xl p-3 z-30 ${surfaceCls}`}
+          className={`absolute top-3 inset-x-3 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 w-auto sm:w-[420px] max-w-xl border rounded-2xl shadow-2xl p-3 sm:p-4 z-30 ${surfaceCls}`}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-2">

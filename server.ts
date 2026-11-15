@@ -2,7 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { sendOtp, verifyOtp, sendContactEmail } from './server/otpManager';
+import { sendOtp, verifyOtp, sendContactEmail, logSmtpStatusOnStart } from './server/otpManager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -548,6 +548,24 @@ async function startServer() {
     const liveStreams: any[] = [];
 
     const checkChannelLive = async (ch: { id?: string; name?: string; youtube_url?: string }) => {
+      const chName = (ch.name || '').trim();
+      const isDemo = chName.includes('تجريبي') || chName.includes('Demo') || (ch.youtube_url || '').includes('demo');
+      if (isDemo) {
+        const demoVideoId = 'jfKfPfyJRdk';
+        return {
+          id: `live_demo_${ch.id || '1'}`,
+          videoId: demoVideoId,
+          title: `${chName} - بث تجريبي مباشر الآن`,
+          channel_id: ch.id || '',
+          channel_name: chName || 'قناة البث التجريبي',
+          youtube_url: ch.youtube_url || `https://www.youtube.com/watch?v=${demoVideoId}`,
+          thumbnail: `https://img.youtube.com/vi/${demoVideoId}/hqdefault.jpg`,
+          video_type: 'live',
+          is_live: true,
+          duration: 'مباشر',
+        };
+      }
+
       let channelUrl = (ch.youtube_url || '').trim();
       if (!channelUrl) return null;
 
@@ -654,6 +672,7 @@ async function startServer() {
 
   const server = app.listen(PORT, HOST, () => {
     console.log(`Server running on http://${HOST}:${PORT}`);
+    logSmtpStatusOnStart();
   });
 
   server.on('error', (err: any) => {

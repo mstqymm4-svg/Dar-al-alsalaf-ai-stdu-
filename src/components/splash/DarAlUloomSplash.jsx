@@ -44,7 +44,7 @@ export default function LogoLoader({
         if (typeof onComplete === "function") {
           onComplete();
         }
-      }, 700);
+      }, 220);
 
       return () => clearTimeout(timer);
     }
@@ -54,7 +54,7 @@ export default function LogoLoader({
     setProgress(0);
 
     const start = performance.now();
-    const duration = 1900;
+    const duration = 650;
 
     let frame;
 

@@ -30,19 +30,22 @@ export default function Home() {
   const [youtubeSubText, setYoutubeSubText] = useState(() => getSetting("youtube_sub") || "");
 
   const loadData = async () => {
-    const u = await base44.auth.me().catch(() => null);
-    setUser(u);
-    const [featured, recent] = await Promise.all([
-      getFeaturedBooks(),
-      getRecentBooks(),
+    const [allBooks, u] = await Promise.all([
+      getFeaturedBooks().then(async (feat) => {
+        const rec = await getRecentBooks();
+        return { feat, rec };
+      }),
+      base44.auth.me().catch(() => null),
     ]);
-    setFeaturedBooks(featured || []);
-    setRecentBooks(recent || []);
-    if (u) {
-      const favIds = await getFavoriteIds(getAccountEmail(u));
-      setFavorites(favIds);
-    }
+    setUser(u);
+    setFeaturedBooks(allBooks?.feat || []);
+    setRecentBooks(allBooks?.rec || []);
     setLoading(false);
+    if (u) {
+      getFavoriteIds(getAccountEmail(u))
+        .then((favIds) => setFavorites(favIds || []))
+        .catch(() => {});
+    }
   };
 
   useEffect(() => {

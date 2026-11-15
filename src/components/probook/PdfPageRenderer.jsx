@@ -10,12 +10,22 @@ function getCachedPageImage(key) {
   return renderedImageCache.get(key) || null;
 }
 
-function setCachedPageImage(key, dataUrl) {
-  if (renderedImageCache.size >= MAX_IMAGE_CACHE) {
+function setCachedPageImage(key, blobUrl) {
+  if (renderedImageCache.has(key)) {
+    const prev = renderedImageCache.get(key);
+    if (prev && prev !== blobUrl && prev.startsWith("blob:")) {
+      try { URL.revokeObjectURL(prev); } catch {}
+    }
+    renderedImageCache.delete(key);
+  } else if (renderedImageCache.size >= MAX_IMAGE_CACHE) {
     const firstKey = renderedImageCache.keys().next().value;
+    const oldUrl = renderedImageCache.get(firstKey);
+    if (oldUrl && oldUrl.startsWith("blob:")) {
+      try { URL.revokeObjectURL(oldUrl); } catch {}
+    }
     renderedImageCache.delete(firstKey);
   }
-  renderedImageCache.set(key, dataUrl);
+  renderedImageCache.set(key, blobUrl);
 }
 
 const getCanvasFilter = (th) => {
@@ -36,7 +46,7 @@ const getCanvasBg = (th) => {
  * Ultra-performant PDF Page Renderer:
  * - Instant display from in-memory cache when revisiting pages
  * - Direct hardware-accelerated canvas rasterization
- * - Crisp 4K canvas buffer (capped at 4096px) for razor-sharp text when zooming in up to 3x
+ * - Non-blocking async toBlob snapshot caching (zero main-thread freeze)
  * - Clean per-canvas filter inversion for mobile Dark Mode without WebKit compositing bugs
  */
 function PdfPageRenderer({
@@ -108,9 +118,10 @@ function PdfPageRenderer({
           cssScale = targetHeight / baseVp.height;
         }
 
-        // Crisp DPR and max 4096px canvas buffer for vector-sharp text when zoomed in
-        const dpr = Math.min(window.devicePixelRatio || 1, 2.0);
-        const maxPixelDim = 4096;
+        // Adaptive DPR and max canvas buffer for fast mobile & desktop rendering
+        const isSmallScreen = typeof window !== "undefined" && window.innerWidth < 768;
+        const dpr = Math.min(window.devicePixelRatio || 1, isSmallScreen ? 1.65 : 2.0);
+        const maxPixelDim = isSmallScreen ? 2200 : 3200;
         const rawRenderScale = cssScale * dpr;
         const maxAllowedScale = Math.min(
           maxPixelDim / baseVp.width,
@@ -159,15 +170,25 @@ function PdfPageRenderer({
         setRendering(false);
         setHasRenderedOnce(true);
 
-        // Save snapshot to memory cache asynchronously
-        setTimeout(() => {
-          if (!cancelled && canvas) {
-            try {
-              const dataUrl = canvas.toDataURL("image/webp", 0.85);
-              setCachedPageImage(cacheKey, dataUrl);
-            } catch {}
-          }
-        }, 60);
+        // Save snapshot to memory cache off the main thread using async toBlob
+        if (typeof canvas.toBlob === "function") {
+          setTimeout(() => {
+            if (!cancelled && canvas) {
+              try {
+                canvas.toBlob(
+                  (blob) => {
+                    if (!cancelled && blob) {
+                      const url = URL.createObjectURL(blob);
+                      setCachedPageImage(cacheKey, url);
+                    }
+                  },
+                  "image/webp",
+                  0.82
+                );
+              } catch {}
+            }
+          }, 120);
+        }
       } catch (e) {
         if (e?.name !== "RenderingCancelledException" && !cancelled) {
           setError(true);

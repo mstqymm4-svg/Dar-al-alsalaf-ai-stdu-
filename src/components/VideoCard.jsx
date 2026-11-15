@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { Play, Heart, Share2, Star, Clock, Video, CheckCircle, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
@@ -12,7 +11,6 @@ export default function VideoCard({
   onToggleFavorite,
   onPlay,
   onShare,
-  index = 0
 }) {
   const t = useT();
 
@@ -20,11 +18,8 @@ export default function VideoCard({
   const channelDisplayName = channel?.name || video.channel_name;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: Math.min(index * 0.04, 0.25) }}
-      className="group bg-card border border-border/80 hover:border-primary/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-1 transition-all duration-300 flex flex-col"
+    <div
+      className="group bg-card border border-border/80 hover:border-primary/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-1 transition-transform duration-200 flex flex-col"
     >
       {/* Thumbnail Area */}
       <div
@@ -35,7 +30,7 @@ export default function VideoCard({
           <SmartImage
             src={video.thumbnail}
             alt={video.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 ease-out"
             fallback={() => (
               <div className="w-full h-full flex items-center justify-center bg-muted">
                 <Video className="w-10 h-10 text-muted-foreground/30" />
@@ -52,7 +47,7 @@ export default function VideoCard({
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-60 group-hover:opacity-40 transition-opacity" />
 
         {/* Central Play Button Overlay */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-90 md:opacity-0 md:group-hover:opacity-100 transition-all duration-300 transform scale-95 group-hover:scale-100">
+        <div className="absolute inset-0 flex items-center justify-center opacity-90 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
           <div className="w-12 h-12 rounded-full bg-primary/95 text-primary-foreground flex items-center justify-center shadow-lg shadow-black/40 ring-4 ring-white/20">
             <Play className="w-5 h-5 fill-current ml-0.5" />
           </div>
@@ -117,7 +112,7 @@ export default function VideoCard({
           {/* Title */}
           <h3
             onClick={() => onPlay(video)}
-            className="font-bold text-sm leading-snug line-clamp-2 hover:text-primary transition-colors cursor-pointer"
+            className="font-bold text-sm leading-loose line-clamp-2 hover:text-primary transition-colors cursor-pointer pt-0.5 mb-1"
             title={video.title}
           >
             {video.title}
@@ -162,6 +157,6 @@ export default function VideoCard({
           </Button>
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }

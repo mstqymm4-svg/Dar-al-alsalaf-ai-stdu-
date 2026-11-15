@@ -95,27 +95,56 @@ export function checkIpRateLimit(ip: string): boolean {
   return true;
 }
 
-const OFFICIAL_GMAIL_SENDER = 'daraluloom258@gmail.com';
+const REPLY_TO_EMAIL = 'daraluloom258@gmail.com';
 
-// Configure Gmail SMTP transporter
-function getGmailCredentials() {
+// Configure single Gmail SMTP transporter using ONLY process.env.SMTP_USER and process.env.SMTP_PASS
+function getSmtpConfig() {
   loadEnv();
-  const user = (process.env.GMAIL_USER || process.env.SMTP_USER || OFFICIAL_GMAIL_SENDER).trim();
-  const rawPass = process.env.GMAIL_APP_PASSWORD || process.env.SMTP_PASS || '';
-  const pass = rawPass.replace(/\s+/g, '').trim();
-  const senderAddress = (process.env.SENDER_EMAIL || user || OFFICIAL_GMAIL_SENDER).trim();
-  const senderName = (process.env.SENDER_NAME || 'Dar Al Uloom | دار العلوم').trim();
-  return { user, pass, senderAddress, senderName };
+  const smtpUser = (process.env.SMTP_USER || '').trim();
+  const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '').trim();
+  return { smtpUser, smtpPass };
 }
 
-function getTransporter(user: string, pass: string) {
-  return nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user,
-      pass,
-    },
-  });
+let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransporterKey = '';
+
+function getSingleTransporter() {
+  const { smtpUser, smtpPass } = getSmtpConfig();
+  if (!smtpUser || !smtpPass) {
+    console.error(
+      `[OTP Service] Missing required SMTP credentials: SMTP_USER=${smtpUser ? 'set' : 'MISSING'}, SMTP_PASS=${smtpPass ? 'set' : 'MISSING'}`
+    );
+    return { transporter: null, smtpUser, error: 'Missing SMTP_USER or SMTP_PASS in environment variables.' };
+  }
+
+  const key = `${smtpUser}:${smtpPass}`;
+  if (!cachedTransporter || cachedTransporterKey !== key) {
+    cachedTransporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: smtpUser,
+        pass: smtpPass,
+      },
+    });
+    cachedTransporterKey = key;
+  }
+
+  return { transporter: cachedTransporter, smtpUser, error: null };
+}
+
+export function logSmtpStatusOnStart() {
+  const { smtpUser, smtpPass } = getSmtpConfig();
+  if (!smtpUser || !smtpPass) {
+    console.error(
+      `[OTP Service] Startup check FAILED — SMTP_USER: "${smtpUser || 'MISSING'}", SMTP_PASS: ${smtpPass ? 'PROVIDED' : 'MISSING'}`
+    );
+  } else {
+    console.log(
+      `[OTP Service] Startup check OK — Using SMTP_USER: ${smtpUser} (host: smtp.gmail.com, port: 465, secure: true)`
+    );
+  }
 }
 
 // Generate styled English HTML email template with premium modern design
@@ -268,25 +297,23 @@ export async function sendOtp(email: string, clientIp: string) {
     attempts: 0,
   });
 
-  // 6. Send email via Gmail SMTP from daraluloom258@gmail.com
-  const { user, pass, senderAddress, senderName } = getGmailCredentials();
-  if (!pass) {
+  // 6. Send email via single SMTP transporter (SMTP_USER & SMTP_PASS)
+  const { transporter, smtpUser } = getSingleTransporter();
+  if (!transporter || !smtpUser) {
     otpStore.delete(normalizedEmail);
     return {
       status: 503,
       data: {
         success: false,
-        error: `إعداد كلمة مرور التطبيق (GMAIL_APP_PASSWORD) مطلوب في الخادم للإرسال من البريد ${senderAddress}.`,
+        error: 'إعدادات SMTP_USER و SMTP_PASS مطلوبة في الخادم لإرسال رمز التحقق.',
       },
     };
   }
 
   try {
-    const transporter = getTransporter(user, pass);
-
     await transporter.sendMail({
-      from: `"${senderName}" <${senderAddress}>`,
-      replyTo: senderAddress,
+      from: `"DAR AL ULOOM" <${process.env.SMTP_USER}>`,
+      replyTo: REPLY_TO_EMAIL,
       to: normalizedEmail,
       subject: `Dar Al Uloom — Your Verification Code: ${otpCode}`,
       text: [
@@ -305,13 +332,13 @@ export async function sendOtp(email: string, clientIp: string) {
       html: createEmailTemplate(otpCode),
     });
 
-    console.log(`[OTP Service] Email successfully sent from ${senderAddress} to ${normalizedEmail}`);
+    console.log(`[OTP Service] Email successfully sent from ${process.env.SMTP_USER} to ${normalizedEmail}`);
     return {
       status: 200,
       data: {
         success: true,
-        sender: senderAddress,
-        message: `تم إرسال رمز التحقق بنجاح من ${senderAddress}`,
+        sender: process.env.SMTP_USER,
+        message: `تم إرسال رمز التحقق بنجاح من ${process.env.SMTP_USER}`,
       },
     };
   } catch (err: any) {
@@ -320,7 +347,7 @@ export async function sendOtp(email: string, clientIp: string) {
       status: 500,
       data: {
         success: false,
-        error: `تعذر إرسال رمز التحقق من ${senderAddress}. تأكد من تفعيل كلمة مرور تطبيقات Google (GMAIL_APP_PASSWORD) الصالحة.`,
+        error: `تعذر إرسال رمز التحقق من ${process.env.SMTP_USER}. تأكد من صحة SMTP_USER و SMTP_PASS.`,
         details: err?.message,
       },
     };
@@ -450,26 +477,25 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
     };
   }
 
-  const { user: smtpUser, pass, senderAddress } = getGmailCredentials();
-  const officialRecipient = (process.env.CONTACT_EMAIL || smtpUser || OFFICIAL_GMAIL_SENDER).trim();
-
-  if (!pass) {
+  const { transporter, smtpUser } = getSingleTransporter();
+  if (!transporter || !smtpUser) {
     return {
       status: 503,
       data: {
         success: false,
-        error: `تعذر إرسال الرسالة لأن كلمة مرور تطبيق Gmail غير مضبوطة للحساب ${senderAddress}.`,
+        error: 'تعذر إرسال الرسالة لأن إعدادات SMTP_USER و SMTP_PASS غير مضبوطة في الخادم.',
       },
     };
   }
 
+  const officialRecipient = (process.env.CONTACT_EMAIL || smtpUser).trim();
+
   try {
-    const transporter = getTransporter(smtpUser, pass);
     const mailSubject = subject || `[دار العلوم — رسالة تواصل جديدة]: ${senderName}`;
 
     await transporter.sendMail({
-      from: `"تطبيق دار العلوم" <${senderAddress}>`,
-      replyTo: normalizedEmail,
+      from: `"DAR AL ULOOM" <${process.env.SMTP_USER}>`,
+      replyTo: REPLY_TO_EMAIL,
       to: officialRecipient,
       subject: mailSubject,
       text: `رسالة تواصل جديدة من تطبيق دار العلوم:\n\nالاسم: ${senderName}\nالبريد: ${normalizedEmail}\n\nنص الرسالة:\n${bodyText}\n\n---\nتطبيق دار العلوم`,

@@ -385,7 +385,7 @@ export default function Videos() {
       {/* ─── Main Content Container ─────────────────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-6 space-y-8">
         {/* Automatic Live Stream from Channels */}
-        <LiveStreamBanner onPlayLive={(stream) => handlePlayVideo(stream)} />
+        <LiveStreamBanner channelId={selectedChannelId !== "all" ? selectedChannelId : null} />
 
         {/* Header Title when on simple view */}
         {!selectedChannel && (search || category !== "all" || videoTypeFilter !== "all" || !featuredVideo) && (

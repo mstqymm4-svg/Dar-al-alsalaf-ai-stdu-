@@ -28,21 +28,23 @@ try {
   if (lsMode === "light") document.documentElement.classList.remove("dark");
 } catch (e) {}
 
-// Lazy-load pages for faster initial load
-const Home = lazy(() => import('./pages/Home'));
-const Books = lazy(() => import('./pages/Books'));
-const BookDetails = lazy(() => import('./pages/BookDetails'));
-const Favorites = lazy(() => import('./pages/Favorites'));
-const Admin = lazy(() => import('./pages/Admin'));
-const Settings = lazy(() => import('./pages/Settings'));
-const DevPanel = lazy(() => import('./pages/DevPanel'));
-const ReadBook = lazy(() => import('./pages/ReadBook'));
-const Videos = lazy(() => import('./pages/Videos'));
-const About = lazy(() => import('./pages/About'));
-const Contact = lazy(() => import('./pages/Contact'));
-const SplashPreview = lazy(() => import('./pages/SplashPreview'));
-const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
+// Eagerly import core user-facing pages for zero-latency navigation
+import Home from './pages/Home';
+import Books from './pages/Books';
+import BookDetails from './pages/BookDetails';
+import ReadBook from './pages/ReadBook';
+import Videos from './pages/Videos';
+import Favorites from './pages/Favorites';
+import Settings from './pages/Settings';
+import About from './pages/About';
+import Contact from './pages/Contact';
+import VerifyEmail from './pages/VerifyEmail';
 import DarAlUloomSplash from './components/splash/DarAlUloomSplash';
+
+// Lazy-load heavy admin / developer tools only
+const Admin = lazy(() => import('./pages/Admin'));
+const DevPanel = lazy(() => import('./pages/DevPanel'));
+const SplashPreview = lazy(() => import('./pages/SplashPreview'));
 
 const PageLoader = () => (
   <div className="min-h-[60vh] w-full max-w-6xl mx-auto px-4 pt-6">
