@@ -456,13 +456,14 @@ export default function ProBookViewer({
         pointerDownRef.current = { x: e.clientX, y: e.clientY };
       }}
       onClick={(e) => {
+        const targetEl = e.target instanceof Element ? e.target : null;
         if (showToc || showSearch || showGoTo || showComfort) {
-          if (!e.target.closest?.("[data-viewer-ui]")) {
+          if (!targetEl?.closest("[data-viewer-ui]")) {
             setShowComfort(false);
           }
           return;
         }
-        if (e.target.closest?.("[data-viewer-ui]")) return;
+        if (targetEl?.closest("[data-viewer-ui]")) return;
         // Ignore clicks that were actually scroll/drag gestures
         const dist = Math.hypot(
           e.clientX - pointerDownRef.current.x,

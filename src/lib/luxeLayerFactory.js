@@ -20,6 +20,7 @@ export const EFFECTS = {
   orbs:   { label: "هالات متوهجة" },
 };
 
+/** @type {Array<[RegExp, string]>} */
 const KEYWORDS = [
   [/غبار|ذر|dust|رماد/, "dust"],
   [/نجم|نجوم|تلألؤ|لمعان|star|شفق/, "stars"],

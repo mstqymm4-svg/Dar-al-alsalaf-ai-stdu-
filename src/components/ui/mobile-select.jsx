@@ -22,18 +22,20 @@ import { useT } from "@/lib/i18n";
  * Select component that renders as a bottom-drawer (Vaul) on mobile
  * and a standard Radix Select dropdown on desktop.
  *
- * @param {string} value - Current selected value
- * @param {function} onValueChange - Callback when selection changes
- * @param {Array<{value: string, label: string}>} options - Select options
- * @param {string} placeholder - Placeholder / drawer title
- * @param {string} triggerClassName - Additional classes for the trigger
+ * @param {{
+ *   value: string,
+ *   onValueChange: (value: string) => void,
+ *   options: Array<{value: string, label: any}>,
+ *   placeholder?: any,
+ *   triggerClassName?: string,
+ * }} props
  */
 export function MobileSelect({
   value,
   onValueChange,
   options,
-  placeholder,
-  triggerClassName,
+  placeholder = "",
+  triggerClassName = "",
 }) {
   const t = useT();
   const isMobile = useIsMobile();

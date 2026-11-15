@@ -119,9 +119,9 @@ export default function DevBackgroundManager() {
   const [uploadPct, setUploadPct] = useState(0);
   const [uploadLabel, setUploadLabel] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
-  const fileRef   = useRef();
-  const slideRef  = useRef();
-  const layerFileRef = useRef();
+  const fileRef      = useRef(/** @type {HTMLInputElement | null} */ (null));
+  const slideRef     = useRef(/** @type {HTMLInputElement | null} */ (null));
+  const layerFileRef = useRef(/** @type {HTMLInputElement | null} */ (null));
 
   const isVideo = st.bgType === "video_mp4" || st.bgType === "video_webm";
   const isImage = st.bgType === "static_image" || st.bgType === "animated_gif";
@@ -509,7 +509,7 @@ export default function DevBackgroundManager() {
                     <input ref={layerFileRef} type="file" accept="image/*,video/mp4,video/webm" className="hidden"
                       onChange={e => uploadFile(e.target.files[0], url => setLayerForm(f => ({ ...f, url })), "الطبقة")} />
                     <Button variant="outline" className="w-full gap-2 h-10 text-xs" disabled={uploading}
-                      onClick={() => layerFileRef.current.click()}>
+                      onClick={() => layerFileRef.current?.click()}>
                       <Upload className="w-4 h-4" />
                       {uploading ? `جارٍ الرفع... ${uploadPct}%` : layerForm.url ? "تغيير الملف" : "ارفع صورة شفافة / GIF / فيديو"}
                     </Button>
@@ -663,7 +663,7 @@ export default function DevBackgroundManager() {
               className="hidden"
               onChange={e => uploadFile(e.target.files[0], url => update({ bgUrl: url }), isVideo ? "الفيديو" : "الصورة")} />
 
-            <Button variant="outline" className="w-full gap-2 h-12" onClick={() => fileRef.current.click()} disabled={uploading}>
+            <Button variant="outline" className="w-full gap-2 h-12" onClick={() => fileRef.current?.click()} disabled={uploading}>
               <Upload className="w-4 h-4" />
               {uploading ? `جارٍ رفع ${uploadLabel}...` : `اختر ${isVideo ? "فيديو" : "صورة"} من جهازك`}
             </Button>
@@ -691,7 +691,7 @@ export default function DevBackgroundManager() {
               <p className="text-sm font-bold">📸 صور عرض الشرائح</p>
               <p className="text-xs text-muted-foreground">{st.slideUrls.length} صورة مضافة</p>
             </div>
-            <button onClick={() => slideRef.current.click()} disabled={uploading}
+            <button onClick={() => slideRef.current?.click()} disabled={uploading}
               className="flex items-center gap-1.5 text-xs text-primary font-bold hover:underline">
               <Plus className="w-3.5 h-3.5" /> إضافة صورة
             </button>
@@ -709,7 +709,7 @@ export default function DevBackgroundManager() {
                   <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 rounded-full">{i + 1}</span>
                 </div>
               ))}
-              <button onClick={() => slideRef.current.click()} disabled={uploading}
+              <button onClick={() => slideRef.current?.click()} disabled={uploading}
                 className="flex flex-col items-center justify-center h-24 rounded-xl border-2 border-dashed border-primary/30 hover:border-primary text-muted-foreground hover:text-primary transition-all">
                 <Plus className="w-6 h-6" />
                 <span className="text-[10px] mt-1">إضافة</span>

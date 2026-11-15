@@ -45,6 +45,7 @@ export default function DevBackup() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
+        if (typeof ev.target?.result !== "string") throw new Error("Invalid file");
         const parsed = JSON.parse(ev.target.result);
         const settings = parsed.data || parsed;
         setSettings(settings);
@@ -62,6 +63,7 @@ export default function DevBackup() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
+        if (typeof ev.target?.result !== "string") throw new Error("Invalid file");
         const parsed = JSON.parse(ev.target.result);
         const books = parsed.data || parsed;
         if (!Array.isArray(books)) { toast.error("ملف غير صحيح"); return; }

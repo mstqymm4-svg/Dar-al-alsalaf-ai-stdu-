@@ -250,11 +250,10 @@ export default function Favorites() {
         {tab === "books" ? (
           filteredBooks.length > 0 ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-              {filteredBooks.map((book, i) => (
+              {filteredBooks.map((book) => (
                 <BookCard
                   key={book.id}
                   book={book}
-                  index={i}
                   isFavorite={true}
                   onToggleFavorite={handleToggleFavorite}
                 />
@@ -286,11 +285,10 @@ export default function Favorites() {
           )
         ) : filteredVideos.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredVideos.map((v, i) => (
+            {filteredVideos.map((v) => (
               <VideoCard
                 key={v.id}
                 video={v}
-                index={i}
                 isFavorite={true}
                 onToggleFavorite={handleToggleVideoFav}
                 onPlay={() => handlePlayVideo(v)}
@@ -330,17 +328,23 @@ export default function Favorites() {
           <VideoPlayer
             video={playingVideo}
             onClose={() => setPlayingVideo(null)}
+            playlist={filteredVideos.filter(
+              (v) => v.video_type !== "short" && !v.youtube_url?.includes("/shorts/")
+            )}
+            onSelectVideo={handlePlayVideo}
           />
         )}
 
         {/* Shorts Player Modal */}
-        {playingShort && (
-          <ShortsPlayerModal
-            initialShort={playingShort}
-            allShorts={allShorts}
-            onClose={() => setPlayingShort(null)}
-          />
-        )}
+        <ShortsPlayerModal
+          initialVideo={playingShort}
+          shortsList={allShorts}
+          isOpen={Boolean(playingShort)}
+          onClose={() => setPlayingShort(null)}
+          onToggleFavorite={handleToggleVideoFav}
+          favorites={videoFavIds}
+          user={user}
+        />
       </div>
     </PullToRefresh>
   );

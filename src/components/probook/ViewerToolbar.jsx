@@ -241,7 +241,7 @@ export default function ViewerToolbar({
   );
 }
 
-function ToolBtn({ children, onClick, dark, title, active, disabled, badge, className = "" }) {
+function ToolBtn({ children, onClick, dark, title, active = false, disabled = false, badge = null, className = "" }) {
   return (
     <button
       onClick={onClick}

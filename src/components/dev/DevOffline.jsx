@@ -321,7 +321,7 @@ function StatCard({ icon: Icon, label, value, color }) {
   );
 }
 
-function ActionCard({ icon: Icon, title, desc, onClick, disabled, loading, danger }) {
+function ActionCard({ icon: Icon, title, desc, onClick, disabled = false, loading = false, danger = false }) {
   return (
     <button
       onClick={onClick}

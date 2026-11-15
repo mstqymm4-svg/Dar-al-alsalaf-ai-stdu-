@@ -13,7 +13,7 @@ const DEFAULT_REMOTE_API =
 function isCapacitorNativeRuntime() {
   if (typeof window === "undefined") return false;
   try {
-    if (window.Capacitor?.isNativePlatform?.()) return true;
+    if (/** @type {any} */ (window).Capacitor?.isNativePlatform?.()) return true;
     const { protocol, hostname, port } = window.location || {};
     if (protocol === "capacitor:" || protocol === "ionic:" || protocol === "file:") {
       return true;
@@ -27,7 +27,7 @@ function isCapacitorNativeRuntime() {
   return false;
 }
 
-const envBase = (import.meta.env.VITE_API_BASE_URL || "").trim();
+const envBase = (/** @type {any} */ (import.meta).env?.VITE_API_BASE_URL || "").trim();
 const resolvedBase = envBase || (isCapacitorNativeRuntime() ? DEFAULT_REMOTE_API : "");
 
 export const API_BASE = resolvedBase.replace(/\/+$/, "");

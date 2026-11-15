@@ -17,7 +17,7 @@ const hexToRgb = (hex) => {
 };
 
 function ParamCanvas({ kind, color, density = 60, speed = 5 }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;

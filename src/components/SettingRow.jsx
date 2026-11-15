@@ -16,14 +16,14 @@ import { cn } from "@/lib/utils";
  * overflows the card and stays in the same row at every breakpoint.
  */
 export default function SettingRow({
-  icon,
-  title,
-  description,
-  control,
-  trailing,
-  className,
-  contentClassName,
-  controlClassName,
+  icon = null,
+  title = "",
+  description = "",
+  control = null,
+  trailing = null,
+  className = "",
+  contentClassName = "",
+  controlClassName = "",
 }) {
   return (
     <div

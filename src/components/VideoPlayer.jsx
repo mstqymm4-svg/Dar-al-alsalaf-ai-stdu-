@@ -25,7 +25,7 @@ function formatTime(seconds) {
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
-export default function VideoPlayer({ video, onClose, playlist = [], onSelectVideo }) {
+export default function VideoPlayer({ video, onClose, playlist = [], onSelectVideo = undefined }) {
   const t = useT();
   const { isOnline } = useOnlineStatus();
   const containerRef = useRef(null);
@@ -107,8 +107,9 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     let cancelled = false;
 
     const initPlayer = () => {
-      if (cancelled || !window.YT?.Player) return;
-      playerInstanceRef.current = new window.YT.Player("yt-player-container", {
+      const YT = /** @type {any} */ (window).YT;
+      if (cancelled || !YT?.Player) return;
+      playerInstanceRef.current = new YT.Player("yt-player-container", {
         videoId,
         playerVars: {
           autoplay: 1, controls: 0, modestbranding: 1, rel: 0,
@@ -129,12 +130,13 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           },
           onStateChange: (e) => {
             if (cancelled) return;
-            const isNowPlaying = e.data === window.YT.PlayerState.PLAYING;
+            const YTState = /** @type {any} */ (window).YT?.PlayerState;
+            const isNowPlaying = e.data === YTState?.PLAYING;
             setPlaying(isNowPlaying);
             if (isNowPlaying) {
               setDuration(e.target.getDuration());
               cancelAutoAdvance();
-            } else if (e.data === window.YT.PlayerState.ENDED) {
+            } else if (e.data === YTState?.ENDED) {
               if (loopRef.current) {
                 e.target.seekTo(0, true);
                 e.target.playVideo();
@@ -149,7 +151,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       });
     };
 
-    if (window.YT?.Player) {
+    if (/** @type {any} */ (window).YT?.Player) {
       initPlayer();
     } else {
       if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
@@ -158,7 +160,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
         document.body.appendChild(tag);
       }
       const interval = setInterval(() => {
-        if (window.YT?.Player) { clearInterval(interval); initPlayer(); }
+        if (/** @type {any} */ (window).YT?.Player) { clearInterval(interval); initPlayer(); }
       }, 100);
       return () => { cancelled = true; clearInterval(interval); };
     }

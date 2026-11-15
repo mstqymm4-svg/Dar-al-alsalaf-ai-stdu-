@@ -98,12 +98,12 @@ export default function Books() {
     else if (sortBy === "oldest")
       arr.sort(
         (a, b) =>
-          new Date(a.created_date || 0) - new Date(b.created_date || 0)
+          new Date(a.created_date || 0).getTime() - new Date(b.created_date || 0).getTime()
       );
     else
       arr.sort(
         (a, b) =>
-          new Date(b.created_date || 0) - new Date(a.created_date || 0)
+          new Date(b.created_date || 0).getTime() - new Date(a.created_date || 0).getTime()
       );
     return arr;
   };
@@ -307,11 +307,10 @@ export default function Books() {
         {/* Books Content: Grid vs List */}
         {viewMode === "grid" ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {filteredBooks.map((book, i) => (
+            {filteredBooks.map((book) => (
               <BookCard
                 key={book.id}
                 book={book}
-                index={i}
                 isFavorite={favorites.includes(book.id)}
                 onToggleFavorite={user ? handleToggleFavorite : null}
               />

@@ -157,10 +157,10 @@ export default function Videos() {
     // Sorting
     return result.sort((a, b) => {
       if (sortBy === "newest") {
-        return new Date(b.created_date || 0) - new Date(a.created_date || 0);
+        return new Date(b.created_date || 0).getTime() - new Date(a.created_date || 0).getTime();
       }
       if (sortBy === "oldest") {
-        return new Date(a.created_date || 0) - new Date(b.created_date || 0);
+        return new Date(a.created_date || 0).getTime() - new Date(b.created_date || 0).getTime();
       }
       if (sortBy === "duration") {
         return parseDurationToSeconds(b.duration) - parseDurationToSeconds(a.duration);
@@ -703,11 +703,10 @@ export default function Videos() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filtered.map((v, i) => (
+              {filtered.map((v) => (
                 <VideoCard
                   key={v.id}
                   video={v}
-                  index={i}
                   channel={channelsById[v.channel_id]}
                   isFavorite={favorites.includes(v.id)}
                   isWatched={watchedIds.includes(v.id)}

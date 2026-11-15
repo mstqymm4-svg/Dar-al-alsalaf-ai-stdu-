@@ -2,7 +2,8 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-const Input = React.forwardRef(({ className, type, ...props }, ref) => {
+/** @type {React.ForwardRefExoticComponent<any>} */
+const Input = React.forwardRef((/** @type {any} */ { className = "", type = "text", ...props }, ref) => {
   return (
     (<input
       type={type}

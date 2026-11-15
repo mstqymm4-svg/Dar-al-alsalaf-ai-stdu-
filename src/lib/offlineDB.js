@@ -39,8 +39,8 @@ function openDB() {
 
   _dbReady = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
+    req.onupgradeneeded = () => {
+      const db = req.result;
       if (!db.objectStoreNames.contains("books"))     db.createObjectStore("books",     { keyPath: "id" });
       if (!db.objectStoreNames.contains("pdfs"))      db.createObjectStore("pdfs",      { keyPath: "url" });
       if (!db.objectStoreNames.contains("images"))    db.createObjectStore("images",    { keyPath: "url" });
@@ -52,13 +52,13 @@ function openDB() {
       if (!db.objectStoreNames.contains("social"))    db.createObjectStore("social",    { keyPath: "id" });
       if (!db.objectStoreNames.contains("settings"))  db.createObjectStore("settings",  { keyPath: "setting_key" });
     };
-    req.onsuccess = (e) => {
-      _db = e.target.result;
+    req.onsuccess = () => {
+      _db = req.result;
       _wireLifecycle(_db);
       _dbReady = null;
       resolve(_db);
     };
-    req.onerror = (e) => { _dbReady = null; reject(e.target.error); };
+    req.onerror = () => { _dbReady = null; reject(req.error); };
     req.onblocked = () => { _dbReady = null; reject(new Error("IndexedDB open blocked")); };
   });
 

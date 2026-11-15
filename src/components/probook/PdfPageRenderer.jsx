@@ -56,7 +56,7 @@ function PdfPageRenderer({
   targetWidth = 0,
   targetHeight = 0,
   theme = "light",
-  onAspectRatio,
+  onAspectRatio = undefined,
 }) {
   const t = useT();
   const canvasRef = useRef(null);

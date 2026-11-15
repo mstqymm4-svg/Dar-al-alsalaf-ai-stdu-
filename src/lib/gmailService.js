@@ -72,13 +72,20 @@ function notifyListeners() {
 export const subscribeToGmailAuth = (listener) => {
   authListeners.add(listener);
   listener(getSnapshot());
-  return () => authListeners.delete(listener);
+  return () => { authListeners.delete(listener); };
 };
+
+function createCodedError(message, code) {
+  /** @type {Error & { code?: string }} */
+  const err = new Error(message);
+  err.code = code;
+  return err;
+}
 
 function isEmbeddedNativeWebView() {
   if (typeof window === 'undefined') return false;
   try {
-    if (window.Capacitor?.isNativePlatform?.()) return true;
+    if (/** @type {any} */ (window).Capacitor?.isNativePlatform?.()) return true;
     const { protocol, hostname, port } = window.location || {};
     if (protocol === 'capacitor:' || protocol === 'ionic:' || protocol === 'file:') return true;
     if (hostname === 'localhost' && !port) return true;
@@ -161,10 +168,10 @@ export const googleSignIn = async () => {
       code === 'auth/operation-not-supported-in-this-environment' ||
       msg.includes('disallowed_useragent')
     ) {
-      const friendly = new Error(
-        'تسجيل الدخول عبر نافذة Google غير مدعوم داخل تطبيق الأندرويد. يرجى تسجيل الدخول عبر التحقق بالبريد الإلكتروني (رمز OTP).'
+      const friendly = createCodedError(
+        'تسجيل الدخول عبر نافذة Google غير مدعوم داخل تطبيق الأندرويد. يرجى تسجيل الدخول عبر التحقق بالبريد الإلكتروني (رمز OTP).',
+        'WEBVIEW_GOOGLE_BLOCKED'
       );
-      friendly.code = 'WEBVIEW_GOOGLE_BLOCKED';
       throw friendly;
     }
 
@@ -200,9 +207,7 @@ const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 async function gmailFetch(endpoint, options = {}, explicitToken = null) {
   const token = explicitToken || cachedAccessToken;
   if (!token) {
-    const err = new Error('AUTH_REQUIRED');
-    err.code = 'AUTH_REQUIRED';
-    throw err;
+    throw createCodedError('AUTH_REQUIRED', 'AUTH_REQUIRED');
   }
 
   const headers = {
@@ -222,11 +227,10 @@ async function gmailFetch(endpoint, options = {}, explicitToken = null) {
       notifyListeners();
     }
     const errBody = await res.json().catch(() => ({}));
-    const err = new Error(
-      errBody?.error?.message || 'انتهت صلاحية الجلسة أو لا توجد صلاحية كافية لإرسال البريد عبر Gmail'
+    throw createCodedError(
+      errBody?.error?.message || 'انتهت صلاحية الجلسة أو لا توجد صلاحية كافية لإرسال البريد عبر Gmail',
+      res.status === 401 ? 'AUTH_REQUIRED' : 'PERMISSION_DENIED'
     );
-    err.code = res.status === 401 ? 'AUTH_REQUIRED' : 'PERMISSION_DENIED';
-    throw err;
   }
 
   if (res.status === 204) {
@@ -294,7 +298,7 @@ export function encodeMimeMessage({ to, subject, body, html, fromName, fromEmail
   return toBase64Utf8(rawMessage).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-export async function sendGmailMessage({ to, subject, body, html, cc, bcc, token = null }) {
+export async function sendGmailMessage({ to, subject, body, html, cc = undefined, bcc = undefined, token = null }) {
   const raw = encodeMimeMessage({
     to,
     subject,
@@ -325,9 +329,7 @@ export async function sendVerificationEmailViaGmail(recipientEmail, code) {
     token = authRes?.accessToken;
   }
   if (!token) {
-    const err = new Error('يرجى تسجيل الدخول بحساب Google لإرسال رمز التحقق');
-    err.code = 'AUTH_REQUIRED';
-    throw err;
+    throw createCodedError('يرجى تسجيل الدخول بحساب Google لإرسال رمز التحقق', 'AUTH_REQUIRED');
   }
 
   const subject = 'رمز التحقق — دار العلوم';

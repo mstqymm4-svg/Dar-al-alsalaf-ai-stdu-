@@ -194,6 +194,8 @@ export async function autoUploadChannelLogo(logoUrl, channelName = "channel") {
 
 /**
  * Fetches the videos of a YouTube channel by channel URL or handle
+ * @param {string} channelUrl
+ * @param {number|string} [limit=30]
  */
 export async function fetchChannelVideos(channelUrl, limit = 30) {
   if (!channelUrl) return [];

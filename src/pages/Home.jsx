@@ -142,11 +142,10 @@ export default function Home() {
               </Link>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {featuredBooks.slice(0, 4).map((book, i) => (
+              {featuredBooks.slice(0, 4).map((book) => (
                 <BookCard
                   key={book.id}
                   book={book}
-                  index={i}
                   isFavorite={favorites.includes(book.id)}
                   onToggleFavorite={user ? handleToggleFavorite : null}
                 />

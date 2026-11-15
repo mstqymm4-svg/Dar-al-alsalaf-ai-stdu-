@@ -33,7 +33,7 @@ export const auth = getAuth(app);
 // Validate connection to Firestore on boot (non-blocking)
 async function testConnection() {
   try {
-    await getDoc(doc(db, "app_settings", "connection_test"));
+    await getDocFromServer(doc(db, "app_settings", "connection_test"));
   } catch (error) {
     if (error instanceof Error && error.message.includes("the client is offline")) {
       console.error("Please check your Firebase configuration.");
@@ -602,6 +602,19 @@ function createPublicCatalogEntity({
       const rawId = String(id);
       const cleanId = sanitizeId(id);
       let existing = (await this.get(id)) || { id: cleanId };
+      if (typeof navigator !== "undefined" && navigator.onLine) {
+        try {
+          const serverDoc = await readServerDoc(rawId, cleanId);
+          if (serverDoc?.data) {
+            existing = {
+              ...existing,
+              id: serverDoc.docId || existing.id || cleanId,
+              ...(serverDoc.data.created_date ? { created_date: serverDoc.data.created_date } : {}),
+              ...(serverDoc.data.setting_key ? { setting_key: serverDoc.data.setting_key } : {}),
+            };
+          }
+        } catch {}
+      }
 
       const updated = sanitizeFn(
         {
@@ -912,16 +925,23 @@ const AccountDataEntity = {
     const docId = auth.currentUser
       ? sanitizeId(auth.currentUser.uid, "acc")
       : sanitizeId(id || existing.id, "acc");
+    let serverData = null;
+    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+      try {
+        const snap = await getDoc(doc(db, "account_data", docId));
+        if (snap.exists()) serverData = snap.data();
+      } catch {}
+    }
     const updated = {
       id: docId,
       account_email: truncStr(
-        existing.account_email || payload?.account_email || auth.currentUser?.email || OWNER_EMAIL,
+        serverData?.account_email || existing.account_email || payload?.account_email || auth.currentUser?.email || OWNER_EMAIL,
         256
       ),
-      ownerUid: auth.currentUser?.uid || existing.ownerUid || "local_user",
+      ownerUid: serverData?.ownerUid || auth.currentUser?.uid || existing.ownerUid || "local_user",
       data: truncStr(payload?.data ?? existing.data ?? "{}", 800000),
       data_version: Number(payload?.data_version ?? existing.data_version) || 1,
-      created_date: truncStr(existing.created_date || now, 64),
+      created_date: truncStr(serverData?.created_date || existing.created_date || now, 64),
       updated_date: now,
     };
     const next = [
@@ -1126,7 +1146,20 @@ onAuthStateChanged(auth, async (fbUser) => {
 
   if (navigator.onLine && fbUser.emailVerified) {
     try {
-      await setDoc(doc(db, "users", syncedProfile.id), syncedProfile);
+      const userRef = doc(db, "users", syncedProfile.id);
+      const snap = await getDoc(userRef);
+      const serverUser = snap.exists() ? snap.data() : null;
+      const toSave = serverUser
+        ? {
+            ...syncedProfile,
+            id: serverUser.id || syncedProfile.id,
+            uid: serverUser.uid || syncedProfile.uid,
+            email: serverUser.email || syncedProfile.email,
+            role: isOwner ? "admin" : serverUser.role || syncedProfile.role,
+            created_date: serverUser.created_date || syncedProfile.created_date,
+          }
+        : syncedProfile;
+      await setDoc(userRef, toSave);
     } catch {}
     if (isOwner) {
       Promise.allSettled([
@@ -1349,16 +1382,30 @@ export const base44 = {
 
       if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
         const docId = sanitizeId(auth.currentUser.uid, "usr");
+        let serverUser = null;
+        try {
+          const snap = await getDoc(doc(db, "users", docId));
+          if (snap.exists()) serverUser = snap.data();
+        } catch {}
+        const isOwnerEmail =
+          String(serverUser?.email || updated.email || auth.currentUser.email || "").toLowerCase() ===
+          OWNER_EMAIL.toLowerCase();
         const sanitizedUser = {
           id: docId,
-          uid: docId,
-          email: truncStr(updated.email || auth.currentUser.email || OWNER_EMAIL, 256),
+          uid: serverUser?.uid || docId,
+          email: truncStr(serverUser?.email || updated.email || auth.currentUser.email || OWNER_EMAIL, 256),
           full_name: truncStr(updated.full_name || "", 200),
-          role: updated.role === "admin" ? "admin" : "user",
+          role: serverUser
+            ? isOwnerEmail && updated.role === "admin"
+              ? "admin"
+              : serverUser.role || "user"
+            : updated.role === "admin"
+            ? "admin"
+            : "user",
           notifications_enabled: Boolean(updated.notifications_enabled ?? true),
           preferred_language: truncStr(updated.preferred_language || "العربية", 64),
           avatar_url: truncStr(updated.avatar_url || "", 500000),
-          created_date: truncStr(updated.created_date || new Date().toISOString(), 64),
+          created_date: truncStr(serverUser?.created_date || updated.created_date || new Date().toISOString(), 64),
           updated_date: new Date().toISOString(),
         };
         try {
@@ -1466,13 +1513,15 @@ export const base44 = {
       UploadFile: handleLocalOrCloudUpload,
       UploadPublicFile: handleLocalOrCloudUpload,
 
-      async SendEmail({ to, subject, body, html }) {
-        return sendGmailMessage({ to, subject, body, html });
+      async SendEmail({ to, subject, body, html, cc = undefined, bcc = undefined, token = null }) {
+        return sendGmailMessage({ to, subject, body, html, cc, bcc, token });
       },
 
-      async InvokeLLM({ prompt }) {
+      async InvokeLLM({ prompt, response_json_schema = undefined }) {
         const books = await BookEntity.list("-created_date", 200).catch(() => []);
-        const q = String(prompt || "").trim().toLowerCase();
+        const rawPrompt = String(prompt || "");
+        const quotedMatch = rawPrompt.match(/["«]([^"»]+)["»]/);
+        const q = (quotedMatch ? quotedMatch[1] : rawPrompt).trim().toLowerCase();
         const matched = books.filter(
           (b) =>
             String(b.title || "").toLowerCase().includes(q) ||
@@ -1480,6 +1529,12 @@ export const base44 = {
             String(b.category || "").toLowerCase().includes(q) ||
             String(b.description || "").toLowerCase().includes(q)
         );
+        if (response_json_schema) {
+          return {
+            matching_ids: matched.map((b) => b.id),
+            explanation: matched.length > 0 ? `تم العثور على ${matched.length} كتاب مطابق` : "لم يتم العثور على كتب مطابقة",
+          };
+        }
         const listToFormat = matched.length > 0 ? matched.slice(0, 5) : books.slice(0, 5);
         if (listToFormat.length === 0) {
           return "لم يتم العثور على كتب مطابقة في المكتبة حالياً.";

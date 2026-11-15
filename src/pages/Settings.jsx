@@ -62,7 +62,15 @@ export default function Settings() {
   const [userName, setUserName] = useState("");
 
   // All cards are closed by default, open upon click ("مقفلة عند الضغط عليه يفتح")
-  const [openCards, setOpenCards] = useState({});
+  const [openCards, setOpenCards] = useState({
+    profile: false,
+    lang: false,
+    appearance: false,
+    preferences: false,
+    security: false,
+    about: false,
+    logout: false,
+  });
 
   const toggleCard = (key) => {
     setOpenCards((prev) => ({

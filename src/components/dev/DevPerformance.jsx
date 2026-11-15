@@ -15,8 +15,10 @@ export default function DevPerformance() {
   }, []);
 
   const collectMetrics = () => {
-    const nav = performance.getEntriesByType("navigation")[0];
-    const mem = performance.memory || null;
+    const nav = /** @type {PerformanceNavigationTiming | undefined} */ (
+      performance.getEntriesByType("navigation")[0]
+    );
+    const mem = /** @type {any} */ (performance).memory || null;
     setMetrics({
       loadTime:    nav ? Math.round(nav.loadEventEnd - nav.fetchStart) : null,
       domReady:    nav ? Math.round(nav.domContentLoadedEventEnd - nav.fetchStart) : null,

@@ -117,6 +117,7 @@ export default function DevColors() {
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
+        if (typeof ev.target?.result !== "string") throw new Error("Invalid file");
         const data = JSON.parse(ev.target.result);
         setColors(prev => ({ ...prev, ...data }));
         setSettings(data);

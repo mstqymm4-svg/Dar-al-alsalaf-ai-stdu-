@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type Transporter } from 'nodemailer';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -105,7 +105,7 @@ function getSmtpConfig() {
   return { smtpUser, smtpPass };
 }
 
-let cachedTransporter: nodemailer.Transporter | null = null;
+let cachedTransporter: Transporter | null = null;
 let cachedTransporterKey = '';
 
 function getSingleTransporter() {

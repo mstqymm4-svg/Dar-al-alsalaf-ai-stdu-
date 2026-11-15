@@ -2,7 +2,7 @@
  * Single control button for the video player.
  * Variants: primary (main play/pause), active (toggled on), default.
  */
-export default function PlayerButton({ children, onClick, disabled, title, active, primary, size = "md" }) {
+export default function PlayerButton({ children, onClick, disabled = false, title = "", active = false, primary = false, size = "md" }) {
   const dims =
     size === "lg" ? "w-14 h-14" :
     size === "sm" ? "w-10 h-10" : "w-11 h-11";

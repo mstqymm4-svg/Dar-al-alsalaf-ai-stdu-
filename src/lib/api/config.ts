@@ -7,10 +7,11 @@
  * backend is live to route the frontend through this layer.
  */
 
-const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") || "/api";
+const viteEnv: Record<string, string | undefined> = ((import.meta as any).env) || {};
+const BASE_URL = viteEnv.VITE_API_URL?.replace(/\/$/, "") || "/api";
 
 export const INDEPENDENT_API_ENABLED =
-  String(import.meta.env.VITE_USE_INDEPENDENT_API || "false") === "true";
+  String(viteEnv.VITE_USE_INDEPENDENT_API || "false") === "true";
 
 const TOKEN_KEY = "dau_access_token";
 const REFRESH_KEY = "dau_refresh_token";

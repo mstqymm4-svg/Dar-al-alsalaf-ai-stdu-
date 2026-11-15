@@ -35,7 +35,7 @@ function emit(event) {
 
 export function onContentChange(callback) {
   listeners.add(callback);
-  return () => listeners.delete(callback);
+  return () => { listeners.delete(callback); };
 }
 
 export function getSyncStatus() {

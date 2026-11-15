@@ -114,7 +114,7 @@ export default function DarLogoSVG({ className = "" }) {
       {/* ── Left floating squares ── */}
       <g className="dau-squares">
         {SQUARES.map((sq, i) => (
-          <g key={i} className="dau-square" style={{ "--i": i }}>
+          <g key={i} className="dau-square" style={/** @type {any} */ ({ "--i": i })}>
             <rect
               x={sq.x}
               y={sq.y}
@@ -200,7 +200,7 @@ export default function DarLogoSVG({ className = "" }) {
       {/* ── Vertical blue elements ── */}
       <g className="dau-bars">
         {BARS.map((d, i) => (
-          <g key={i} className="dau-bar" style={{ "--i": i }}>
+          <g key={i} className="dau-bar" style={/** @type {any} */ ({ "--i": i })}>
             <path d={d} fill="url(#dauBar)" stroke="#0f172a" strokeWidth="10" />
           </g>
         ))}

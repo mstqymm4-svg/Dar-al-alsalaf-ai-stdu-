@@ -30,7 +30,7 @@ export default function LoaderParticles({ count = 18 }) {
         <span
           key={i}
           className="dau-particle"
-          style={{
+          style={/** @type {any} */ ({
             background: d.color,
             boxShadow: `0 0 6px ${d.color}`,
             animationDelay: `${d.delay}ms`,
@@ -38,7 +38,7 @@ export default function LoaderParticles({ count = 18 }) {
             "--fy": `${d.fy}px`,
             "--tx": `${d.tx}px`,
             "--ty": `${d.ty}px`,
-          }}
+          })}
         />
       ))}
     </div>

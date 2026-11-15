@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
  * Mobile-only header with a large (44px) back button and safe-area-top padding.
  * Hidden on desktop (md:hidden).
  */
-export default function MobileHeader({ title, onBack }) {
+export default function MobileHeader({ title = "", onBack = undefined }) {
   const navigate = useNavigate();
 
   const handleBack = () => {

@@ -5,7 +5,7 @@ import MediaLayer from "./MediaLayer";
 // ── Canvas / CSS effect layers, composable on top of any hero background ──────
 
 export function ParticlesCanvas({ speed }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -42,7 +42,7 @@ export function ParticlesCanvas({ speed }) {
 }
 
 export function StarsCanvas({ speed }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -147,7 +147,7 @@ export function FloatingShapes({ color2, speed }) {
 // ── New effects ────────────────────────────────────────────────────────────────
 
 export function SnowCanvas({ speed }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -184,7 +184,7 @@ export function SnowCanvas({ speed }) {
 }
 
 export function RainCanvas({ speed }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -221,7 +221,7 @@ export function RainCanvas({ speed }) {
 }
 
 export function FirefliesCanvas({ speed }) {
-  const canvasRef = useRef();
+  const canvasRef = useRef(/** @type {HTMLCanvasElement | null} */ (null));
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;

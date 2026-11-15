@@ -27,8 +27,10 @@ export default function AISearch({ books, onResults, onClear }) {
       }
     });
 
-    const matchedBooks = books.filter((b) => result.matching_ids?.includes(b.id));
-    onResults(matchedBooks, result.explanation || `نتائج البحث عن: "${query}"`);
+    const ids = typeof result === "object" && result !== null ? result.matching_ids : [];
+    const explanation = typeof result === "object" && result !== null ? result.explanation : "";
+    const matchedBooks = books.filter((b) => ids?.includes(b.id));
+    onResults(matchedBooks, explanation || `نتائج البحث عن: "${query}"`);
     setLoading(false);
   };
 
