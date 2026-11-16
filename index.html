@@ -2,6 +2,59 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        if (window.console && typeof window.console.debug === "function") {
+          var origDebug = window.console.debug.bind(window.console);
+          window.console.debug = function () {
+            if (arguments.length > 0 && typeof arguments[0] === "string" && arguments[0].indexOf("[vite]") === 0) {
+              return;
+            }
+            return origDebug.apply(window.console, arguments);
+          };
+        }
+        window.addEventListener("unhandledrejection", function (e) {
+          var msg = (e && e.reason && (e.reason.message || String(e.reason))) || "";
+          if (msg.indexOf("WebSocket closed without opened") !== -1 || msg.indexOf("failed to connect to websocket") !== -1) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+        var NativeWS = window.WebSocket;
+        if (NativeWS) {
+          var WrappedWS = function (url, protocols) {
+            var protoStr = Array.isArray(protocols) ? protocols.join(",") : String(protocols || "");
+            if (protoStr.indexOf("vite-hmr") !== -1 || protoStr.indexOf("vite-ping") !== -1) {
+              var dummy = {
+                url: String(url || ""),
+                readyState: 1,
+                protocol: protoStr,
+                extensions: "",
+                bufferedAmount: 0,
+                binaryType: "blob",
+                send: function () {},
+                close: function () {},
+                addEventListener: function (type, fn) {
+                  if (type === "open" && typeof fn === "function") {
+                    setTimeout(function () { try { fn({ type: "open" }); } catch (_) {} }, 0);
+                  }
+                },
+                removeEventListener: function () {},
+                dispatchEvent: function () { return true; }
+              };
+              return dummy;
+            }
+            return protocols !== undefined ? new NativeWS(url, protocols) : new NativeWS(url);
+          };
+          WrappedWS.prototype = NativeWS.prototype;
+          WrappedWS.CONNECTING = NativeWS.CONNECTING;
+          WrappedWS.OPEN = NativeWS.OPEN;
+          WrappedWS.CLOSING = NativeWS.CLOSING;
+          WrappedWS.CLOSED = NativeWS.CLOSED;
+          window.WebSocket = WrappedWS;
+        }
+      })();
+    </script>
     <link rel="icon" type="image/png" href="https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/54dd14ec4_generated_image.png" />
     <link rel="apple-touch-icon" href="https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/54dd14ec4_generated_image.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" />

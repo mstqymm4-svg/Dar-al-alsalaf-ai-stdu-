@@ -22,6 +22,7 @@ export default defineConfig({
     port: 3000,
     allowedHosts: true,
     hmr: false,
+    ws: false,
     headers: {
       "Cache-Control": "no-store, no-cache, must-revalidate",
     },
