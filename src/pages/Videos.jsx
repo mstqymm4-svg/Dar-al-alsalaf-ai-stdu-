@@ -24,6 +24,11 @@ import {
 import { useContentRefresh } from "@/hooks/useContentSync";
 import SmartImage from "@/components/SmartImage";
 import { catLabel } from "@/lib/i18n-terms";
+import { getThumbnail } from "@/lib/youtubeMeta";
+
+// Helper to reliably detect if a video record is a Short
+const isShortVideo = (v) =>
+  Boolean(v && (v.video_type === "short" || String(v.youtube_url || "").includes("/shorts/")));
 
 export default function Videos() {
   const t = useT();
@@ -95,14 +100,7 @@ export default function Videos() {
 
   // Distinct categories
   const categories = useMemo(() => {
-    return [...new Set(videos.map((v) => v.category).filter(Boolean))];
-  }, [videos]);
-
-  // All Shorts in current context
-  const allShorts = useMemo(() => {
-    return videos.filter((v) =>
-      v.visible !== false && (v.video_type === "short" || v.youtube_url?.includes("/shorts/"))
-    );
+    return [...new Set(videos.filter((v) => v.visible !== false).map((v) => v.category).filter(Boolean))];
   }, [videos]);
 
   // Helper to parse duration string (e.g. "14:20" or "1:02:15") into seconds for sorting
@@ -115,16 +113,13 @@ export default function Videos() {
     return parts[0] || 0;
   };
 
-  // Filtered & Sorted videos
-  const filtered = useMemo(() => {
-    let result = videos.filter((v) => {
-      // Visibility filter
-      if (v.visible === false) return false;
+  // Shared matcher for Channel + Category + Search
+  const matchesContextFilters = useMemo(() => {
+    return (v) => {
+      if (!v || v.visible === false) return false;
 
-      // Category filter
       if (category !== "all" && v.category !== category) return false;
 
-      // Channel filter
       if (selectedChannelId !== "all") {
         if (v.channel_id) {
           if (v.channel_id !== selectedChannelId) return false;
@@ -134,15 +129,6 @@ export default function Videos() {
         }
       }
 
-      // Video Type filter
-      if (videoTypeFilter !== "all") {
-        const isShort = v.video_type === "short" || v.youtube_url?.includes("/shorts/");
-        if (videoTypeFilter === "short" && !isShort) return false;
-        if (videoTypeFilter === "normal" && (isShort || v.video_type === "live")) return false;
-        if (videoTypeFilter === "live" && v.video_type !== "live") return false;
-      }
-
-      // Search query
       if (search) {
         const q = search.toLowerCase();
         const titleMatch = v.title?.toLowerCase().includes(q);
@@ -152,30 +138,74 @@ export default function Videos() {
       }
 
       return true;
+    };
+  }, [category, selectedChannelId, search, channelsById]);
+
+  // Sort helper
+  const sortList = useMemo(() => {
+    return (list) =>
+      [...list].sort((a, b) => {
+        if (sortBy === "newest") {
+          return new Date(b.created_date || 0).getTime() - new Date(a.created_date || 0).getTime();
+        }
+        if (sortBy === "oldest") {
+          return new Date(a.created_date || 0).getTime() - new Date(b.created_date || 0).getTime();
+        }
+        if (sortBy === "duration") {
+          return parseDurationToSeconds(b.duration) - parseDurationToSeconds(a.duration);
+        }
+        if (sortBy === "title") {
+          return (a.title || "").localeCompare(b.title || "", "ar");
+        }
+        return 0;
+      });
+  }, [sortBy]);
+
+  // All visible Shorts (fallback for player)
+  const allShorts = useMemo(() => {
+    return sortList(videos.filter((v) => v.visible !== false && isShortVideo(v)));
+  }, [videos, sortList]);
+
+  // Filtered Shorts matching current channel, category, and search
+  const filteredShorts = useMemo(() => {
+    return sortList(videos.filter((v) => isShortVideo(v) && matchesContextFilters(v)));
+  }, [videos, matchesContextFilters, sortList]);
+
+  // Filtered Regular/Live Videos (NEVER includes Shorts!)
+  const filteredRegularVideos = useMemo(() => {
+    const result = videos.filter((v) => {
+      if (isShortVideo(v)) return false; // Strictly exclude Shorts from regular videos / "أحدث الفيديوهات"
+      if (!matchesContextFilters(v)) return false;
+
+      if (videoTypeFilter === "normal" && v.video_type === "live") return false;
+      if (videoTypeFilter === "live" && v.video_type !== "live") return false;
+      if (videoTypeFilter === "short") return false;
+
+      return true;
     });
 
-    // Sorting
-    return result.sort((a, b) => {
-      if (sortBy === "newest") {
-        return new Date(b.created_date || 0).getTime() - new Date(a.created_date || 0).getTime();
-      }
-      if (sortBy === "oldest") {
-        return new Date(a.created_date || 0).getTime() - new Date(b.created_date || 0).getTime();
-      }
-      if (sortBy === "duration") {
-        return parseDurationToSeconds(b.duration) - parseDurationToSeconds(a.duration);
-      }
-      if (sortBy === "title") {
-        return (a.title || "").localeCompare(b.title || "", "ar");
-      }
-      return 0;
-    });
-  }, [videos, search, category, selectedChannelId, videoTypeFilter, sortBy, channelsById]);
+    return sortList(result);
+  }, [videos, matchesContextFilters, videoTypeFilter, sortList]);
 
-  // Featured video for spotlight
+  // Counts per tab for current channel/category/search context
+  const tabCounts = useMemo(() => {
+    const contextVideos = videos.filter(matchesContextFilters);
+    const shortsCount = contextVideos.filter((v) => isShortVideo(v)).length;
+    const liveCount = contextVideos.filter((v) => !isShortVideo(v) && v.video_type === "live").length;
+    const normalCount = contextVideos.filter((v) => !isShortVideo(v) && v.video_type !== "live").length;
+    return {
+      all: contextVideos.length,
+      normal: normalCount,
+      short: shortsCount,
+      live: liveCount,
+    };
+  }, [videos, matchesContextFilters]);
+
+  // Featured video for 16:9 spotlight (NEVER a Short!)
   const featuredVideo = useMemo(() => {
-    const list = videos.filter((v) => v.visible !== false && v.is_featured);
-    return list.length > 0 ? list[0] : (videos.find((v) => v.visible !== false) || null);
+    const nonShortVisible = videos.filter((v) => v.visible !== false && !isShortVideo(v));
+    const featuredList = nonShortVisible.filter((v) => v.is_featured);
+    return featuredList.length > 0 ? featuredList[0] : (nonShortVisible[0] || null);
   }, [videos]);
 
   const toggleFavorite = (videoId) => {
@@ -191,8 +221,7 @@ export default function Videos() {
   // Open appropriate player (Shorts vs Normal Player)
   const handlePlayVideo = (v) => {
     if (!v) return;
-    const isShort = v.video_type === "short" || v.youtube_url?.includes("/shorts/");
-    if (isShort) {
+    if (isShortVideo(v)) {
       setPlayingShort(v);
     } else {
       if (v?.id) {
@@ -217,11 +246,72 @@ export default function Videos() {
     }
   };
 
+  // Render a vertical 9:16 Short card (Read-only, opens ShortsPlayerModal)
+  const renderShortCard = (sv, isGrid = false) => {
+    const ch = sv.channel_id ? channelsById[sv.channel_id] : null;
+    const chLogo = ch?.channel_logo || "";
+    const chName = ch?.name || sv.channel_name || "";
+    const thumb = sv.thumbnail || getThumbnail(sv.youtube_url);
+
+    return (
+      <div
+        key={sv.id}
+        onClick={() => handlePlayVideo(sv)}
+        className={`${
+          isGrid ? "w-full" : "shrink-0 w-40 sm:w-48"
+        } aspect-[9/16] rounded-2xl overflow-hidden relative group cursor-pointer border border-border/80 shadow-md hover:shadow-xl hover:shadow-purple-500/15 hover:-translate-y-1 transition-all duration-300 bg-zinc-950 select-none`}
+      >
+        {thumb && (
+          <img
+            src={thumb}
+            alt={sv.title}
+            loading="lazy"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-black/30" />
+
+        {/* Hover Play Icon */}
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <div className="w-12 h-12 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-xl ring-4 ring-white/20">
+            <Play className="w-5 h-5 fill-current ml-0.5" />
+          </div>
+        </div>
+
+        {/* Top Fire Drop Icon ONLY (no Gemini Sparkles icon, no "شورتس" word) */}
+        <div className="absolute top-2.5 right-2.5">
+          <span className="w-7 h-7 rounded-lg bg-purple-600/90 backdrop-blur-sm text-white shadow-md flex items-center justify-center border border-white/15">
+            <Flame className="w-3.5 h-3.5 fill-current" />
+          </span>
+        </div>
+
+        {/* Bottom Info */}
+        <div className="absolute bottom-3 inset-x-3 text-right space-y-1.5">
+          <p className="text-xs font-bold text-white line-clamp-2 leading-snug drop-shadow">
+            {sv.title}
+          </p>
+          {chName && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-5 h-5 rounded-full bg-white/15 border border-white/25 overflow-hidden flex items-center justify-center shrink-0">
+                {chLogo ? (
+                  <img src={chLogo} alt={chName} className="w-full h-full object-cover" />
+                ) : (
+                  <Tv className="w-3 h-3 text-white/90" />
+                )}
+              </div>
+              <p className="text-[10px] text-white/85 font-medium truncate">{chName}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   if (loading) return <PageSpinner />;
 
   return (
     <div className="pb-16 min-h-screen" dir={t.dir}>
-      {/* ─── Hero Spotlight Section (Only when on home view) ───────────────── */}
+      {/* ─── Hero Spotlight Section (Only when on home view & non-Short video) ── */}
       {featuredVideo && !search && selectedChannelId === "all" && category === "all" && videoTypeFilter === "all" && (
         <div className="relative bg-gradient-to-b from-primary/15 via-primary/5 to-transparent border-b border-border/40 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(#1c5c46_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none" />
@@ -339,14 +429,6 @@ export default function Videos() {
                 <h1 className="text-xl sm:text-2xl font-black text-foreground">
                   {selectedChannel.name}
                 </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20">
-                  {filtered.length} {t.videosCount || "فيديو"}
-                </span>
-                {selectedChannel.category && (
-                  <span className="px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground">
-                    {catLabel(selectedChannel.category, t.langCode)}
-                  </span>
-                )}
               </div>
 
               {selectedChannel.description && (
@@ -396,9 +478,6 @@ export default function Videos() {
               </h1>
               <p className="text-xs text-muted-foreground mt-0.5">{t.videosSub || "شاهد الدروس والمحاضرات مباشرة"}</p>
             </div>
-            <div className="text-xs text-muted-foreground">
-              {filtered.length} {t.videosCount || "مقطع فيديو"}
-            </div>
           </div>
         )}
 
@@ -426,13 +505,11 @@ export default function Videos() {
                 </div>
                 <div className="text-right">
                   <p className="leading-tight">{t.allChannels || "جميع القنوات"}</p>
-                  <span className="text-[10px] opacity-75 font-normal">{videos.length} {t.videosCount || "فيديو"}</span>
                 </div>
               </button>
 
               {/* Individual channels */}
-              {channels.map((ch) => {
-                const count = videos.filter((v) => v.channel_id === ch.id || v.channel_name === ch.name).length;
+              {channels.filter((ch) => ch.visible !== false).map((ch) => {
                 const isSelected = selectedChannelId === ch.id;
 
                 return (
@@ -460,7 +537,6 @@ export default function Videos() {
 
                     <div className="flex-1 min-w-0 text-right">
                       <p className="text-xs font-bold truncate text-foreground">{ch.name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{count} {t.videosCount || "فيديو"}</p>
                     </div>
 
                     {ch.youtube_url && (
@@ -488,7 +564,7 @@ export default function Videos() {
           <div className="relative group">
             <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
             <Input
-              placeholder={t.searchVideo || "ابحث عن فيديو، درس، أو محاضرة..."}
+              placeholder={t.searchVideo || "ابحث عن فيديو، درس، أو مقطع قصير..."}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pr-10 pl-9 h-11 rounded-xl bg-muted/40 border-border text-sm focus-visible:bg-background focus-visible:border-primary transition-all"
@@ -508,21 +584,24 @@ export default function Videos() {
             {/* Video Type Tabs */}
             <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
               {[
-                { id: "all", label: t.all || "الكل" },
-                { id: "normal", label: t.videoLectures || "محاضرات ودروس" },
-                { id: "short", label: t.videoShorts || "مقاطع قصيرة (شورتس)" },
-                { id: "live", label: t.videoLive || "بث مباشر" },
+                { id: "all", label: t.all || "الكل", count: tabCounts.all },
+                { id: "normal", label: t.videoLectures || "محاضرات ودروس", count: tabCounts.normal },
+                { id: "short", label: "مقاطع قصيرة", count: tabCounts.short, isShorts: true },
+                { id: "live", label: t.videoLive || "بث مباشر", count: tabCounts.live },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setVideoTypeFilter(tab.id)}
-                  className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                  className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 ${
                     videoTypeFilter === tab.id
-                      ? "bg-primary text-primary-foreground shadow-sm"
+                      ? tab.isShorts
+                        ? "bg-purple-600 text-white shadow-sm"
+                        : "bg-primary text-primary-foreground shadow-sm"
                       : "bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
                   }`}
                 >
-                  {tab.label}
+                  {tab.isShorts && <Flame className="w-3.5 h-3.5 fill-current" />}
+                  <span>{tab.label}</span>
                 </button>
               ))}
             </div>
@@ -577,147 +656,140 @@ export default function Videos() {
           )}
         </section>
 
-        {/* ─── Active Filters Feedback Bar ──────────────────────────────────── */}
-        {(search || selectedChannelId !== "all" || category !== "all" || videoTypeFilter !== "all") && (
-          <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
-            <p>
-              <span>{t.foundVideos || "تم العثور على فيديوهات"}: {filtered.length}</span>
-              {selectedChannelId !== "all" && channelsById[selectedChannelId] && (
-                <span> — {t.inChannel || "في القناة"} {channelsById[selectedChannelId].name}</span>
-              )}
-            </p>
-            <button
-              onClick={() => {
-                setSearch("");
-                setCategory("all");
-                setSelectedChannelId("all");
-                setVideoTypeFilter("all");
-              }}
-              className="text-primary hover:underline flex items-center gap-1"
-            >
-              <X className="w-3.5 h-3.5" /> {t.resetFilters || "إعادة ضبط التصفية"}
-            </button>
-          </div>
-        )}
-
-        {/* ─── Dedicated Shorts Shelf (YouTube Shorts Style) ────────────────── */}
-        {allShorts.length > 0 && videoTypeFilter !== "normal" && !search && (
-          <section className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
+        {/* ─── 1. Dedicated Shorts Shelf (When on "all" tab) ────────────────── */}
+        {videoTypeFilter === "all" && filteredShorts.length > 0 && (
+          <section className="space-y-3 pt-1">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2.5">
               <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                 <span className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center text-purple-600">
                   <Flame className="w-4 h-4 fill-current" />
                 </span>
-                <span>{t.videoShorts || "مقاطع قصيرة (شورتس)"}</span>
+                <span>مقاطع قصيرة</span>
               </h2>
-              <span className="text-xs text-muted-foreground">
-                {t.swipeForMoreShorts || "مرر وشاهد مثل يوتيوب"}
-              </span>
+              <button
+                onClick={() => setVideoTypeFilter("short")}
+                className="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1"
+              >
+                <span>{t.showAll || "عرض الكل"}</span>
+              </button>
             </div>
 
             <div className="flex gap-3.5 overflow-x-auto pb-3 pt-1 scrollbar-hide">
-              {allShorts.map((sv) => (
-                <div
-                  key={sv.id}
-                  onClick={() => handlePlayVideo(sv)}
-                  className="shrink-0 w-36 sm:w-44 aspect-[9/16] rounded-2xl overflow-hidden relative group cursor-pointer border border-border shadow-md hover:shadow-xl hover:shadow-purple-500/10 hover:-translate-y-1 transition-all duration-300 bg-black"
-                >
-                  {sv.thumbnail && (
-                    <img
-                      src={sv.thumbnail}
-                      alt={sv.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                  )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-black/30" />
-                  
-                  {/* Play badge */}
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="w-11 h-11 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-lg">
-                      <Play className="w-5 h-5 fill-current ml-0.5" />
-                    </div>
-                  </div>
-
-                  {/* Top Shorts Tag */}
-                  <div className="absolute top-2.5 right-2.5">
-                    <span className="px-2 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold shadow">
-                      {t.shortsBadge || "شورتس"}
-                    </span>
-                  </div>
-
-                  {/* Bottom Title */}
-                  <div className="absolute bottom-2.5 inset-x-2.5 text-right space-y-0.5">
-                    <p className="text-xs font-bold text-white line-clamp-2 leading-tight drop-shadow">
-                      {sv.title}
-                    </p>
-                    {sv.channel_name && (
-                      <p className="text-[10px] text-white/75 truncate">{sv.channel_name}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
+              {filteredShorts.map((sv) => renderShortCard(sv, false))}
             </div>
           </section>
         )}
 
-        {/* ─── Main Videos Grid ─────────────────────────────────────────────── */}
-        <section className="space-y-4">
-          {videoTypeFilter !== "short" && (
+        {/* ─── 2. Dedicated 9:16 Vertical Shorts Grid (When on "short" tab) ─── */}
+        {videoTypeFilter === "short" && (
+          <section className="space-y-4">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2.5">
+              <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
+                <span className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center text-purple-600">
+                  <Flame className="w-4 h-4 fill-current" />
+                </span>
+                <span>مقاطع قصيرة</span>
+              </h2>
+            </div>
+
+            {filteredShorts.length === 0 ? (
+              <div className="text-center py-16 bg-card border border-border/60 rounded-3xl p-8 max-w-md mx-auto space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto text-purple-600">
+                  <Flame className="w-8 h-8 fill-current opacity-60" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-foreground">
+                    لا توجد مقاطع قصيرة مطابقة
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    جرب اختيار قناة أخرى أو عرض جميع الفيديوهات.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSearch("");
+                    setCategory("all");
+                    setSelectedChannelId("all");
+                    setVideoTypeFilter("all");
+                  }}
+                  className="rounded-xl text-xs gap-1"
+                >
+                  {t.showAll || "عرض جميع الفيديوهات"}
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {filteredShorts.map((sv) => renderShortCard(sv, true))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ─── 3. Regular Videos Grid ("أحدث الفيديوهات" — Never shows Shorts!) ─ */}
+        {videoTypeFilter !== "short" && (
+          <section className="space-y-4">
             <div className="flex items-center justify-between border-b border-border/50 pb-2">
               <h2 className="text-base font-bold flex items-center gap-2 text-foreground">
                 <Film className="w-4 h-4 text-primary" />
-                <span>{selectedChannel ? (t.channelVideos || "فيديوهات القناة") : (t.recentVideos || "جميع الفيديوهات والمحاضرات")}</span>
+                <span>
+                  {selectedChannel
+                    ? (t.channelVideos || "فيديوهات القناة")
+                    : (t.recentVideos || "أحدث الفيديوهات")}
+                </span>
               </h2>
-              <span className="text-xs text-muted-foreground font-mono">
-                {filtered.length} {t.videosCount || "فيديو"}
-              </span>
             </div>
-          )}
 
-          {filtered.length === 0 ? (
-            <div className="text-center py-16 bg-card border border-border/60 rounded-3xl p-8 max-w-md mx-auto space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto text-muted-foreground">
-                <Video className="w-8 h-8 opacity-40" />
+            {filteredRegularVideos.length === 0 ? (
+              <div className="text-center py-14 bg-card border border-border/60 rounded-3xl p-8 max-w-md mx-auto space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto text-muted-foreground">
+                  <Video className="w-8 h-8 opacity-40" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-foreground">
+                    {t.noMatchingVideos || "لا توجد فيديوهات عادية مطابقة"}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {filteredShorts.length > 0
+                      ? "يمكنك مشاهدة المقاطع القصيرة في قسم مقاطع قصيرة أعلاه."
+                      : (t.noMatchingVideosSub || "جرب البحث بكلمات أخرى أو اختر قناة أو تصنيفاً مختلفاً.")}
+                  </p>
+                </div>
+                {(search || category !== "all" || selectedChannelId !== "all" || videoTypeFilter !== "all") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSearch("");
+                      setCategory("all");
+                      setSelectedChannelId("all");
+                      setVideoTypeFilter("all");
+                    }}
+                    className="rounded-xl text-xs gap-1"
+                  >
+                    {t.showAll || "عرض جميع الفيديوهات"}
+                  </Button>
+                )}
               </div>
-              <div>
-                <h3 className="font-bold text-base text-foreground">
-                  {t.noMatchingVideos || "لا توجد فيديوهات مطابقة للبحث"}
-                </h3>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t.noMatchingVideosSub || "جرب البحث بكلمات أخرى أو اختر قناة أو تصنيفاً مختلفاً."}
-                </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredRegularVideos.map((v) => (
+                  <VideoCard
+                    key={v.id}
+                    video={v}
+                    channel={channelsById[v.channel_id]}
+                    isFavorite={favorites.includes(v.id)}
+                    isWatched={watchedIds.includes(v.id)}
+                    onToggleFavorite={toggleFavorite}
+                    onPlay={handlePlayVideo}
+                    onShare={handleShare}
+                  />
+                ))}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSearch("");
-                  setCategory("all");
-                  setSelectedChannelId("all");
-                  setVideoTypeFilter("all");
-                }}
-                className="rounded-xl text-xs gap-1"
-              >
-                {t.showAll || "عرض جميع الفيديوهات"}
-              </Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filtered.map((v) => (
-                <VideoCard
-                  key={v.id}
-                  video={v}
-                  channel={channelsById[v.channel_id]}
-                  isFavorite={favorites.includes(v.id)}
-                  isWatched={watchedIds.includes(v.id)}
-                  onToggleFavorite={toggleFavorite}
-                  onPlay={handlePlayVideo}
-                  onShare={handleShare}
-                />
-              ))}
-            </div>
-          )}
-        </section>
+            )}
+          </section>
+        )}
       </div>
 
       {/* ─── Regular Video Player Modal ────────────────────────────────────── */}
@@ -725,7 +797,7 @@ export default function Videos() {
         <VideoPlayer
           video={playingVideo}
           onClose={() => setPlayingVideo(null)}
-          playlist={filtered.filter((v) => v.video_type !== "short" && !v.youtube_url?.includes("/shorts/"))}
+          playlist={filteredRegularVideos}
           onSelectVideo={handlePlayVideo}
         />
       )}
@@ -734,11 +806,10 @@ export default function Videos() {
       {playingShort && (
         <ShortsPlayerModal
           initialVideo={playingShort}
-          shortsList={allShorts.length > 0 ? allShorts : [playingShort]}
+          shortsList={filteredShorts.length > 0 ? filteredShorts : (allShorts.length > 0 ? allShorts : [playingShort])}
+          channelsById={channelsById}
           isOpen={Boolean(playingShort)}
           onClose={() => setPlayingShort(null)}
-          onToggleFavorite={toggleFavorite}
-          favorites={favorites}
           user={user}
         />
       )}

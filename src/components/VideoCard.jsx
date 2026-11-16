@@ -1,4 +1,4 @@
-import { Play, Heart, Share2, Star, Clock, Video, CheckCircle, Radio } from "lucide-react";
+import { Play, Heart, Share2, Star, Clock, Video, CheckCircle, Radio, Flame } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
 import SmartImage from "./SmartImage";
@@ -62,8 +62,8 @@ export default function VideoCard({
               </span>
             )}
             {video.video_type === "short" && (
-              <span className="px-1.5 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold shadow-md">
-                {t.shortLabel || "شورت"}
+              <span className="w-6 h-6 rounded-md bg-purple-600/90 text-white flex items-center justify-center shadow-md">
+                <Flame className="w-3.5 h-3.5 fill-current" />
               </span>
             )}
             {video.video_type === "live" && (

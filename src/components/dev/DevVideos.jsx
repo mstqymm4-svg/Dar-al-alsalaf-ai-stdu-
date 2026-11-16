@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
   Plus, Pencil, Trash2, Eye, EyeOff, Upload, Save, Youtube, Star, StarOff,
-  Video, Tv, Loader2, Sparkles, CheckCircle2, Clock, DownloadCloud
+  Video, Tv, Loader2, Sparkles, CheckCircle2, Clock, DownloadCloud, Flame
 } from "lucide-react";
 import {
   extractYoutubeId,
@@ -25,6 +25,9 @@ import ChannelVideosImportModal from "@/components/dev/ChannelVideosImportModal"
 import { getSetting, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export { extractYoutubeId, getThumbnail };
+
+const isShortRecord = (v) =>
+  Boolean(v && (v.video_type === "short" || String(v.youtube_url || "").includes("/shorts/")));
 
 // ─── Video Channels Tab ───────────────────────────────────────────────────────
 function ChannelsTab() {
@@ -459,7 +462,7 @@ function ChannelsTab() {
                     variant="outline"
                     className="h-8 px-2.5 text-xs gap-1.5 text-primary border-primary/30 hover:bg-primary/10 shrink-0"
                     onClick={() => {
-                      setImportInitialType("all");
+                      setImportInitialType("videos");
                       setImportChannel(ch);
                     }}
                     title="استخراج واستيراد فيديوهات القناة"
@@ -530,7 +533,577 @@ function ChannelsTab() {
   );
 }
 
-// ─── Videos Tab ───────────────────────────────────────────────────────────────
+// ─── Dedicated Shorts Tab ─────────────────────────────────────────────────────
+function ShortsTab() {
+  const [shorts, setShorts] = useState([]);
+  const [channels, setChannels] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [search, setSearch] = useState("");
+  const [fetchingMeta, setFetchingMeta] = useState(false);
+  const [fetchSuccess, setFetchSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  // Channel Shorts Importer state
+  const [selectedChannelIdForImport, setSelectedChannelIdForImport] = useState("");
+  const [customChannelUrl, setCustomChannelUrl] = useState("");
+  const [importTargetChannel, setImportTargetChannel] = useState(null);
+  const [resolvingChannel, setResolvingChannel] = useState(false);
+
+  const lastFetchedId = useRef("");
+
+  const [form, setForm] = useState({
+    title: "",
+    youtube_url: "",
+    channel_id: "",
+    channel_name: "",
+    category: "عام",
+    visible: true,
+    sort_order: 0,
+  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [vData, chData] = await Promise.all([
+      base44.entities.Video.list("-created_date", 500),
+      base44.entities.VideoChannel.list("sort_order", 200),
+    ]);
+    const onlyShorts = (vData || []).filter((v) => isShortRecord(v));
+    setShorts(onlyShorts);
+    setChannels(chData || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Auto-fill Short metadata when pasting URL
+  const fetchShortMeta = useCallback(async (urlToFetch) => {
+    const videoId = extractYoutubeId(urlToFetch);
+    if (!videoId) return;
+    if (lastFetchedId.current === videoId) return;
+    lastFetchedId.current = videoId;
+
+    setFetchingMeta(true);
+    setFetchSuccess(false);
+    try {
+      const meta = await fetchVideoMetadata(urlToFetch);
+      if (meta) {
+        const matchedChannel = channels.find((c) =>
+          c.name && meta.channel_name && (
+            c.name.trim().toLowerCase() === meta.channel_name.trim().toLowerCase() ||
+            meta.channel_name.includes(c.name) ||
+            c.name.includes(meta.channel_name)
+          )
+        );
+        setForm((prev) => ({
+          ...prev,
+          title: meta.title || prev.title,
+          channel_name: matchedChannel?.name || meta.channel_name || prev.channel_name,
+          channel_id: matchedChannel ? matchedChannel.id : prev.channel_id,
+          category: matchedChannel?.category || prev.category || "عام",
+        }));
+        setFetchSuccess(true);
+        toast.success(`تم جلب اسم المقطع القصير والقناة تلقائياً ✓`);
+      }
+    } catch (err) {
+      console.warn("Short auto-fetch error:", err);
+    } finally {
+      setFetchingMeta(false);
+    }
+  }, [channels]);
+
+  useEffect(() => {
+    if (!showAddForm || !form.youtube_url) return;
+    const videoId = extractYoutubeId(form.youtube_url);
+    if (!videoId) return;
+    const timer = setTimeout(() => {
+      fetchShortMeta(form.youtube_url);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [form.youtube_url, showAddForm, fetchShortMeta]);
+
+  const handleSaveShort = async () => {
+    if (!form.title || !form.youtube_url) {
+      toast.error("يرجى إدخال رابط الشورت وعنوانه");
+      return;
+    }
+    setSaving(true);
+    const thumbnail = getThumbnail(form.youtube_url);
+    const ch = channels.find((c) => c.id === form.channel_id);
+    const payload = {
+      ...form,
+      thumbnail,
+      channel_name: ch?.name || form.channel_name || "",
+      video_type: "short",
+      duration: "0:60",
+      is_featured: false,
+    };
+    try {
+      if (editing) {
+        await base44.entities.Video.update(editing.id, payload);
+        toast.success("تم تحديث المقطع القصير (Short) ✓");
+      } else {
+        await base44.entities.Video.create(payload);
+        toast.success("تمت إضافة المقطع القصير (Short) بنجاح ✓");
+      }
+      setShowAddForm(false);
+      setEditing(null);
+      lastFetchedId.current = "";
+      setForm({
+        title: "",
+        youtube_url: "",
+        channel_id: "",
+        channel_name: "",
+        category: "عام",
+        visible: true,
+        sort_order: 0,
+      });
+      await load();
+    } catch (err) {
+      toast.error("فشل الحفظ: " + (err?.message || "خطأ غير معروف"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenChannelShortsImporter = async () => {
+    const url = customChannelUrl.trim();
+    if (!url && !selectedChannelIdForImport) {
+      toast.error("اختر قناة من القائمة أو الصق رابط القناة");
+      return;
+    }
+    const matched = channels.find(
+      (c) => c.id === selectedChannelIdForImport || (url && c.youtube_url === url)
+    );
+    if (matched) {
+      setImportTargetChannel(matched);
+      return;
+    }
+    setResolvingChannel(true);
+    try {
+      const meta = await fetchChannelMetadata(url);
+      setImportTargetChannel({
+        id: "",
+        name: meta?.name || "قناة يوتيوب",
+        channel_logo: meta?.channel_logo || "",
+        youtube_url: meta?.youtube_url || normalizeChannelUrl(url),
+        category: "عام",
+      });
+    } catch {
+      setImportTargetChannel({
+        id: "",
+        name: "قناة يوتيوب",
+        channel_logo: "",
+        youtube_url: normalizeChannelUrl(url),
+        category: "عام",
+      });
+    } finally {
+      setResolvingChannel(false);
+    }
+  };
+
+  const filteredShorts = shorts.filter(
+    (s) =>
+      !search ||
+      s.title?.includes(search) ||
+      s.channel_name?.includes(search) ||
+      s.category?.includes(search)
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Top Banner: 1-Click Channel Shorts Extractor */}
+      <div className="bg-purple-500/5 border border-purple-500/25 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-sm font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+              <Flame className="w-4 h-4 fill-current" />
+              سحب المقاطع القصيرة (Shorts) تلقائياً من القناة
+            </h4>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              اختر قناة أو الصق رابطها وسيقوم النظام تلقائياً بجلب جميع مقاطع الشورتس مع عناوينها وصورها واسم القناة
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+          <div className="sm:col-span-5">
+            <Label className="text-xs mb-1 block">اختر من القنوات المضافة:</Label>
+            <Select
+              value={selectedChannelIdForImport}
+              onValueChange={(val) => {
+                setSelectedChannelIdForImport(val);
+                const ch = channels.find((c) => c.id === val);
+                if (ch?.youtube_url) setCustomChannelUrl(ch.youtube_url);
+              }}
+            >
+              <SelectTrigger className="h-9 text-xs bg-background">
+                <SelectValue placeholder="اختر قناة..." />
+              </SelectTrigger>
+              <SelectContent>
+                {channels.filter((c) => c.youtube_url).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="sm:col-span-5">
+            <Label className="text-xs mb-1 block">أو الصق رابط أي قناة يوتيوب:</Label>
+            <Input
+              value={customChannelUrl}
+              onChange={(e) => setCustomChannelUrl(e.target.value)}
+              placeholder="https://youtube.com/@channelName"
+              className="h-9 text-xs bg-background"
+              dir="ltr"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
+            <Button
+              size="sm"
+              disabled={resolvingChannel || (!customChannelUrl.trim() && !selectedChannelIdForImport)}
+              onClick={handleOpenChannelShortsImporter}
+              className="w-full h-9 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold gap-1"
+            >
+              {resolvingChannel ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
+              <span>جلب الشورتس</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Toolbar: Search + Add Single Short by Link */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold flex items-center gap-1.5">
+          <span>🟣 المقاطع القصيرة المضافة ({shorts.length})</span>
+        </h3>
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="بحث في الشورتس..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 w-36 text-xs"
+          />
+          <Button
+            size="sm"
+            className="bg-purple-600 hover:bg-purple-700 text-white text-xs gap-1"
+            onClick={() => {
+              setEditing(null);
+              lastFetchedId.current = "";
+              setFetchSuccess(false);
+              setForm({
+                title: "",
+                youtube_url: "",
+                channel_id: "",
+                channel_name: "",
+                category: "عام",
+                visible: true,
+                sort_order: shorts.length,
+              });
+              setShowAddForm((prev) => !prev);
+            }}
+          >
+            <Plus className="w-4 h-4" /> إضافة شورت بالرابط
+          </Button>
+        </div>
+      </div>
+
+      {/* Add / Edit Single Short Form */}
+      {showAddForm && (
+        <div className="bg-muted/30 border border-purple-500/30 rounded-2xl p-4 space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <Label className="text-xs font-bold">رابط المقطع القصير (YouTube Shorts)</Label>
+              <div className="flex items-center gap-1.5 text-[11px]">
+                {fetchingMeta && (
+                  <span className="text-purple-600 flex items-center gap-1 animate-pulse font-medium">
+                    <Loader2 className="w-3 h-3 animate-spin" /> جاري جلب الاسم والقناة تلقائياً...
+                  </span>
+                )}
+                {fetchSuccess && !fetchingMeta && (
+                  <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                    <CheckCircle2 className="w-3 h-3" /> تم جلب البيانات تلقائياً
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                value={form.youtube_url}
+                onChange={(e) => setForm({ ...form, youtube_url: e.target.value })}
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData("text");
+                  if (pasted) fetchShortMeta(pasted);
+                }}
+                placeholder="https://youtube.com/shorts/..."
+                className="h-9 text-sm"
+                dir="ltr"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={fetchingMeta || !form.youtube_url}
+                onClick={() => fetchShortMeta(form.youtube_url)}
+                className="shrink-0 h-9 text-xs gap-1"
+              >
+                {fetchingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-purple-600" />}
+                جلب الاسم
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
+            {/* 9:16 Vertical Preview */}
+            {form.youtube_url && extractYoutubeId(form.youtube_url) && (
+              <div className="sm:col-span-3 flex justify-center">
+                <div className="w-28 aspect-[9/16] rounded-xl overflow-hidden bg-black border border-purple-500/30 relative shadow-md">
+                  <img
+                    src={getThumbnail(form.youtube_url)}
+                    alt="Short preview"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/20" />
+                  <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-purple-600/90 text-white flex items-center justify-center shadow">
+                    <Flame className="w-3 h-3 fill-current" />
+                  </span>
+                  <p className="absolute bottom-2 inset-x-2 text-[10px] font-bold text-white line-clamp-2 text-right">
+                    {form.title || "عنوان المقطع"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className={`${form.youtube_url && extractYoutubeId(form.youtube_url) ? "sm:col-span-9" : "sm:col-span-12"} space-y-3`}>
+              <div>
+                <Label className="text-xs">عنوان المقطع القصير (يُجلب تلقائياً)</Label>
+                <Input
+                  value={form.title}
+                  onChange={(e) => setForm({ ...form, title: e.target.value })}
+                  placeholder="عنوان الشورت"
+                  className="h-9 text-sm"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <Label className="text-xs">القناة المرتبطة</Label>
+                  <Select
+                    value={form.channel_id}
+                    onValueChange={(v) => {
+                      const ch = channels.find((c) => c.id === v);
+                      setForm({
+                        ...form,
+                        channel_id: v,
+                        channel_name: ch ? ch.name : form.channel_name,
+                        category: ch?.category || form.category,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder="اختر قناة" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {channels.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-xs">اسم القناة</Label>
+                  <Input
+                    value={form.channel_name}
+                    onChange={(e) => setForm({ ...form, channel_name: e.target.value })}
+                    placeholder="اسم القناة"
+                    className="h-9 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <Label className="text-xs">التصنيف</Label>
+                  <Input
+                    value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="h-9 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <Switch checked={form.visible} onCheckedChange={(v) => setForm({ ...form, visible: v })} />
+                  <span>{form.visible ? "ظاهر للمستخدمين" : "مخفي"}</span>
+                </label>
+
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleSaveShort}
+                    disabled={saving}
+                    className="bg-purple-600 hover:bg-purple-700 text-white text-xs gap-1.5"
+                  >
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    <span>{editing ? "حفظ التعديلات" : "حفظ الشورت"}</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={saving}
+                    onClick={() => { setShowAddForm(false); setEditing(null); }}
+                    className="text-xs"
+                  >
+                    إلغاء
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 9:16 Vertical Grid of Shorts */}
+      {loading ? (
+        <p className="text-center text-sm text-muted-foreground py-8">جاري التحميل...</p>
+      ) : filteredShorts.length === 0 ? (
+        <div className="text-center py-12 bg-card border border-dashed border-border rounded-2xl p-6 space-y-2">
+          <Flame className="w-8 h-8 text-purple-500 fill-current mx-auto opacity-60" />
+          <p className="text-sm font-bold">لا توجد مقاطع قصيرة مضافة بعد</p>
+          <p className="text-xs text-muted-foreground">
+            استخدم صندوق السحب التلقائي أعلاه لجلب المقاطع القصيرة من أي قناة دفعة واحدة، أو أضف مقطعاً بالرابط.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
+          {filteredShorts.map((s) => (
+            <div
+              key={s.id}
+              className={`group rounded-2xl overflow-hidden border border-border bg-card flex flex-col justify-between transition-all ${
+                !s.visible ? "opacity-50" : ""
+              }`}
+            >
+              <div className="relative aspect-[9/16] bg-black overflow-hidden">
+                <img
+                  src={s.thumbnail || getThumbnail(s.youtube_url)}
+                  alt={s.title}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-black/30" />
+                <span className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-purple-600/90 text-white flex items-center justify-center shadow">
+                  <Flame className="w-3.5 h-3.5 fill-current" />
+                </span>
+                <div className="absolute bottom-2.5 inset-x-2.5 text-right space-y-0.5">
+                  <p className="text-xs font-bold text-white line-clamp-2 leading-snug">{s.title}</p>
+                  <p className="text-[10px] text-white/75 truncate">{s.channel_name || "بدون قناة"}</p>
+                </div>
+              </div>
+
+              <div className="p-2 flex items-center justify-between gap-1 bg-card border-t border-border">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground truncate">
+                  {s.category || "عام"}
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={async () => {
+                      try {
+                        await base44.entities.Video.update(s.id, { visible: !s.visible });
+                        await load();
+                      } catch {
+                        toast.error("فشل التحديث");
+                      }
+                    }}
+                  >
+                    {s.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7"
+                    onClick={() => {
+                      setEditing(s);
+                      lastFetchedId.current = extractYoutubeId(s.youtube_url) || "";
+                      setForm({
+                        title: s.title || "",
+                        youtube_url: s.youtube_url || "",
+                        channel_id: s.channel_id || "",
+                        channel_name: s.channel_name || "",
+                        category: s.category || "عام",
+                        visible: s.visible !== false,
+                        sort_order: s.sort_order || 0,
+                      });
+                      setShowAddForm(true);
+                    }}
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </Button>
+                  {confirmDeleteId === s.id ? (
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-6 px-1.5 text-[10px]"
+                        onClick={async () => {
+                          setConfirmDeleteId(null);
+                          try {
+                            await base44.entities.Video.delete(s.id);
+                            toast.success("تم حذف الشورت ✓");
+                            await load();
+                          } catch {
+                            toast.error("فشل الحذف");
+                          }
+                        }}
+                      >
+                        تأكيد
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-1.5 text-[10px]"
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        إلغاء
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => setConfirmDeleteId(s.id)}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ChannelVideosImportModal
+        channel={importTargetChannel}
+        initialType="shorts"
+        isOpen={Boolean(importTargetChannel)}
+        onClose={() => setImportTargetChannel(null)}
+        onSuccess={load}
+      />
+    </div>
+  );
+}
+
+// ─── Regular Videos Tab (Excludes Shorts) ─────────────────────────────────────
 function VideosTab() {
   const [videos, setVideos] = useState([]);
   const [channels, setChannels] = useState([]);
@@ -542,10 +1115,6 @@ function VideosTab() {
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteVideoId, setConfirmDeleteVideoId] = useState(null);
-  const [showShortsImporter, setShowShortsImporter] = useState(false);
-  const [shortsChannelUrl, setShortsChannelUrl] = useState("");
-  const [selectedShortsChannelId, setSelectedShortsChannelId] = useState("");
-  const [shortsImportTarget, setShortsImportTarget] = useState(null);
   const lastFetchedVideoId = useRef("");
 
   const [form, setForm] = useState({
@@ -568,7 +1137,8 @@ function VideosTab() {
       base44.entities.Video.list("-created_date", 500),
       base44.entities.VideoChannel.list("sort_order", 200),
     ]);
-    setVideos(vData || []);
+    // Keep only non-Short videos in VideosTab so Shorts are managed in ShortsTab
+    setVideos((vData || []).filter((v) => !isShortRecord(v)));
     setChannels(chData || []);
     setLoading(false);
   }, []);
@@ -588,7 +1158,6 @@ function VideosTab() {
     try {
       const meta = await fetchVideoMetadata(urlToFetch);
       if (meta) {
-        // Look up if a matching channel exists in channels list
         const matchedChannel = channels.find((c) =>
           (c.name && meta.channel_name && (c.name.trim().toLowerCase() === meta.channel_name.trim().toLowerCase() ||
            meta.channel_name.includes(c.name) || c.name.includes(meta.channel_name)))
@@ -676,22 +1245,14 @@ function VideosTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold">الفيديوهات والمقاطع القصيرة ({videos.length})</h3>
+        <h3 className="text-sm font-bold">الفيديوهات والمحاضرات ({videos.length})</h3>
         <div className="flex flex-wrap gap-2">
           <Input
             placeholder="بحث..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-32 text-sm"
+            className="h-8 w-36 text-sm"
           />
-          <Button
-            size="sm"
-            variant="outline"
-            className="border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 gap-1"
-            onClick={() => setShowShortsImporter((prev) => !prev)}
-          >
-            <Sparkles className="w-3.5 h-3.5" /> سحب شورتس من قناة
-          </Button>
           <Button size="sm" onClick={() => {
             setEditing(null);
             lastFetchedVideoId.current = "";
@@ -711,81 +1272,10 @@ function VideosTab() {
             });
             setShowForm(true);
           }}>
-            <Plus className="w-4 h-4 ml-1" /> إضافة فيديو / شورت
+            <Plus className="w-4 h-4 ml-1" /> إضافة فيديو
           </Button>
         </div>
       </div>
-
-      {showShortsImporter && (
-        <div className="bg-purple-500/5 border border-purple-500/25 rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4" /> سحب المقاطع القصيرة (Shorts) من القناة تلقائياً مع الاسم وكافة البيانات
-            </h4>
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowShortsImporter(false)}>
-              إغلاق
-            </Button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs mb-1 block">اختر من القنوات المضافة:</Label>
-              <Select
-                value={selectedShortsChannelId}
-                onValueChange={(val) => {
-                  setSelectedShortsChannelId(val);
-                  const ch = channels.find((c) => c.id === val);
-                  if (ch?.youtube_url) setShortsChannelUrl(ch.youtube_url);
-                }}
-              >
-                <SelectTrigger className="h-9 text-sm bg-background">
-                  <SelectValue placeholder="اختر قناة لسحب مقاطعها القصيرة..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {channels.filter((c) => c.youtube_url).map((c) => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs mb-1 block">أو الصق رابط أي قناة يوتيوب مباشرةً:</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={shortsChannelUrl}
-                  onChange={(e) => setShortsChannelUrl(e.target.value)}
-                  placeholder="https://youtube.com/@channelName"
-                  className="h-9 text-sm bg-background"
-                  dir="ltr"
-                />
-                <Button
-                  size="sm"
-                  className="h-9 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shrink-0 gap-1"
-                  disabled={!shortsChannelUrl.trim()}
-                  onClick={async () => {
-                    const matched = channels.find(
-                      (c) => c.id === selectedShortsChannelId || c.youtube_url === shortsChannelUrl.trim()
-                    );
-                    if (matched) {
-                      setShortsImportTarget(matched);
-                    } else {
-                      const meta = await fetchChannelMetadata(shortsChannelUrl.trim());
-                      setShortsImportTarget({
-                        id: "",
-                        name: meta?.name || "قناة يوتيوب",
-                        channel_logo: meta?.channel_logo || "",
-                        youtube_url: meta?.youtube_url || normalizeChannelUrl(shortsChannelUrl.trim()),
-                        category: "عام",
-                      });
-                    }
-                  }}
-                >
-                  <DownloadCloud className="w-3.5 h-3.5" /> فتح ساحب الشورتس
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showForm && (
         <div className="bg-muted/30 border border-border rounded-xl p-4 space-y-3">
@@ -814,7 +1304,7 @@ function VideosTab() {
                   const pasted = e.clipboardData.getData("text");
                   if (pasted) fetchVideoData(pasted);
                 }}
-                placeholder="https://youtube.com/watch?v=... أو https://youtu.be/... أو shorts"
+                placeholder="https://youtube.com/watch?v=... أو https://youtu.be/..."
                 className="h-9 text-sm"
               />
               <Button
@@ -831,7 +1321,7 @@ function VideosTab() {
               </Button>
             </div>
             <p className="text-[10px] text-muted-foreground mt-1">
-              💡 مجرد لصق رابط الفيديو سيتم استخراج وتعبئة العنوان، وقت الفيديو، اسم القناة ونوع الفيديو تلقائياً.
+              💡 مجرد لصق رابط الفيديو سيتم استخراج وتعبئة العنوان، وقت الفيديو، واسم القناة تلقائياً.
             </p>
           </div>
 
@@ -927,8 +1417,8 @@ function VideosTab() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="normal">📺 فيديو عادي</SelectItem>
-                  <SelectItem value="short">🟣 شورت / قصير</SelectItem>
                   <SelectItem value="live">🔴 بث مباشر</SelectItem>
+                  <SelectItem value="short">🟣 شورت / قصير</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -990,7 +1480,7 @@ function VideosTab() {
       {loading ? (
         <p className="text-center text-sm text-muted-foreground py-8">جاري التحميل...</p>
       ) : filtered.length === 0 ? (
-        <p className="text-center text-sm text-muted-foreground py-8">لا توجد فيديوهات</p>
+        <p className="text-center text-sm text-muted-foreground py-8">لا توجد فيديوهات عادية</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtered.map((v) => (
@@ -1011,7 +1501,6 @@ function VideosTab() {
                   <p className="text-xs text-muted-foreground truncate">{v.channel_name || "بدون قناة"}</p>
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     {v.is_featured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">مميز</span>}
-                    {v.video_type === "short" && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 font-medium">شورت</span>}
                     {v.video_type === "live" && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 font-medium">مباشر</span>}
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{v.category}</span>
                   </div>
@@ -1078,14 +1567,6 @@ function VideosTab() {
           ))}
         </div>
       )}
-
-      <ChannelVideosImportModal
-        channel={shortsImportTarget}
-        initialType="shorts"
-        isOpen={Boolean(shortsImportTarget)}
-        onClose={() => setShortsImportTarget(null)}
-        onSuccess={load}
-      />
     </div>
   );
 }
@@ -1144,12 +1625,22 @@ export default function DevVideos() {
   return (
     <div className="space-y-4">
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="grid grid-cols-3 w-full">
-          <TabsTrigger value="videos" className="text-xs gap-1"><Video className="w-3.5 h-3.5" /> الفيديوهات</TabsTrigger>
-          <TabsTrigger value="channels" className="text-xs gap-1"><Tv className="w-3.5 h-3.5" /> القنوات</TabsTrigger>
-          <TabsTrigger value="settings" className="text-xs gap-1"><Youtube className="w-3.5 h-3.5" /> الإعدادات</TabsTrigger>
+        <TabsList className="grid grid-cols-4 w-full">
+          <TabsTrigger value="videos" className="text-xs gap-1">
+            <Video className="w-3.5 h-3.5" /> الفيديوهات
+          </TabsTrigger>
+          <TabsTrigger value="shorts" className="text-xs gap-1">
+            <Flame className="w-3.5 h-3.5 text-purple-500" /> الشورتس
+          </TabsTrigger>
+          <TabsTrigger value="channels" className="text-xs gap-1">
+            <Tv className="w-3.5 h-3.5" /> القنوات
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="text-xs gap-1">
+            <Youtube className="w-3.5 h-3.5" /> الإعدادات
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="videos" className="mt-4"><VideosTab /></TabsContent>
+        <TabsContent value="shorts" className="mt-4"><ShortsTab /></TabsContent>
         <TabsContent value="channels" className="mt-4"><ChannelsTab /></TabsContent>
         <TabsContent value="settings" className="mt-4"><VideoSettingsTab /></TabsContent>
       </Tabs>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,15 +29,18 @@ export default function ChannelVideosImportModal({
   const [existingVideoUrls, setExistingVideoUrls] = useState(new Set());
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const existingSetRef = useRef(new Set());
 
   const handleFetchVideos = useCallback(
-    async (overrideType) => {
+    async (overrideType, overrideExistingSet) => {
       if (!channel?.youtube_url) {
         toast.error("القناة لا تحتوي على رابط يوتيوب صالح");
         return;
       }
 
       const activeType = overrideType || contentType;
+      const activeExisting = overrideExistingSet || existingSetRef.current;
+
       setLoading(true);
       setVideos([]);
       setSelectedIds(new Set());
@@ -60,7 +63,7 @@ export default function ChannelVideosImportModal({
         const newIds = new Set();
         fetched.forEach((v) => {
           const id = extractYoutubeId(v.youtube_url);
-          if (id && !existingVideoUrls.has(id)) {
+          if (id && !activeExisting.has(id)) {
             newIds.add(id);
           }
         });
@@ -78,10 +81,10 @@ export default function ChannelVideosImportModal({
         setLoading(false);
       }
     },
-    [channel, contentType, limit, existingVideoUrls]
+    [channel, contentType, limit]
   );
 
-  // Load existing videos from DB when modal opens to mark duplicates
+  // Load existing videos from DB when modal opens to mark duplicates, then auto-fetch immediately
   useEffect(() => {
     if (!isOpen || !channel) return;
     const startType = initialType || "all";
@@ -97,10 +100,18 @@ export default function ChannelVideosImportModal({
           const id = extractYoutubeId(v.youtube_url);
           if (id) set.add(id);
         });
+        existingSetRef.current = set;
         setExistingVideoUrls(set);
+        if (channel?.youtube_url) {
+          handleFetchVideos(startType, set);
+        }
       })
-      .catch(() => {});
-  }, [isOpen, channel, initialType]);
+      .catch(() => {
+        if (channel?.youtube_url) {
+          handleFetchVideos(startType, new Set());
+        }
+      });
+  }, [isOpen, channel, initialType, handleFetchVideos]);
 
   const toggleSelect = (id) => {
     const next = new Set(selectedIds);
@@ -212,7 +223,11 @@ export default function ChannelVideosImportModal({
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => setContentType("shorts")}
+                  disabled={loading || importing}
+                  onClick={() => {
+                    setContentType("shorts");
+                    handleFetchVideos("shorts");
+                  }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
                     contentType === "shorts"
                       ? "bg-purple-600 text-white border-purple-600 shadow-sm"
@@ -223,7 +238,11 @@ export default function ChannelVideosImportModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setContentType("videos")}
+                  disabled={loading || importing}
+                  onClick={() => {
+                    setContentType("videos");
+                    handleFetchVideos("videos");
+                  }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
                     contentType === "videos"
                       ? "bg-primary text-primary-foreground border-primary shadow-sm"
@@ -234,7 +253,11 @@ export default function ChannelVideosImportModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setContentType("all")}
+                  disabled={loading || importing}
+                  onClick={() => {
+                    setContentType("all");
+                    handleFetchVideos("all");
+                  }}
                   className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
                     contentType === "all"
                       ? "bg-amber-600 text-white border-amber-600 shadow-sm"
@@ -354,6 +377,23 @@ export default function ChannelVideosImportModal({
             </div>
           </div>
 
+          {/* Loading state */}
+          {loading && videos.length === 0 && (
+            <div className="text-center py-12 px-4 border border-dashed border-purple-500/30 bg-purple-500/5 rounded-xl space-y-3">
+              <Loader2 className="w-8 h-8 animate-spin text-purple-600 mx-auto" />
+              <div className="max-w-sm mx-auto">
+                <h4 className="font-bold text-sm text-foreground">
+                  {contentType === "shorts"
+                    ? "جاري سحب المقاطع القصيرة (Shorts) وعناوينها من القناة..."
+                    : "جاري استخراج مقاطع القناة وعناوينها..."}
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  يرجى الانتظار لحظات بينما يتم جلب الأسماء والصور تلقائياً.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Prompt before fetching */}
           {!loading && videos.length === 0 && (
             <div className="text-center py-10 px-4 border border-dashed border-border rounded-xl space-y-3">
@@ -426,14 +466,18 @@ export default function ChannelVideosImportModal({
                         )}
                       </div>
 
-                      {/* Thumbnail */}
-                      <div className="relative w-24 aspect-video rounded-lg overflow-hidden bg-muted shrink-0">
+                      {/* Thumbnail (Vertical 9:16 for Shorts, 16:9 for Regular) */}
+                      <div
+                        className={`relative ${
+                          isShortItem ? "w-14 aspect-[9/16]" : "w-24 aspect-video"
+                        } rounded-lg overflow-hidden bg-black shrink-0 border border-border/50`}
+                      >
                         <img
                           src={v.thumbnail || getThumbnail(v.youtube_url)}
                           alt={v.title}
                           className="w-full h-full object-cover"
                         />
-                        {v.duration && (
+                        {v.duration && !isShortItem && (
                           <span className="absolute bottom-1 left-1 px-1 py-0.5 rounded bg-black/85 text-white text-[9px] font-mono flex items-center gap-0.5">
                             <Clock className="w-2.5 h-2.5" /> {v.duration}
                           </span>
@@ -516,7 +560,11 @@ export default function ChannelVideosImportModal({
               size="sm"
               disabled={importing || selectedIds.size === 0}
               onClick={handleStartImport}
-              className="text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-bold shadow-md"
+              className={`text-xs gap-1.5 font-bold shadow-md ${
+                contentType === "shorts"
+                  ? "bg-purple-600 hover:bg-purple-700 text-white"
+                  : "bg-primary hover:bg-primary/90 text-primary-foreground"
+              }`}
             >
               {importing ? (
                 <>

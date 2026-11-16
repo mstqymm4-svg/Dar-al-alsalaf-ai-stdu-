@@ -2,9 +2,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Volume2, VolumeX, ChevronUp, ChevronDown,
-  Sparkles, Tv
+  Flame, Tv
 } from "lucide-react";
-import { extractYoutubeId } from "@/lib/youtubeMeta";
+import { extractYoutubeId, getThumbnail } from "@/lib/youtubeMeta";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import { markVideoWatched, getAccountEmail } from "@/lib/activeUser";
@@ -12,21 +12,30 @@ import { markVideoWatched, getAccountEmail } from "@/lib/activeUser";
 export default function ShortsPlayerModal({
   initialVideo,
   shortsList = [],
+  channelsById = {},
   isOpen,
   onClose,
   user = null,
 }) {
   const t = useT();
-  // Filter only shorts or use provided list
   const list = shortsList.length > 0 ? shortsList : (initialVideo ? [initialVideo] : []);
   const initialIndex = list.findIndex((v) => v.id === initialVideo?.id);
   const [currentIndex, setCurrentIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
   const [muted, setMuted] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
   const [showHint, setShowHint] = useState(true);
   const [direction, setDirection] = useState(0); // 1 = next (down), -1 = prev (up)
 
+  const iframeRef = useRef(null);
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
+
   const currentVideo = list[currentIndex] || initialVideo;
   const videoId = extractYoutubeId(currentVideo?.youtube_url);
+  const currentChannel = currentVideo?.channel_id ? channelsById[currentVideo.channel_id] : null;
+  const channelLogo = currentChannel?.channel_logo || currentVideo?.channel_logo || "";
+  const channelName = currentChannel?.name || currentVideo?.channel_name || "";
+  const posterUrl = currentVideo?.thumbnail || (videoId ? getThumbnail(currentVideo?.youtube_url) : "");
 
   // Sync index when initialVideo changes
   useEffect(() => {
@@ -36,6 +45,19 @@ export default function ShortsPlayerModal({
     }
   }, [initialVideo, list]);
 
+  // Reset iframeLoaded when switching between Shorts & preload next thumbnail
+  useEffect(() => {
+    setIframeLoaded(false);
+    const nextVideo = list[currentIndex + 1];
+    if (nextVideo) {
+      const nextThumb = nextVideo.thumbnail || getThumbnail(nextVideo.youtube_url);
+      if (nextThumb) {
+        const img = new Image();
+        img.src = nextThumb;
+      }
+    }
+  }, [currentIndex, videoId, list]);
+
   // Record watched when currentVideo changes
   useEffect(() => {
     if (currentVideo?.id) {
@@ -43,12 +65,42 @@ export default function ShortsPlayerModal({
     }
   }, [currentVideo, user]);
 
-  // Hide swipe hint after 3.5 seconds
+  // Hide swipe hint after 3 seconds
   useEffect(() => {
     setShowHint(true);
-    const timer = setTimeout(() => setShowHint(false), 3500);
+    const timer = setTimeout(() => setShowHint(false), 3000);
     return () => clearTimeout(timer);
   }, [currentIndex]);
+
+  // Send YouTube Player API command without reloading the iframe
+  const sendPlayerCommand = useCallback((func, args = []) => {
+    try {
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ event: "command", func, args }),
+        "*"
+      );
+    } catch {
+      // ignore cross-origin postMessage errors
+    }
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      sendPlayerCommand(next ? "mute" : "unMute");
+      return next;
+    });
+  }, [sendPlayerCommand]);
+
+  const handleIframeLoad = useCallback(() => {
+    setIframeLoaded(true);
+    if (mutedRef.current) {
+      sendPlayerCommand("mute");
+    } else {
+      sendPlayerCommand("unMute");
+    }
+    sendPlayerCommand("playVideo");
+  }, [sendPlayerCommand]);
 
   const goToNext = useCallback(() => {
     if (currentIndex < list.length - 1) {
@@ -79,18 +131,18 @@ export default function ShortsPlayerModal({
       } else if (e.key === "Escape") {
         onClose();
       } else if (e.key === "m" || e.key === "M") {
-        setMuted((m) => !m);
+        toggleMute();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, goToNext, goToPrev, onClose]);
+  }, [isOpen, goToNext, goToPrev, onClose, toggleMute]);
 
   // Throttled mouse wheel scroll navigation
   const wheelLockRef = useRef(false);
   const handleWheel = useCallback((e) => {
     if (wheelLockRef.current) return;
-    if (Math.abs(e.deltaY) > 35) {
+    if (Math.abs(e.deltaY) > 30) {
       wheelLockRef.current = true;
       if (e.deltaY > 0) {
         goToNext();
@@ -99,27 +151,41 @@ export default function ShortsPlayerModal({
       }
       setTimeout(() => {
         wheelLockRef.current = false;
-      }, 650);
+      }, 600);
     }
   }, [goToNext, goToPrev]);
 
   // Touch & pointer drag gesture handling (Swipe up / down like YouTube Shorts)
-  const touchStartY = useRef(null);
+  const dragStartY = useRef(null);
   const handleTouchStart = (e) => {
-    touchStartY.current = e.touches?.[0]?.clientY ?? null;
+    dragStartY.current = e.touches?.[0]?.clientY ?? null;
   };
   const handleTouchEnd = (e) => {
-    if (touchStartY.current === null) return;
+    if (dragStartY.current === null) return;
     const endY = e.changedTouches?.[0]?.clientY;
     if (typeof endY === "number") {
-      const deltaY = endY - touchStartY.current;
-      if (deltaY < -40) {
+      const deltaY = endY - dragStartY.current;
+      if (deltaY < -35) {
         goToNext(); // Swipe Up -> Next short
-      } else if (deltaY > 40) {
+      } else if (deltaY > 35) {
         goToPrev(); // Swipe Down -> Prev short
       }
     }
-    touchStartY.current = null;
+    dragStartY.current = null;
+  };
+
+  const handleMouseDown = (e) => {
+    dragStartY.current = e.clientY;
+  };
+  const handleMouseUp = (e) => {
+    if (dragStartY.current === null) return;
+    const deltaY = e.clientY - dragStartY.current;
+    if (deltaY < -45) {
+      goToNext();
+    } else if (deltaY > 45) {
+      goToPrev();
+    }
+    dragStartY.current = null;
   };
 
   if (!isOpen || !currentVideo) return null;
@@ -137,37 +203,52 @@ export default function ShortsPlayerModal({
       {/* Close button top corner */}
       <button
         onClick={onClose}
-        className="absolute top-4 left-4 z-50 p-2.5 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white transition-colors border border-white/10 shadow-lg"
+        className="absolute top-4 left-4 z-50 p-2.5 rounded-full bg-black/65 hover:bg-black/85 text-white/90 hover:text-white transition-colors border border-white/15 shadow-lg"
         title={t.close || "إغلاق"}
       >
         <X className="w-5 h-5" />
       </button>
 
       {/* Main Shorts Container: 9:16 aspect ratio */}
-      <div className="relative w-full h-full sm:h-[92vh] sm:max-w-[430px] sm:rounded-3xl overflow-hidden bg-black shadow-2xl flex flex-col justify-between border border-white/10">
+      <div className="relative w-full h-full sm:h-[92vh] sm:max-w-[420px] sm:rounded-3xl overflow-hidden bg-zinc-950 shadow-2xl flex flex-col justify-between border border-white/10">
         {/* Active Short Video (Non-interactive IFrame + Protective Touch Shield) */}
         <div className="absolute inset-0 z-0 bg-black flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentVideo.id || videoId}
-              initial={{ opacity: 0, y: direction * 80 }}
+              initial={{ opacity: 0, y: direction * 65 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -direction * 80 }}
-              transition={{ duration: 0.28, ease: "easeOut" }}
-              className="w-full h-full relative overflow-hidden"
+              exit={{ opacity: 0, y: -direction * 65 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+              className="w-full h-full relative overflow-hidden bg-black"
             >
+              {/* Thumbnail Backdrop while iframe loads so there is never a black flash */}
+              {posterUrl && (
+                <img
+                  src={posterUrl}
+                  alt={currentVideo.title}
+                  className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+                    iframeLoaded ? "opacity-0" : "opacity-85 blur-[1px] scale-105"
+                  }`}
+                />
+              )}
+
               {videoId ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${videoId}&controls=0&disablekb=1&fs=0&iv_load_policy=3&modestbranding=1&rel=0&playsinline=1`}
+                  ref={iframeRef}
+                  onLoad={handleIframeLoad}
+                  src={`https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1&loop=1&playlist=${videoId}&controls=0&disablekb=1&fs=0&iv_load_policy=3&modestbranding=1&rel=0&playsinline=1`}
                   title={currentVideo.title}
                   tabIndex={-1}
-                  className="w-full h-[116%] -mt-[8%] object-cover pointer-events-none select-none border-0"
+                  className={`w-full h-[124%] -mt-[12%] object-cover pointer-events-none select-none border-0 transition-opacity duration-300 ${
+                    iframeLoaded ? "opacity-100" : "opacity-0"
+                  }`}
                   allow="autoplay; encrypted-media"
                 />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center text-white/50 p-6 text-center">
                   <Tv className="w-12 h-12 mb-3 opacity-40" />
-                  <p className="text-sm">{t.videoLinkNotAvailable || "رابط الفيديو غير متوفر"}</p>
+                  <p className="text-sm">{t.videoLinkNotAvailable || "رابط المقطع غير متوفر"}</p>
                 </div>
               )}
             </motion.div>
@@ -178,41 +259,66 @@ export default function ShortsPlayerModal({
             className="absolute inset-0 z-10 cursor-default"
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
             onWheel={handleWheel}
             onContextMenu={(e) => e.preventDefault()}
           />
         </div>
 
-        {/* Top Gradient & Short Index */}
-        <div className="relative z-20 p-4 pt-3 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none">
-          <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-full bg-purple-600 text-white text-xs font-bold shadow-md flex items-center gap-1">
-              <Sparkles className="w-3 h-3" /> {t.shortsBadge || "شورتس"}
-            </span>
-            <span className="text-xs text-white/80 font-mono bg-black/40 px-2 py-0.5 rounded-md border border-white/10">
-              {currentIndex + 1} / {list.length}
-            </span>
-          </div>
+        {/* Top Progress Bars + Shorts Header */}
+        <div className="relative z-20 p-4 pt-3 space-y-2.5 bg-gradient-to-b from-black/85 via-black/35 to-transparent pointer-events-none">
+          {/* Segmented indicator when multiple Shorts exist */}
+          {list.length > 1 && list.length <= 20 && (
+            <div className="flex items-center gap-1">
+              {list.map((item, idx) => (
+                <div
+                  key={item.id || idx}
+                  className={`h-1 flex-1 rounded-full transition-all duration-300 ${
+                    idx === currentIndex
+                      ? "bg-purple-500"
+                      : idx < currentIndex
+                      ? "bg-white/60"
+                      : "bg-white/20"
+                  }`}
+                />
+              ))}
+            </div>
+          )}
 
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              onClick={() => setMuted((m) => !m)}
-              className="p-2 rounded-full bg-black/50 hover:bg-black/70 text-white border border-white/10 transition-colors"
-              title={muted ? (t.unmute || "تشغيل الصوت") : (t.mute || "كتم الصوت")}
-            >
-              {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-white" />}
-            </button>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {/* Fire drop icon ONLY (no Gemini Sparkles icon, no "شورتس" word) */}
+              <span className="w-8 h-8 rounded-xl bg-purple-600/90 text-white shadow-md flex items-center justify-center border border-white/15">
+                <Flame className="w-4 h-4 fill-current" />
+              </span>
+              {list.length > 1 && (
+                <span className="text-xs text-white/85 font-mono bg-black/45 px-2.5 py-0.5 rounded-full border border-white/10">
+                  {currentIndex + 1} / {list.length}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <button
+                onClick={toggleMute}
+                className="p-2.5 rounded-full bg-black/55 hover:bg-black/75 text-white border border-white/15 transition-colors shadow-md"
+                title={muted ? (t.unmute || "تشغيل الصوت") : (t.mute || "كتم الصوت")}
+              >
+                {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-white" />}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Vertical Swipe Navigation Arrows Only (No interaction buttons on the clip) */}
         {list.length > 1 && (
-          <div className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3 text-white">
+          <div className="absolute left-3.5 bottom-24 z-30 flex flex-col items-center gap-3 text-white">
             {/* Prev Short (Up) */}
             <button
               onClick={goToPrev}
               disabled={currentIndex === 0}
-              className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
+              className={`p-2.5 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
                 currentIndex === 0 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100"
               }`}
               title={t.prevShortUp || "المقطع السابق (سهم للأعلى)"}
@@ -224,8 +330,8 @@ export default function ShortsPlayerModal({
             <button
               onClick={goToNext}
               disabled={currentIndex === list.length - 1}
-              className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
-                currentIndex === list.length - 1 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100 animate-bounce"
+              className={`p-2.5 rounded-full bg-black/55 hover:bg-black/75 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
+                currentIndex === list.length - 1 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100"
               }`}
               title={t.nextShortDown || "المقطع التالي (سهم للأسفل)"}
             >
@@ -235,21 +341,27 @@ export default function ShortsPlayerModal({
         )}
 
         {/* Bottom Overlay Info (Read-Only Channel & Title) */}
-        <div className="relative z-20 p-4 pb-6 bg-gradient-to-t from-black/95 via-black/70 to-transparent text-white space-y-2 pointer-events-none pr-16">
-          {/* Channel Name */}
-          {currentVideo.channel_name && (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-primary/30 border border-primary/50 flex items-center justify-center font-bold text-xs text-primary-foreground shadow">
-                📺
+        <div className="relative z-20 p-4 pb-6 bg-gradient-to-t from-black/95 via-black/75 to-transparent text-white space-y-2.5 pointer-events-none pl-16">
+          {/* Channel Name & Avatar */}
+          {channelName && (
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-full bg-purple-600/30 border border-white/25 overflow-hidden flex items-center justify-center font-bold text-xs text-white shadow shrink-0">
+                {channelLogo ? (
+                  <img src={channelLogo} alt={channelName} className="w-full h-full object-cover" />
+                ) : (
+                  <Tv className="w-4 h-4 text-white" />
+                )}
               </div>
-              <span className="font-bold text-sm text-white drop-shadow">
-                {currentVideo.channel_name}
-              </span>
+              <div className="min-w-0">
+                <span className="font-bold text-sm text-white drop-shadow block truncate">
+                  {channelName}
+                </span>
+              </div>
             </div>
           )}
 
           {/* Title */}
-          <h2 className="text-sm font-semibold leading-snug line-clamp-2 text-white/95 drop-shadow">
+          <h2 className="text-sm font-bold leading-relaxed line-clamp-2 text-white/95 drop-shadow">
             {currentVideo.title}
           </h2>
 
