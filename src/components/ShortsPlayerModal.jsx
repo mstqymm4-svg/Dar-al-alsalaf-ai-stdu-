@@ -147,7 +147,7 @@ export default function ShortsPlayerModal({
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      dir="rtl"
+      dir={t.dir}
     >
       {/* Close button top corner */}
       <button

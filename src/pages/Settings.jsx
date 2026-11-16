@@ -16,6 +16,7 @@ import {
   ChevronDown,
   User,
   Check,
+  LogIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -27,7 +28,7 @@ import MobileHeader from "@/components/MobileHeader";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
-import { useT } from "@/lib/i18n";
+import { useT, TRANSLATIONS } from "@/lib/i18n";
 import { setSetting } from "@/lib/settingsStore";
 import { bookLangLabel, BOOK_LANG_VALUES } from "@/lib/i18n-terms";
 import { getAccountEmail } from "@/lib/activeUser";
@@ -84,15 +85,23 @@ export default function Settings() {
     const unsub = subscribeToTheme(({ isDark }) => setDarkMode(isDark));
     const onVerified = () => {
       const em = getAccountEmail();
+      setUserEmail(em || "");
       try {
         setVerified(!!em && localStorage.getItem(`email_verified_${em}`) === "1");
       } catch {}
     };
+    const onLangChange = () => {
+      setAppLang(ls.get("dev_app_lang", "ar"));
+    };
     window.addEventListener("dau-email-verified", onVerified);
+    window.addEventListener("dau-email-change", onVerified);
+    window.addEventListener("app-lang-change", onLangChange);
 
     return () => {
       unsub();
       window.removeEventListener("dau-email-verified", onVerified);
+      window.removeEventListener("dau-email-change", onVerified);
+      window.removeEventListener("app-lang-change", onLangChange);
     };
   }, []);
 
@@ -132,7 +141,8 @@ export default function Settings() {
     ls.set("dev_app_lang", code);
     setSetting("app_lang", code);
     window.dispatchEvent(new Event("app-lang-change"));
-    toast.success((t.applyLang || "تم تطبيق اللغة") + " ✓");
+    const nextT = TRANSLATIONS[code] || t;
+    toast.success((nextT.applyLang || t.applyLang || "تم تطبيق اللغة") + " ✓");
   };
 
   const handleLogout = async () => {
@@ -172,13 +182,26 @@ export default function Settings() {
       <MobileHeader title={t.settings} />
 
       {/* Header */}
-      <div className="mb-6 sm:mb-8">
-        <h1 className="text-2xl sm:text-3xl font-black text-foreground">
-          {t.settings}
-        </h1>
-        <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-          {t.settingsSub}
-        </p>
+      <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-foreground">
+            {t.settings}
+          </h1>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+            {t.settingsSub}
+          </p>
+        </div>
+
+        <Button
+          asChild
+          variant={userEmail ? "outline" : "default"}
+          className="gap-2 rounded-[4px_20px_4px_20px] font-bold text-xs sm:text-sm px-5 h-10 shrink-0 self-start sm:self-auto shadow-xs"
+        >
+          <Link to="/login">
+            <LogIn className="w-4 h-4" />
+            <span>{userEmail ? (t.switchAccount || t.loginBtn) : t.loginBtn}</span>
+          </Link>
+        </Button>
       </div>
 
       <div className="space-y-4">
@@ -196,14 +219,8 @@ export default function Settings() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-sm sm:text-base font-bold text-foreground truncate">
-                    {userName || t.profile || "الملف الشخصي"}
+                    {t.profile || "الملف الشخصي"}
                   </h2>
-                  {verified && (
-                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
-                      <ShieldCheck className="w-3 h-3" />
-                      <span>{t.verifiedBadge || "موثّق"}</span>
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
@@ -516,11 +533,11 @@ export default function Settings() {
                       </p>
                       {!verified && (
                         <Link
-                          to="/verify-email"
+                          to="/login"
                           className="inline-flex items-center gap-1.5 mt-3 px-4 py-2 rounded-[4px_20px_4px_20px] bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/95 transition-all shadow-xs"
                         >
-                          <Mail className="w-3.5 h-3.5" />
-                          <span>{t.verifyOtpBadge || "تأكيد البريد برمز OTP"}</span>
+                          <LogIn className="w-3.5 h-3.5" />
+                          <span>{t.loginBtn}</span>
                         </Link>
                       )}
                     </div>

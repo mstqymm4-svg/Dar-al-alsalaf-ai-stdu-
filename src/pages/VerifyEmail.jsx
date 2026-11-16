@@ -9,6 +9,7 @@ import {
   Lock,
   ArrowLeft,
   ChevronLeft,
+  LogIn,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,27 @@ import { base44 } from "@/api/base44Client";
 import { getAccountEmail, setAccountEmail } from "@/lib/activeUser";
 import { useT } from "@/lib/i18n";
 import { apiUrl } from "@/lib/apiBase";
+
+function localizeOtpError(rawError, t, fallbackKey = "sendFailed") {
+  const errStr = String(rawError || "");
+  if (!errStr) return t[fallbackKey] || t.sendFailed;
+  if (errStr.includes("الانتظار") || errStr.toLowerCase().includes("wait")) {
+    return t.otpRateLimited || t[fallbackKey];
+  }
+  if (errStr.includes("انتهت صلاحية") || errStr.toLowerCase().includes("expired")) {
+    return t.otpExpiredError || t.invalidOtp;
+  }
+  if (errStr.includes("تجاوزت الحد") || errStr.toLowerCase().includes("maximum")) {
+    return t.otpMaxAttemptsError || t.invalidOtp;
+  }
+  if (errStr.includes("غير صحيح") || errStr.includes("لا يوجد رمز") || errStr.toLowerCase().includes("invalid")) {
+    return t.invalidOtp;
+  }
+  if (errStr.includes("صيغة البريد")) {
+    return t.invalidEmail;
+  }
+  return t.langCode === "ar" ? errStr : (t[fallbackKey] || t.sendFailed);
+}
 
 export default function VerifyEmail() {
   const t = useT();
@@ -29,6 +51,7 @@ export default function VerifyEmail() {
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
@@ -71,6 +94,28 @@ export default function VerifyEmail() {
     }
   }, [step]);
 
+  const handleGoogleSignIn = async () => {
+    setErrorMsg("");
+    setGoogleLoading(true);
+    try {
+      const profile = await base44.auth.signInWithGoogle();
+      if (profile?.email) {
+        setEmail(profile.email);
+        toast.success(t.linkedSuccess);
+        setStep("success");
+      }
+    } catch (err) {
+      const code = String(err?.code || "");
+      if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        return;
+      }
+      setErrorMsg(t.serverConnError);
+      toast.error(t.serverConnError);
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
   // ───────────────────────────────────────────────────────────────────────────
   // Handle Send OTP
   // ───────────────────────────────────────────────────────────────────────────
@@ -80,13 +125,13 @@ export default function VerifyEmail() {
 
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail) {
-      setErrorMsg(t.pleaseEnterEmail || "يرجى إدخال البريد الإلكتروني");
+      setErrorMsg(t.pleaseEnterEmail);
       return;
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(trimmedEmail)) {
-      setErrorMsg(t.invalidEmail || "صيغة البريد الإلكتروني غير صحيحة");
+      setErrorMsg(t.invalidEmail);
       return;
     }
 
@@ -101,7 +146,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || (t.sendFailed || "حدث خطأ أثناء إرسال رمز التحقق");
+        const errorText = localizeOtpError(data.error, t, "sendFailed");
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -110,14 +155,14 @@ export default function VerifyEmail() {
         return;
       }
 
-      toast.success(data.message || (t.resendSuccess || "تم إرسال رمز التحقق بنجاح"));
+      toast.success(t.resendSuccess);
       setStep("otp");
       setCountdown(60); // 60 seconds cooldown
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
-    } catch (err) {
-      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم، يرجى المحاولة مرة أخرى.");
-      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
+    } catch {
+      setErrorMsg(t.serverConnError);
+      toast.error(t.serverConnError);
     } finally {
       setLoading(false);
     }
@@ -141,7 +186,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || (t.sendFailed || "تعذر إعادة إرسال الرمز");
+        const errorText = localizeOtpError(data.error, t, "sendFailed");
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -150,13 +195,13 @@ export default function VerifyEmail() {
         return;
       }
 
-      toast.success(t.resendSuccess || "تم إرسال رمز تحقق جديد بنجاح ✓");
+      toast.success(t.resendSuccess);
       setCountdown(60);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
       if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();
-    } catch (err) {
-      toast.error(t.serverConnError || "فشل في إعادة الإرسال");
+    } catch {
+      toast.error(t.serverConnError);
     } finally {
       setResending(false);
     }
@@ -166,12 +211,10 @@ export default function VerifyEmail() {
   // Handle OTP Digit Input & Pasting
   // ───────────────────────────────────────────────────────────────────────────
   const handleOtpChange = (index, value) => {
-    // Only accept numeric digit
     const cleaned = value.replace(/\D/g, "");
 
     const newOtp = [...otp];
     if (cleaned.length > 1) {
-      // User pasted multiple characters into a single box
       const digits = cleaned.slice(0, 6).split("");
       digits.forEach((d, i) => {
         newOtp[i] = d;
@@ -187,14 +230,12 @@ export default function VerifyEmail() {
     newOtp[index] = cleaned;
     setOtp(newOtp);
 
-    // Auto-advance to next input
     if (cleaned && index < 5 && otpInputsRef.current[index + 1]) {
       otpInputsRef.current[index + 1].focus();
     }
   };
 
   const handleKeyDown = (index, e) => {
-    // Backspace: clear and jump to previous input
     if (e.key === "Backspace") {
       if (!otp[index] && index > 0 && otpInputsRef.current[index - 1]) {
         otpInputsRef.current[index - 1].focus();
@@ -229,7 +270,7 @@ export default function VerifyEmail() {
 
     const fullCode = otp.join("");
     if (fullCode.length !== 6) {
-      setErrorMsg(t.enterAll6Digits || "يرجى إدخال جميع أرقام الرمز الستة");
+      setErrorMsg(t.enterAll6Digits);
       return;
     }
 
@@ -247,7 +288,7 @@ export default function VerifyEmail() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || (t.invalidOtp || "رمز التحقق غير صحيح");
+        const errorText = localizeOtpError(data.error, t, "invalidOtp");
         setErrorMsg(errorText);
         toast.error(errorText);
 
@@ -255,18 +296,19 @@ export default function VerifyEmail() {
           setRemainingAttempts(data.remainingAttempts);
         }
 
-        // If expired or exceeded, clear otp boxes
-        if (errorText.includes("طلب رمز جديد") || (data.remainingAttempts !== undefined && data.remainingAttempts <= 0)) {
+        if (
+          String(data.error || "").includes("طلب رمز جديد") ||
+          (data.remainingAttempts !== undefined && data.remainingAttempts <= 0)
+        ) {
           setOtp(["", "", "", "", "", ""]);
         }
         return;
       }
 
-      // Link email, establish authenticated session, and mark verified
       const em = email.trim().toLowerCase();
       try {
         await base44.auth.signInWithVerifiedEmail(em);
-      } catch (err) {
+      } catch {
         try {
           setAccountEmail(em);
           localStorage.setItem(`email_verified_${em}`, "1");
@@ -275,18 +317,18 @@ export default function VerifyEmail() {
         } catch {}
       }
 
-      toast.success(data.message || (t.linkedSuccess || "تم التحقق من البريد بنجاح ✓"));
+      toast.success(t.linkedSuccess);
       setStep("success");
-    } catch (err) {
-      setErrorMsg(t.serverConnError || "تعذر الاتصال بالخادم للتحقق من الرمز");
-      toast.error(t.serverConnError || "تعذر الاتصال بالخادم");
+    } catch {
+      setErrorMsg(t.serverConnError);
+      toast.error(t.serverConnError);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-[85vh] flex items-center justify-center px-4 py-12" dir="rtl">
+    <div className="min-h-[85vh] flex items-center justify-center px-4 py-12" dir={t.dir}>
       <motion.div
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
@@ -300,16 +342,16 @@ export default function VerifyEmail() {
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <ChevronLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
-            <span>{t.backToSettings || "العودة للإعدادات"}</span>
+            <span>{t.backToSettings}</span>
           </Link>
 
           <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-            {t.brandName || "دار العلوم"}
+            {t.brandName}
           </span>
         </div>
 
         {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* STEP 1: Email Input                                                 */}
+        {/* STEP 1: Login / Email Input                                         */}
         {/* ─────────────────────────────────────────────────────────────────── */}
         <AnimatePresence mode="wait">
           {step === "email" && (
@@ -322,23 +364,66 @@ export default function VerifyEmail() {
             >
               <div className="text-center mb-6">
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3 shadow-xs">
-                  <Mail className="w-7 h-7" />
+                  <LogIn className="w-7 h-7" />
                 </div>
-                <h1 className="text-xl font-bold text-foreground">
-                  {t.verifyEmailTitle || "التحقق من البريد الإلكتروني"}
+                <h1 className="text-xl sm:text-2xl font-black text-foreground">
+                  {t.loginTitle || t.verifyEmailTitle}
                 </h1>
-                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  {t.verifyEmailSub || "أدخل بريدك الإلكتروني لاستلام رمز تحقق فوري (OTP) لحماية حسابك"}
+                <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                  {t.loginSubtitle || t.verifyEmailSub}
                 </p>
+              </div>
+
+              {/* Google Sign-In Button */}
+              <div className="mb-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleGoogleSignIn}
+                  disabled={googleLoading || loading}
+                  className="w-full h-11 rounded-xl font-bold text-xs sm:text-sm gap-2.5 border-border hover:bg-muted/50"
+                >
+                  {googleLoading ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path
+                        fill="#4285F4"
+                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      />
+                      <path
+                        fill="#34A853"
+                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      />
+                      <path
+                        fill="#FBBC05"
+                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                      />
+                      <path
+                        fill="#EA4335"
+                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                      />
+                    </svg>
+                  )}
+                  <span>{t.loginWithGoogle}</span>
+                </Button>
+
+                <div className="relative flex items-center justify-center my-4">
+                  <div className="border-t border-border/80 w-full" />
+                  <span className="bg-card px-3 text-[11px] text-muted-foreground whitespace-nowrap">
+                    {t.orContinueWith}
+                  </span>
+                  <div className="border-t border-border/80 w-full" />
+                </div>
               </div>
 
               <form onSubmit={handleSendOtp} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-foreground block">
-                    {t.email || "البريد الإلكتروني"}
+                    {t.email}
                   </label>
                   <div className="relative group">
-                    <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                    <Mail className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors pointer-events-none" />
                     <Input
                       type="email"
                       dir="ltr"
@@ -361,11 +446,7 @@ export default function VerifyEmail() {
 
                 <div className="p-3.5 rounded-xl bg-muted/40 border border-border/80 text-[11px] text-muted-foreground leading-relaxed flex items-start gap-2.5">
                   <Lock className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                  <span>
-                    {t.gmailOtpNotice || "يُرسل الرمز مباشرة من البريد الرسمي لدار العلوم"}{" "}
-                    <span dir="ltr" className="font-mono font-semibold text-foreground">daraluloom258@gmail.com</span>{" "}
-                    — صالح لمدة 10 دقائق.
-                  </span>
+                  <span>{t.gmailOtpNotice}</span>
                 </div>
 
                 <Button
@@ -376,11 +457,11 @@ export default function VerifyEmail() {
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>{t.sendingOtp || "جاري إرسال الرمز..."}</span>
+                      <span>{t.sendingOtp}</span>
                     </>
                   ) : (
                     <>
-                      <span>{t.sendOtpBtn || "إرسال رمز التحقق"}</span>
+                      <span>{t.sendOtpBtn}</span>
                       <ArrowLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
                     </>
                   )}
@@ -405,21 +486,22 @@ export default function VerifyEmail() {
                   <ShieldCheck className="w-7 h-7" />
                 </div>
                 <h1 className="text-xl font-bold text-foreground">
-                  {t.enterOtp6Digits || "أدخل رمز التحقق"}
+                  {t.enterOtp6Digits}
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {t.otpSentTo || "تم إرسال رمز التحقق المكون من 6 أرقام إلى:"}
+                  {t.otpSentTo}
                 </p>
                 <div className="inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-lg bg-muted text-xs font-mono font-medium text-foreground">
                   <span dir="ltr">{email}</span>
                   <button
+                    type="button"
                     onClick={() => {
                       setStep("email");
                       setErrorMsg("");
                     }}
-                    className="text-primary hover:underline font-sans text-[11px] mr-1"
+                    className="text-primary hover:underline font-sans text-[11px] ms-1"
                   >
-                    ({t.editEmail || "تعديل"})
+                    ({t.editEmail})
                   </button>
                 </div>
               </div>
@@ -460,7 +542,7 @@ export default function VerifyEmail() {
                   <div>
                     {countdown > 0 ? (
                       <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
-                        <span>{t.resendAfter || "إعادة الإرسال بعد:"}</span>
+                        <span>{t.resendAfter}</span>
                         <span className="font-mono font-bold text-primary">
                           {Math.floor(countdown / 60)}:
                           {(countdown % 60).toString().padStart(2, "0")}
@@ -474,13 +556,13 @@ export default function VerifyEmail() {
                         className="text-primary font-bold hover:underline flex items-center gap-1"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${resending ? "animate-spin" : ""}`} />
-                        <span>{t.resendCode || "إعادة إرسال الرمز"}</span>
+                        <span>{t.resendCode}</span>
                       </button>
                     )}
                   </div>
 
                   <span className="text-[11px] opacity-75">
-                    {t.otpCodeValidity || "صلاحية الرمز: 10 دقائق"}
+                    {t.otpCodeValidity}
                   </span>
                 </div>
 
@@ -492,12 +574,12 @@ export default function VerifyEmail() {
                   {loading ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>{t.verifyingOtp || "جاري التحقق..."}</span>
+                      <span>{t.verifyingOtp}</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>{t.verifyCodeBtn || "تأكيد الرمز"}</span>
+                      <span>{t.verifyCodeBtn}</span>
                     </>
                   )}
                 </Button>
@@ -522,17 +604,17 @@ export default function VerifyEmail() {
 
               <div>
                 <h1 className="text-xl font-bold text-foreground">
-                  {t.otpSuccessTitle || "تم تأكيد البريد بنجاح!"}
+                  {t.otpSuccessTitle}
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                  {t.otpSuccessDesc2 || "تم التحقق من بريدك الإلكتروني بنجاح وأصبح حسابك مؤكداً ومحمياً."}
+                  {t.otpSuccessDesc2}
                   <span className="block mt-1 font-mono font-medium text-foreground" dir="ltr">{email}</span>
                 </p>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 font-medium flex items-center justify-center gap-2">
                 <ShieldCheck className="w-4 h-4" />
-                <span>{t.otpSuccessBadgeDesc || "حسابك الآن يحمل شارة الحماية المعتمدة في دار العلوم"}</span>
+                <span>{t.otpSuccessBadgeDesc}</span>
               </div>
 
               <div className="pt-2">
@@ -540,7 +622,7 @@ export default function VerifyEmail() {
                   onClick={() => navigate("/settings")}
                   className="w-full h-11 rounded-[4px_20px_4px_20px] font-bold text-sm gap-2"
                 >
-                  <span>{t.backToSettings || "العودة إلى الإعدادات"}</span>
+                  <span>{t.backToSettings}</span>
                   <ArrowLeft className="w-4 h-4 rtl:rotate-0 ltr:rotate-180" />
                 </Button>
               </div>
@@ -551,3 +633,4 @@ export default function VerifyEmail() {
     </div>
   );
 }
+

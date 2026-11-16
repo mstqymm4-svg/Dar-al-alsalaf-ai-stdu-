@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import {
   getFirestore,
   collection,
@@ -14,7 +14,7 @@ import {
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import * as offlineDB from "@/lib/offlineDB";
-import { googleSignIn, sendGmailMessage } from "@/lib/gmailService";
+import { sendGmailMessage } from "@/lib/gmailService";
 
 import seedBooks from "../../data-export/Books.json";
 import seedVideos from "../../data-export/Videos.json";
@@ -1477,14 +1477,42 @@ export const base44 = {
       return profile;
     },
 
+    async signInWithGoogle() {
+      localStorage.removeItem("dau_logged_out");
+      const basicGoogleProvider = new GoogleAuthProvider();
+      basicGoogleProvider.addScope("https://www.googleapis.com/auth/userinfo.email");
+      basicGoogleProvider.addScope("https://www.googleapis.com/auth/userinfo.profile");
+      basicGoogleProvider.setCustomParameters({ prompt: "select_account" });
+      const result = await signInWithPopup(auth, basicGoogleProvider);
+      const fbUser = result?.user;
+      if (!fbUser?.email) {
+        throw new Error("NO_EMAIL");
+      }
+      if (fbUser.displayName) {
+        try {
+          localStorage.setItem("dau_full_name", fbUser.displayName);
+        } catch {}
+      }
+      if (fbUser.photoURL) {
+        try {
+          const norm = fbUser.email.trim().toLowerCase();
+          if (!localStorage.getItem(`dau_avatar_${norm}`)) {
+            localStorage.setItem(`dau_avatar_${norm}`, fbUser.photoURL);
+            window.dispatchEvent(new Event("dau-avatar-change"));
+          }
+        } catch {}
+      }
+      return await this.signInWithVerifiedEmail(fbUser.email, fbUser.displayName);
+    },
+
     async redirectToLogin() {
       try {
-        localStorage.removeItem("dau_logged_out");
-        await googleSignIn();
+        return await this.signInWithGoogle();
       } catch (err) {
         if (typeof window !== "undefined") {
           window.location.href = "/verify-email";
         }
+        return null;
       }
     },
   },

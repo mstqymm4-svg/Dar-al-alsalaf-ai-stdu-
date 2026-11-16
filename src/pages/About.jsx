@@ -8,8 +8,16 @@ import { getSetting } from "@/lib/settingsStore";
 
 export default function About() {
   const t = useT();
-  const appName = getSetting("app_name") || t.appName || "دار العلوم";
-  const appSubtitle = getSetting("app_subtitle") || t.appSubtitle;
+  const rawName = (getSetting("app_name") || "").trim();
+  const rawSub = (getSetting("app_subtitle") || "").trim();
+  const appName =
+    t.langCode === "ar" && rawName && rawName !== "المكتبة الدينية" && rawName.toUpperCase() !== "DAR AL ULOOM"
+      ? rawName
+      : (t.brandName || t.appName || "دار العلوم");
+  const appSubtitle =
+    t.langCode === "ar" && rawSub && rawSub !== "." && rawSub !== "نور العلم والمعرفة"
+      ? rawSub
+      : t.appSubtitle;
   const logoUrl = getSetting("logo_url");
 
   const features = [

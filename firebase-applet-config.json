@@ -1,12 +1,11 @@
 {
-  "projectId": "meta-lodge-j3kqt",
-  "appId": "1:493726250325:web:687523154c2a4e8eacebdc",
-  "apiKey": "AIzaSyCRshebBXiM9rnMt5aLznUHUb7tmHxgnP8",
-  "authDomain": "meta-lodge-j3kqt.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-darassalaf-98fc9d74-9215-4e71-bb92-cec9b65cebab",
-  "storageBucket": "meta-lodge-j3kqt.firebasestorage.app",
-  "messagingSenderId": "493726250325",
+  "projectId": "flutter-ai-playground-7ac8f",
+  "appId": "1:166563591465:web:d2ad0dbe04b1b978123338",
+  "apiKey": "AIzaSyD7fSmJx3iEh7mJH-rep5PqTiuqSZPzNPA",
+  "authDomain": "flutter-ai-playground-7ac8f.firebaseapp.com",
+  "storageBucket": "flutter-ai-playground-7ac8f.firebasestorage.app",
+  "messagingSenderId": "166563591465",
   "measurementId": "",
-  "oAuthClientId": "493726250325-r15gh4olc12476fa7kvfsvbc25hdtc6n.apps.googleusercontent.com",
+  "oAuthClientId": "166563591465-u8v6i5vh0plc3fopm2636ugve7v9c0n7.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

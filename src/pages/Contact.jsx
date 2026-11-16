@@ -22,7 +22,8 @@ export default function Contact() {
   const whatsappUrl = getSetting("whatsapp_url") || "";
   const contactPhone = getSetting("contact_phone") || "";
   const contactAddress = getSetting("contact_address") || "";
-  const contactIntro = getSetting("contact_intro") || t.contactIntro;
+  const rawIntro = getSetting("contact_intro");
+  const contactIntro = (t.langCode === "ar" && rawIntro) ? rawIntro : t.contactIntro;
   const telegramUrl = getSetting("contact_telegram_url") || "";
   const instagramUrl = getSetting("contact_instagram_url") || "";
   const showForm = getSetting("contact_show_form") !== "false";
@@ -56,7 +57,7 @@ export default function Contact() {
         setEmail("");
         setMessage("");
       } else {
-        const errorMsg = data.error || t.contactSendError || "تعذر إرسال الرسالة، يرجى المحاولة لاحقاً";
+        const errorMsg = (t.langCode === "ar" && data.error) ? data.error : (t.contactSendError || "تعذر إرسال الرسالة، يرجى المحاولة لاحقاً");
         toast.error(errorMsg);
       }
     } catch {

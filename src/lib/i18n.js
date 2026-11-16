@@ -438,6 +438,19 @@ export const TRANSLATIONS = {
     appChannelsSettingsTitle: "قنوات المحتوى والدروس",
     appChannelsSettingsSub: "تصفح واستكشف جميع قنوات الشيوخ والمحاضرات",
     channelsCountLabel: "قناة علمية",
+    loginBtn: "تسجيل الدخول",
+    loginTitle: "تسجيل الدخول",
+    loginSubtitle: "سجّل دخولك عبر البريد الإلكتروني لحفظ مفضلاتك ومزامنة قراءاتك على جميع أجهزتك",
+    loginWithGoogle: "المتابعة باستخدام Google",
+    orContinueWith: "أو المتابعة بالبريد الإلكتروني",
+    loginToSyncTitle: "سجّل دخولك إلى حسابك",
+    loginToSyncSub: "اربط حسابك بالبريد الإلكتروني لحفظ مفضلاتك وسجل قراءاتك واستعادتها في أي وقت",
+    switchAccount: "تبديل الحساب",
+    loggedInStatus: "تم تسجيل الدخول",
+    otpRateLimited: "يرجى الانتظار قليلاً قبل طلب رمز تحقق جديد",
+    otpExpiredError: "انتهت صلاحية رمز التحقق، يرجى طلب رمز جديد",
+    otpMaxAttemptsError: "تجاوزت الحد الأقصى للمحاولات، يرجى طلب رمز جديد",
+    cloudSaveError: "تعذر حفظ التعديلات سحابياً — سيتم الحفظ تلقائياً عند توفر الاتصال",
   },
   en: {
     dir: "ltr",
@@ -874,6 +887,19 @@ export const TRANSLATIONS = {
     appChannelsSettingsTitle: "Content & Lecture Channels",
     appChannelsSettingsSub: "Explore and browse all scholars' channels and lessons",
     channelsCountLabel: "Channels",
+    loginBtn: "Sign In",
+    loginTitle: "Sign In",
+    loginSubtitle: "Sign in with your email to save your favorites and sync your reading progress across all devices",
+    loginWithGoogle: "Continue with Google",
+    orContinueWith: "or continue with email",
+    loginToSyncTitle: "Sign in to your account",
+    loginToSyncSub: "Sign in with your email to back up your favorites and reading history anytime",
+    switchAccount: "Switch Account",
+    loggedInStatus: "Signed in",
+    otpRateLimited: "Please wait a moment before requesting a new verification code",
+    otpExpiredError: "Verification code has expired, please request a new code",
+    otpMaxAttemptsError: "Maximum attempts exceeded, please request a new code",
+    cloudSaveError: "Could not save to cloud — changes will sync automatically when online",
   },
   fr: {
     dir: "ltr",
@@ -1310,6 +1336,19 @@ export const TRANSLATIONS = {
     appChannelsSettingsTitle: "Chaînes de contenu et cours",
     appChannelsSettingsSub: "Explorez et parcourez toutes les chaînes des savants et cours",
     channelsCountLabel: "Chaînes",
+    loginBtn: "Connexion",
+    loginTitle: "Connexion",
+    loginSubtitle: "Connectez-vous avec votre e-mail pour sauvegarder vos favoris et synchroniser vos lectures",
+    loginWithGoogle: "Continuer avec Google",
+    orContinueWith: "ou continuer avec l'e-mail",
+    loginToSyncTitle: "Connectez-vous à votre compte",
+    loginToSyncSub: "Connectez-vous avec votre e-mail pour sauvegarder vos favoris et votre historique de lecture",
+    switchAccount: "Changer de compte",
+    loggedInStatus: "Connecté",
+    otpRateLimited: "Veuillez patienter un instant avant de demander un nouveau code",
+    otpExpiredError: "Le code de vérification a expiré, veuillez en demander un nouveau",
+    otpMaxAttemptsError: "Nombre maximal de tentatives dépassé, veuillez demander un nouveau code",
+    cloudSaveError: "Impossible d'enregistrer dans le cloud — synchronisation automatique dès la reconnexion",
   },
   ur: {
     dir: "rtl",
@@ -1746,6 +1785,19 @@ export const TRANSLATIONS = {
     appChannelsSettingsTitle: "علمی چینلز اور دروس",
     appChannelsSettingsSub: "تمام علمی چینلز اور دروس کو تلاش کریں اور دیکھیں",
     channelsCountLabel: "علمی چینلز",
+    loginBtn: "سائن ان کریں",
+    loginTitle: "سائن ان کریں",
+    loginSubtitle: "اپنی پسندیدہ کتابیں محفوظ کرنے اور مطالعہ کی پیشرفت ہم آہنگ کرنے کے لیے ای میل سے سائن ان کریں",
+    loginWithGoogle: "گوگل کے ذریعے جاری رکھیں",
+    orContinueWith: "یا ای میل کے ساتھ جاری رکھیں",
+    loginToSyncTitle: "اپنے اکاؤنٹ میں سائن ان کریں",
+    loginToSyncSub: "اپنی پسندیدہ کتابیں اور مطالعہ کا ریکارڈ محفوظ رکھنے کے لیے ای میل کے ذریعے سائن ان کریں",
+    switchAccount: "اکاؤنٹ تبدیل کریں",
+    loggedInStatus: "سائن ان شدہ",
+    otpRateLimited: "نیا تصدیقی کوڈ طلب کرنے سے پہلے براہ کرم تھوڑا انتظار کریں",
+    otpExpiredError: "تصدیقی کوڈ کی میعاد ختم ہو گئی ہے، براہ کرم نیا کوڈ طلب کریں",
+    otpMaxAttemptsError: "کوششوں کی زیادہ سے زیادہ حد پوری ہو گئی، براہ کرم نیا کوڈ طلب کریں",
+    cloudSaveError: "کلاؤڈ میں محفوظ نہیں ہو سکا — انٹرنیٹ بحال ہونے پر خودکار محفوظ ہو جائے گا",
   },
   hi: {
     dir: "ltr",
@@ -2182,6 +2234,19 @@ export const TRANSLATIONS = {
     appChannelsSettingsTitle: "सामग्री और व्याख्यान चैनल",
     appChannelsSettingsSub: "सभी विद्वानों के चैनल और पाठ ब्राउज़ करें",
     channelsCountLabel: "चैनल",
+    loginBtn: "लॉग इन करें",
+    loginTitle: "लॉग इन करें",
+    loginSubtitle: "अपने पसंदीदा सहेजने और सभी उपकरणों पर पढ़ने की प्रगति को सिंक करने के लिए ईमेल से लॉग इन करें",
+    loginWithGoogle: "Google के साथ जारी रखें",
+    orContinueWith: "या ईमेल के साथ जारी रखें",
+    loginToSyncTitle: "अपने खाते में लॉग इन करें",
+    loginToSyncSub: "अपने पसंदीदा और पढ़ने के इतिहास को सुरक्षित रखने के लिए ईमेल से लॉग इन करें",
+    switchAccount: "खाता बदलें",
+    loggedInStatus: "लॉग इन है",
+    otpRateLimited: "कृपया नया कोड अनुरोध करने से पहले थोड़ा प्रतीक्षा करें",
+    otpExpiredError: "सत्यापन कोड समाप्त हो गया है, कृपया नया कोड अनुरोध करें",
+    otpMaxAttemptsError: "अधिकतम प्रयास पूरे हो गए, कृपया नया कोड अनुरोध करें",
+    cloudSaveError: "क्लाउड में सहेजा नहीं जा सका — ऑनलाइन होने पर स्वतः सहेजा जाएगा",
   },
   tr,
 };
@@ -2191,15 +2256,13 @@ const ls = {
 };
 
 // Language metadata: dir, BCP-47 locale, font family
-// The app layout direction is fixed to RTL for every language — only the
-// text content and font change when the language changes.
 const LANG_META = {
   ar: { dir: "rtl", langCode: "ar", fontFamily: "'Tajawal', sans-serif" },
   ur: { dir: "rtl", langCode: "ur", fontFamily: "'Noto Nastaliq Urdu', serif" },
-  en: { dir: "rtl", langCode: "en", fontFamily: "'Inter', sans-serif" },
-  fr: { dir: "rtl", langCode: "fr", fontFamily: "'Inter', sans-serif" },
-  tr: { dir: "rtl", langCode: "tr", fontFamily: "'Inter', sans-serif" },
-  hi: { dir: "rtl", langCode: "hi", fontFamily: "'Noto Sans Devanagari', sans-serif" },
+  en: { dir: "ltr", langCode: "en", fontFamily: "'Inter', sans-serif" },
+  fr: { dir: "ltr", langCode: "fr", fontFamily: "'Inter', sans-serif" },
+  tr: { dir: "ltr", langCode: "tr", fontFamily: "'Inter', sans-serif" },
+  hi: { dir: "ltr", langCode: "hi", fontFamily: "'Noto Sans Devanagari', sans-serif" },
 };
 
 export function useT() {
@@ -2219,12 +2282,22 @@ export function useT() {
   const activeTranslations = TRANSLATIONS[lang] || baseArabic;
   const t = { ...baseArabic, ...activeTranslations };
   const meta = LANG_META[lang] || LANG_META["ar"];
-  const customName = ls.get("dev_app_name", "");
-  const customSub = ls.get("dev_app_subtitle", "");
+  const customName = ls.get("dev_app_name", "").trim();
+  const customSub = ls.get("dev_app_subtitle", "").trim();
+  const useCustomName =
+    lang === "ar" &&
+    customName &&
+    customName !== "المكتبة الدينية" &&
+    customName.toUpperCase() !== "DAR AL ULOOM";
+  const useCustomSub =
+    lang === "ar" &&
+    customSub &&
+    customSub !== "." &&
+    customSub !== "نور العلم والمعرفة";
   return {
     ...t,
     ...meta,
-    appName: customName || t.appName,
-    appSubtitle: customSub || t.appSubtitle,
+    appName: useCustomName ? customName : (t.brandName || t.appName),
+    appSubtitle: useCustomSub ? customSub : t.appSubtitle,
   };
 }

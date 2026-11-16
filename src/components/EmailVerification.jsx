@@ -89,7 +89,10 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || t.sendFailed || "تعذر إرسال رمز التحقق، يرجى المحاولة لاحقاً.";
+        const errStr = String(data.error || "");
+        const errorText = errStr.includes("الانتظار")
+          ? (t.otpRateLimited || t.sendFailed)
+          : (t.langCode === "ar" && errStr ? errStr : (t.sendFailed || "تعذر إرسال رمز التحقق"));
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -98,7 +101,7 @@ export default function EmailVerification({
         return;
       }
 
-      toast.success(data.message || (t.resendSuccess || "تم إرسال رمز التحقق بنجاح"));
+      toast.success(t.resendSuccess || "تم إرسال رمز التحقق بنجاح");
       setStep("otp");
       setCountdown(60);
       setOtp(["", "", "", "", "", ""]);
@@ -130,7 +133,10 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || t.sendFailed || "تعذر إعادة إرسال الرمز";
+        const errStr = String(data.error || "");
+        const errorText = errStr.includes("الانتظار")
+          ? (t.otpRateLimited || t.sendFailed)
+          : (t.langCode === "ar" && errStr ? errStr : (t.sendFailed || "تعذر إعادة إرسال الرمز"));
         setErrorMsg(errorText);
         toast.error(errorText);
         if (data.retryAfter) {
@@ -234,14 +240,19 @@ export default function EmailVerification({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errorText = data.error || (t.evWrongCode || "رمز التحقق غير صحيح");
+        const errStr = String(data.error || "");
+        const errorText = errStr.includes("انتهت صلاحية")
+          ? (t.otpExpiredError || t.invalidOtp)
+          : errStr.includes("تجاوزت الحد")
+          ? (t.otpMaxAttemptsError || t.invalidOtp)
+          : (t.langCode === "ar" && errStr ? errStr : (t.invalidOtp || t.evWrongCode || "رمز التحقق غير صحيح"));
         setErrorMsg(errorText);
         toast.error(errorText);
 
         if (data.remainingAttempts !== undefined) {
           setRemainingAttempts(data.remainingAttempts);
         }
-        if (errorText.includes("طلب رمز جديد")) {
+        if (errStr.includes("طلب رمز جديد")) {
           setOtp(["", "", "", "", "", ""]);
         }
         return;
@@ -339,11 +350,6 @@ export default function EmailVerification({
                 <span>{errorMsg}</span>
               </div>
             )}
-
-            <p className="text-[11px] text-muted-foreground bg-muted/40 border border-border/70 rounded-xl px-3 py-2 leading-relaxed">
-              سيصلك رمز التحقق من البريد الرسمي:{" "}
-              <span dir="ltr" className="font-mono font-semibold text-foreground">daraluloom258@gmail.com</span>
-            </p>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
               <Button

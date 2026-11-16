@@ -9,6 +9,7 @@
  */
 import { entities } from "@/lib/dataSource";
 import { toast } from "sonner";
+import { TRANSLATIONS } from "@/lib/i18n";
 
 // ─── Default settings ─────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS = {
@@ -288,9 +289,21 @@ export function applySettingsToDom(settings) {
   const allFonts = [...FONT_PRESETS, ...customFonts];
 
   // Fonts per role
+  const activeLang = (() => {
+    try {
+      return localStorage.getItem("dev_app_lang") || settings.app_lang || "ar";
+    } catch {
+      return settings.app_lang || "ar";
+    }
+  })();
   FONT_ROLES.forEach(role => {
     const fontKey = `font_${role.key}`;
     const fontName = settings[fontKey];
+    if (activeLang !== "ar") {
+      // Let the active language's font (--font-app) govern non-Arabic UI
+      document.documentElement.style.setProperty(role.cssVar, "var(--font-app)");
+      return;
+    }
     if (fontName) {
       const preset = allFonts.find(f => f.name === fontName);
       if (preset) {
@@ -345,7 +358,7 @@ export function applySettingsToDom(settings) {
       }
     }
     if (settings.app_subtitle !== undefined) {
-      if (settings.app_subtitle && settings.app_subtitle !== DEFAULT_SETTINGS.app_subtitle) {
+      if (settings.app_subtitle && settings.app_subtitle !== DEFAULT_SETTINGS.app_subtitle && settings.app_subtitle.trim() !== ".") {
         localStorage.setItem("dev_app_subtitle", settings.app_subtitle);
       } else {
         localStorage.removeItem("dev_app_subtitle");
@@ -353,7 +366,7 @@ export function applySettingsToDom(settings) {
     }
     if (settings.app_lang) {
       const prevLang = localStorage.getItem("dev_app_lang");
-      if (prevLang !== settings.app_lang) {
+      if (!prevLang) {
         localStorage.setItem("dev_app_lang", settings.app_lang);
         window.dispatchEvent(new Event("app-lang-change"));
       }
@@ -391,6 +404,11 @@ export function getSaveStatus() { return _saveStatus; }
 const _prevValues = {};
 
 function flushSave(key) {
+  if (USER_LOCAL_PREF_KEYS.has(key)) {
+    clearDirtyKey(key);
+    delete _pendingSaves[key];
+    return Promise.resolve(true);
+  }
   if (_pendingSaves[key] === undefined) {
     const existingFlight = _inFlightSaves.get(key);
     if (existingFlight) return existingFlight;
@@ -419,7 +437,11 @@ function flushSave(key) {
       const now = Date.now();
       if (now - _lastErrorToastAt > 6000) {
         _lastErrorToastAt = now;
-        try { toast.error("تعذر حفظ التعديلات سحابياً — سيتم الحفظ تلقائياً عند توفر الاتصال"); } catch {}
+        try {
+          const activeLang = localStorage.getItem("dev_app_lang") || "ar";
+          const msg = TRANSLATIONS[activeLang]?.cloudSaveError || TRANSLATIONS.ar.cloudSaveError;
+          toast.error(msg);
+        } catch {}
       }
     } else if (Object.keys(_pendingSaves).length === 0 && Object.keys(readDirtyMap()).length === 0) {
       emitStatus("saved");
@@ -440,6 +462,10 @@ function flushSave(key) {
 export async function flushAllPendingSettings() {
   const dirty = readDirtyMap();
   Object.entries(dirty).forEach(([k, v]) => {
+    if (USER_LOCAL_PREF_KEYS.has(k)) {
+      clearDirtyKey(k);
+      return;
+    }
     if (_pendingSaves[k] === undefined) {
       _pendingSaves[k] = v;
     }
@@ -479,12 +505,37 @@ export function getSetting(key) {
 /** Update a setting: applies instantly + persists locally & saves to DB */
 export function setSetting(key, value) {
   const strVal = String(value ?? "");
+  if (key === "app_lang") {
+    try {
+      localStorage.setItem("dev_app_lang", strVal);
+    } catch {}
+    _prevValues[key] = _cache[key] ?? "";
+    _cache[key] = strVal;
+    ls.set(key, strVal);
+    clearDirtyKey(key);
+    applySettingsToDom(_cache);
+    try {
+      window.dispatchEvent(new Event("app-lang-change"));
+    } catch {}
+    dispatchChange();
+    return;
+  }
+
   if ((_cache[key] ?? "") === strVal && !(key in _pendingSaves)) {
     return;
   }
   _prevValues[key] = _cache[key] ?? "";
   _cache[key] = strVal;
   ls.set(key, strVal);
+
+  // End-user local display preferences stay on-device and do not write to global AppSettings
+  if (USER_LOCAL_PREF_KEYS.has(key)) {
+    clearDirtyKey(key);
+    applySettingsToDom(_cache);
+    dispatchChange();
+    return;
+  }
+
   markDirtyKey(key, strVal);
   applySettingsToDom(_cache);
   dispatchChange();
@@ -498,16 +549,28 @@ export function setSetting(key, value) {
 /** Update multiple settings at once */
 export function setSettings(obj) {
   const changed = [];
+  let hasAnyChange = false;
   Object.entries(obj || {}).forEach(([k, v]) => {
     const strVal = String(v ?? "");
     if ((_cache[k] ?? "") === strVal && !(k in _pendingSaves)) return;
     _prevValues[k] = _cache[k] ?? "";
     _cache[k] = strVal;
     ls.set(k, strVal);
+    hasAnyChange = true;
+    if (k === "app_lang") {
+      try {
+        localStorage.setItem("dev_app_lang", strVal);
+        window.dispatchEvent(new Event("app-lang-change"));
+      } catch {}
+    }
+    if (USER_LOCAL_PREF_KEYS.has(k)) {
+      clearDirtyKey(k);
+      return;
+    }
     markDirtyKey(k, strVal);
     changed.push([k, strVal]);
   });
-  if (changed.length === 0) return;
+  if (!hasAnyChange) return;
   applySettingsToDom(_cache);
   dispatchChange();
   changed.forEach(([k, strVal]) => {
@@ -520,12 +583,15 @@ export function setSettings(obj) {
 /** Load settings on app start — DB is authoritative for synced config, dirty local edits always win until flushed */
 export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
+  // Clean any local-only keys that may have been marked dirty in older sessions
+  USER_LOCAL_PREF_KEYS.forEach((k) => clearDirtyKey(k));
+
   // 1. Apply localStorage immediately (fast path before DB resolves)
   const cached = ls.getAll();
   const dirty = readDirtyMap();
   let legacyLang = "";
   try { legacyLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
-  if (!cached.app_lang && legacyLang) cached.app_lang = legacyLang;
+  if (legacyLang) cached.app_lang = legacyLang;
 
   _cache = { ...DEFAULT_SETTINGS, ...cached, ...dirty };
   applySettingsToDom(_cache);
@@ -535,10 +601,16 @@ export async function loadSettings(userEmail) {
   const dbData = await dbGetAll();
   if (dbData && Object.keys(dbData).length > 0) {
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
+    const latestLocal = ls.getAll();
+    let latestLang = "";
+    try { latestLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
+    if (latestLang) latestLocal.app_lang = latestLang;
+
     // Preserve device-local user display preferences if previously set
     USER_LOCAL_PREF_KEYS.forEach((k) => {
-      if (cached[k] !== undefined && cached[k] !== null && cached[k] !== "") {
-        merged[k] = String(cached[k]);
+      const localVal = latestLocal[k] ?? cached[k];
+      if (localVal !== undefined && localVal !== null && localVal !== "") {
+        merged[k] = String(localVal);
       }
     });
     // Overlay persisted dirty edits + in-flight RAM edits so newer local changes are never overwritten

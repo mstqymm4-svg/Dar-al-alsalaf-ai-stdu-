@@ -131,6 +131,7 @@ const AuthenticatedApp = () => {
           <Route path="/videos" element={<Videos />} />
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/login" element={<VerifyEmail />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/splash-preview" element={<SplashPreview />} />
           <Route path="*" element={<PageNotFound />} />

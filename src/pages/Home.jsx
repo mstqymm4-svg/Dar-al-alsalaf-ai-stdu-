@@ -110,10 +110,14 @@ export default function Home() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-sm text-foreground">
-                  {youtubeLabel || t.youtubeBtn}
+                  {t.langCode === "ar" && youtubeLabel && youtubeLabel !== "قناتنا على يوتيوب"
+                    ? youtubeLabel
+                    : t.youtubeBtn}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {youtubeSubText || t.youtubeSub}
+                  {t.langCode === "ar" && youtubeSubText && youtubeSubText !== "تابعونا على قناتنا لمزيد من المحتوى الإسلامي"
+                    ? youtubeSubText
+                    : t.youtubeSub}
                 </p>
               </div>
               <div className="w-9 h-9 rounded-full bg-red-500/10 flex items-center justify-center shrink-0 group-hover:bg-red-500/20 transition-colors">

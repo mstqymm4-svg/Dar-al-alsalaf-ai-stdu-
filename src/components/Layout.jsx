@@ -11,7 +11,7 @@ import { NAV_ICONS, DEFAULT_NAV_ITEMS, readNavItems } from "@/lib/navConfig";
 export default function Layout() {
   const location = useLocation();
   const [user, setUser] = useState(null);
-  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState(() => getAvatarUrl(getAccountEmail(null)));
   const t = useT();
 
   const [showDevNav, setShowDevNav] = useState(() => getSetting("show_dev_nav") !== "false");
@@ -29,10 +29,21 @@ export default function Layout() {
       setNavConfig(readNavItems(s.nav_items));
     });
     const handler = () => setShowDevNav(getSetting("show_dev_nav") !== "false");
-    const avatarHandler = () => setAvatarUrl(getAvatarUrl(getAccountEmail(null)));
+    const authSyncHandler = () => {
+      const em = getAccountEmail(null);
+      setAvatarUrl(getAvatarUrl(em));
+    };
     window.addEventListener("storage", handler);
-    window.addEventListener("dau-avatar-change", avatarHandler);
-    return () => {unsub();window.removeEventListener("storage", handler);window.removeEventListener("dau-avatar-change", avatarHandler);};
+    window.addEventListener("dau-avatar-change", authSyncHandler);
+    window.addEventListener("dau-email-change", authSyncHandler);
+    window.addEventListener("dau-email-verified", authSyncHandler);
+    return () => {
+      unsub();
+      window.removeEventListener("storage", handler);
+      window.removeEventListener("dau-avatar-change", authSyncHandler);
+      window.removeEventListener("dau-email-change", authSyncHandler);
+      window.removeEventListener("dau-email-verified", authSyncHandler);
+    };
   }, []);
 
   // Order, labels and visibility come from the developer panel (إدارة التنقل)
@@ -43,9 +54,12 @@ export default function Layout() {
       .map((item) => {
         const defaultMatch = DEFAULT_NAV_ITEMS.find((d) => d.id === item.id);
         const isDefaultLabel = !item.label || (defaultMatch && defaultMatch.label === item.label);
-        const label = isDefaultLabel && item.labelKey && t[item.labelKey]
-          ? t[item.labelKey]
-          : (t[item.labelKey] || item.label || item.id);
+        const label =
+          (t.langCode !== "ar" && item.labelKey && t[item.labelKey])
+            ? t[item.labelKey]
+            : isDefaultLabel && item.labelKey && t[item.labelKey]
+            ? t[item.labelKey]
+            : (t[item.labelKey] || item.label || item.id);
         return {
           path: item.path,
           icon: NAV_ICONS[item.icon] || Home,
@@ -55,11 +69,28 @@ export default function Layout() {
     ...(showDevNav ? [{ path: "/dev", icon: Code, label: "Dev" }] : []),
   ];
 
+  const cleanNameOverride = (appNameOverride || "").trim();
+  const cleanSubOverride = (appSubtitleOverride || "").trim();
+  const displayAppName =
+    t.langCode === "ar" &&
+    cleanNameOverride &&
+    cleanNameOverride !== "المكتبة الدينية" &&
+    cleanNameOverride.toUpperCase() !== "DAR AL ULOOM"
+      ? cleanNameOverride
+      : t.appName;
+  const displayAppSubtitle =
+    t.langCode === "ar" &&
+    cleanSubOverride &&
+    cleanSubOverride !== "." &&
+    cleanSubOverride !== "نور العلم والمعرفة"
+      ? cleanSubOverride
+      : t.appSubtitle;
 
   useEffect(() => {
     base44.auth.me().then((u) => {
       setUser(u);
-      if (u) setAvatarUrl(getAvatarUrl(getAccountEmail(u)));
+      const em = getAccountEmail(u);
+      if (em) setAvatarUrl(getAvatarUrl(em));
     }).catch(() => {});
   }, []);
 
@@ -86,8 +117,8 @@ export default function Layout() {
                 <BookOpen className="w-5 h-5 text-primary-foreground" />}
               </div>
               <div>
-                <h1 className="text-foreground text-xl font-bold leading-tight">{appNameOverride || t.appName}</h1>
-                <p className="text-[10px] text-muted-foreground -mt-0.5">{appSubtitleOverride || t.appSubtitle}</p>
+                <h1 className="text-foreground text-xl font-bold leading-tight">{displayAppName}</h1>
+                <p className="text-[10px] text-muted-foreground -mt-0.5">{displayAppSubtitle}</p>
               </div>
             </Link>
             <nav className="hidden md:flex items-center gap-1">
@@ -116,9 +147,6 @@ export default function Layout() {
                 <User className="w-4 h-4 text-primary" />}
               </div>
             </Link>
-            
-
-            
           </div>
         </div>
       </header>
@@ -165,7 +193,7 @@ export default function Layout() {
       <footer className="hidden md:block border-t border-border bg-card/50 mt-auto">
        <div className="max-w-7xl sm:px-6 lg:px-8 py-6 px-6">
          <div className="flex items-center justify-between">
-           <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} {appNameOverride || t.appName}</p>
+           <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} {displayAppName}</p>
            <nav className="flex items-center gap-5">
              <Link to="/about" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">{t.aboutTitle} 
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Camera,
@@ -9,15 +10,13 @@ import {
   Save,
   Activity,
   Eye,
-  Lock,
+  LogIn,
   ShieldCheck,
-  Mail,
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import EmailVerification from "@/components/EmailVerification";
 import ProfileStatChip from "@/components/profile/ProfileStatChip";
 import RecentReadsList from "@/components/profile/RecentReadsList";
 import ProfileQuickLinks from "@/components/profile/ProfileQuickLinks";
@@ -25,7 +24,6 @@ import { useT } from "@/lib/i18n";
 import { toast } from "sonner";
 import {
   getAccountEmail,
-  setAccountEmail,
   getDownloadedBookIds,
   getAvatarUrl,
   setAvatarUrl,
@@ -59,14 +57,6 @@ export default function ProfileCard() {
   const [uploading, setUploading] = useState(false);
   const [stats, setStats] = useState({ favs: 0, dls: 0, reading: 0, watched: 0 });
   const [recentReads, setRecentReads] = useState([]);
-  const [verified, setVerified] = useState(() => {
-    const em = getAccountEmail();
-    try {
-      return !!em && localStorage.getItem(`email_verified_${em}`) === "1";
-    } catch {
-      return false;
-    }
-  });
 
   useEffect(() => {
     load();
@@ -105,16 +95,6 @@ export default function ProfileCard() {
     const em = (getAccountEmail(u) || "").trim();
     setLinkedEmail(em);
     setAvatar(em ? getAvatarUrl(em) : "");
-
-    if (em) {
-      try {
-        setVerified(localStorage.getItem(`email_verified_${em}`) === "1");
-      } catch {
-        setVerified(false);
-      }
-    } else {
-      setVerified(false);
-    }
 
     refreshStats(em);
     loadRecentReads();
@@ -191,34 +171,6 @@ export default function ProfileCard() {
     }
   };
 
-  // Successful OTP verification callback: links email to profile
-  const handleVerifiedSuccess = async (verifiedEmail) => {
-    const prev = getAccountEmail(user);
-    if (prev && prev !== verifiedEmail) {
-      const av = getAvatarUrl(prev);
-      if (av) setAvatarUrl(verifiedEmail, av);
-    }
-
-    setAccountEmail(verifiedEmail);
-    setLinkedEmail(verifiedEmail);
-    try {
-      localStorage.setItem(`email_verified_${verifiedEmail}`, "1");
-    } catch {}
-
-    setVerified(true);
-
-    // Verified email is stored in dau_account_email and localStorage without triggering external platform emails
-
-    // Dispatch global events for other components
-    try {
-      window.dispatchEvent(new Event("dau-email-verified"));
-      window.dispatchEvent(new Event("dau-email-change"));
-    } catch {}
-
-    await refreshStats(verifiedEmail);
-    toast.success(t.linkedSuccess || "تم ربط البريد الإلكتروني بالملف الشخصي وتوثيقه بنجاح ✓");
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
@@ -273,24 +225,70 @@ export default function ProfileCard() {
           <div className="pb-1 min-w-0 w-full sm:w-auto sm:text-end">
             <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
               <p className="font-bold text-base text-foreground break-words">
-                {fullName || t.userDefaultName || "مستخدم دار العلوم"}
+                {(fullName && fullName !== "مستخدم دار العلوم" && (t.langCode === "ar" || fullName !== "محمد هارون نور"))
+                  ? fullName
+                  : (t.userDefaultName || "مستخدم دار العلوم")}
               </p>
-              {verified && (
-                <span className="shrink-0 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                  <span>{t.verifiedBadge || "موثّق"}</span>
-                </span>
-              )}
             </div>
             <p className="text-xs text-muted-foreground break-all mt-0.5" dir="ltr">
-              {linkedEmail || t.noLinkedEmail || "لا يوجد بريد مرتبط"}
+              {linkedEmail || t.noLinkedEmail}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Profile Form Fields */}
+      {/* Profile Form Fields + Login Button */}
       <div className="px-4 sm:px-6 pt-5 space-y-5">
+        {/* Login / Account Action Card */}
+        {!linkedEmail ? (
+          <div className="p-4 rounded-2xl bg-primary/5 border border-primary/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-sm font-bold text-foreground">
+                {t.loginToSyncTitle}
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {t.loginToSyncSub}
+              </p>
+            </div>
+            <Button
+              asChild
+              className="gap-2 rounded-[4px_20px_4px_20px] font-bold text-xs px-5 h-10 shrink-0 w-full sm:w-auto shadow-sm"
+            >
+              <Link to="/login">
+                <LogIn className="w-4 h-4" />
+                <span>{t.loginBtn}</span>
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <div className="p-3.5 rounded-2xl bg-emerald-500/8 border border-emerald-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                  {t.loggedInStatus}
+                </p>
+                <p className="text-xs font-mono text-foreground truncate" dir="ltr">
+                  {linkedEmail}
+                </p>
+              </div>
+            </div>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="gap-1.5 rounded-xl text-xs shrink-0 h-9 w-full sm:w-auto"
+            >
+              <Link to="/login">
+                <LogIn className="w-3.5 h-3.5" />
+                <span>{t.switchAccount || t.loginBtn}</span>
+              </Link>
+            </Button>
+          </div>
+        )}
+
         {/* Full Name */}
         <div className="space-y-1.5">
           <Label className="text-xs font-bold">{t.fullName}</Label>
@@ -314,69 +312,6 @@ export default function ProfileCard() {
               <span>{t.saveName || "حفظ الاسم"}</span>
             </Button>
           </div>
-        </div>
-
-        {/* Linked Email Section */}
-        <div className="space-y-2 pt-2 border-t border-border/60">
-          <div className="flex flex-wrap items-center justify-between gap-1.5">
-            <Label className="text-xs font-bold flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-primary" />
-              <span>{t.linkedEmailTitle || "البريد الإلكتروني المرتبط بالحساب"}</span>
-            </Label>
-            {verified && (
-              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" />
-                <span>{t.verifiedSuccessBadge || "متحقق منه بنجاح"}</span>
-              </span>
-            )}
-          </div>
-
-          {/* Condition 1: User has verified linked email -> LOCKED & UNMODIFIABLE */}
-          {verified ? (
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-500/[0.06] border border-emerald-500/25 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <div className="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 shadow-xs mt-0.5 sm:mt-0">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="text-xs sm:text-sm font-bold text-foreground break-all font-mono" dir="ltr">
-                        {linkedEmail}
-                      </p>
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">
-                        <ShieldCheck className="w-3 h-3" />
-                        <span>{t.verifiedBadge || "موثّق"}</span>
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {t.linkedAndProtected || "مرتبط بالملف الشخصي ومحمي برمز OTP"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="self-start sm:self-auto shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 text-[11px] font-bold">
-                  <Lock className="w-3 h-3 text-emerald-600" />
-                  <span>{t.nonEditable || "غير قابل للتعديل"}</span>
-                </div>
-              </div>
-
-              <div className="pt-2 border-t border-emerald-500/15 text-[11px] text-muted-foreground leading-relaxed flex items-start sm:items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5 sm:mt-0" />
-                <span>
-                  {t.lockedEmailNotice || "تم توثيق هذا البريد بنجاح ولا يمكن تعديله للحفاظ على أمان حسابك وبياناتك."}
-                </span>
-              </div>
-            </div>
-          ) : (
-            /* Condition 2: No verified email -> OTP verification flow to verify and lock */
-            <EmailVerification
-              currentEmail={linkedEmail}
-              isVerified={false}
-              onVerifiedSuccess={handleVerifiedSuccess}
-              onCancel={null}
-            />
-          )}
         </div>
       </div>
 

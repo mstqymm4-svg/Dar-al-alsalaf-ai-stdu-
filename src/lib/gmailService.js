@@ -10,6 +10,8 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const SCOPES = [
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
   'https://mail.google.com/',
   'https://www.googleapis.com/auth/gmail.addons.current.action.compose',
   'https://www.googleapis.com/auth/gmail.addons.current.message.action',
