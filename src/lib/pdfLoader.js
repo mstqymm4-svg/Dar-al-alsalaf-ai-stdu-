@@ -1,143 +1,190 @@
-/**
- * pdfLoader — PDF.js setup and helper functions
- * Optimized for Arabic/Urdu PDFs with embedded fonts.
- * Canvas rendering preserves the original layout exactly.
- */
 import * as pdfjsLib from "pdfjs-dist";
-import { getCachedPdf, cachePdf } from "@/lib/offlineDB";
+import { apiUrl } from "@/lib/apiBase";
+import { getCachedPdf } from "./offlineDB";
 
-pdfjsLib.GlobalWorkerOptions.workerPort = new Worker(
-  new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url),
-  { type: "module" }
-);
-
-// Cache loaded PDF documents (url -> pdf proxy)
-const _docCache = new Map();
-
-// Rendered page cache (pageKey -> dataURL) for instant re-display
-const _pageCache = new Map();
-const MAX_PAGE_CACHE = 12;
-
-/**
- * Load a PDF document. Cached per URL.
- * Offline-aware: uses IndexedDB cache when offline, URL when online.
- */
-export async function loadPdfDocument(url, metadata = {}) {
-  if (_docCache.has(url)) return _docCache.get(url);
-
-  // Check cache first (works both online and offline)
+// Bundle worker locally using Vite's asset handling with fallback for older Android WebViews
+let workerPort = null;
+try {
+  workerPort = new Worker(
+    new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url),
+    { type: "module" }
+  );
+  pdfjsLib.GlobalWorkerOptions.workerPort = workerPort;
+} catch {
   try {
-    const cachedPdf = await getCachedPdf(url);
-    if (cachedPdf && cachedPdf.buffer) {
-      const pdfData = new Uint8Array(cachedPdf.buffer);
-      const loadingTask = pdfjsLib.getDocument({
-        data: pdfData,
-        cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
-        cMapPacked: true,
-        useSystemFonts: true,
-        disableFontFace: false,
-        standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
-      });
-      const pdf = await loadingTask.promise;
-      _docCache.set(url, pdf);
-      return pdf;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url
+    ).toString();
+  } catch {
+    // pdfjs will fall back to fake worker automatically
+  }
+}
+
+export { pdfjsLib };
+
+// Memory Cache for Instant Resume during the same session
+const activeDocuments = new Map();
+const pageTextCache = new Map();
+const MAX_ACTIVE_DOCS = 3;
+
+export async function loadPdfDocument(url, _metadata = {}) {
+  if (!url) throw new Error("No PDF URL provided");
+
+  // 1. Check Memory Cache first (Instant 0ms load if recently opened)
+  if (activeDocuments.has(url)) {
+    const cachedDoc = activeDocuments.get(url);
+    if (cachedDoc && typeof cachedDoc.numPages === "number") {
+      activeDocuments.delete(url);
+      activeDocuments.set(url, cachedDoc);
+      return cachedDoc;
     }
-  } catch(e) { /* fall through to URL */ }
-
-  // Load from URL (online)
-  const loadingTask = pdfjsLib.getDocument({
-    url,
-    rangeChunkSize: 131072,
-    disableAutoFetch: true, // fetch only the ranges needed for the first pages
-    disableStream: false,
-    useSystemFonts: true,
-    disableFontFace: false,
-    cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
-    cMapPacked: true,
-    standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
-  });
-  const pdf = await loadingTask.promise;
-  _docCache.set(url, pdf);
-
-  // Auto-cache PDF in background for offline reading (no duplicate download — uses pdfjs internal data)
-  // Deferred so it never competes with rendering the first pages
-  if (metadata.bookId) {
-    setTimeout(() => {
-      pdf.getData().then(data => {
-        cachePdf(url, data.buffer, metadata.bookId, metadata.title || "").catch(() => {});
-      }).catch(() => {});
-    }, 4000);
+    activeDocuments.delete(url);
   }
 
-  return pdf;
-}
+  let loadingTask;
+  let source = "remote";
 
-/** Get total page count without loading all pages. */
-export async function getPdfPageCount(url) {
-  const pdf = await loadPdfDocument(url);
-  return pdf.numPages;
-}
-
-/**
- * Extract text from a single PDF page using the text layer.
- * Fast — no API calls, runs entirely client-side.
- */
-export async function extractPageText(pdf, pageNumber) {
-  const page = await pdf.getPage(pageNumber);
-  const content = await page.getTextContent();
-  return content.items.map((item) => item.str).join(" ");
-}
-
-/**
- * Render a PDF page to a canvas with devicePixelRatio for crisp text.
- * Returns the canvas element. Uses cache for re-renders.
- */
-export async function renderPageToCanvas(pdf, pageNumber, canvas, scale = 1.5) {
-  const page = await pdf.getPage(pageNumber);
-  const dpr = window.devicePixelRatio || 1;
-  const renderScale = scale * dpr;
-  const viewport = page.getViewport({ scale: renderScale });
-  const ctx = canvas.getContext("2d", { alpha: false });
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  const renderTask = page.render({ canvasContext: ctx, viewport });
-  await renderTask.promise;
-  return renderTask;
-}
-
-/**
- * Render a PDF page to an image Blob (for OCR upload).
- */
-export async function renderPageToImageBlob(pdf, pageNumber, scale = 2) {
-  const canvas = document.createElement("canvas");
-  await renderPageToCanvas(pdf, pageNumber, canvas, scale);
-  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-}
-
-/** Cache a rendered page dataURL. */
-export function cachePage(key, dataUrl) {
-  if (_pageCache.size >= MAX_PAGE_CACHE) {
-    const firstKey = _pageCache.keys().next().value;
-    _pageCache.delete(firstKey);
+  try {
+    // 2. Check IndexedDB Cache (Fast offline/local load)
+    const cachedRecord = await getCachedPdf(url);
+    if (cachedRecord && cachedRecord.buffer) {
+      const dataBuffer =
+        cachedRecord.buffer instanceof ArrayBuffer
+          ? cachedRecord.buffer.slice(0)
+          : await cachedRecord.buffer.arrayBuffer?.();
+      if (dataBuffer) {
+        loadingTask = pdfjsLib.getDocument({
+          data: dataBuffer,
+          cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
+          cMapPacked: true,
+          standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
+        });
+        source = "cache";
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load from IndexedDB cache, falling back to network:", err);
   }
-  _pageCache.set(key, dataUrl);
+
+  // 3. Network Load with Progressive Streaming & Range Requests
+  if (!loadingTask) {
+    loadingTask = pdfjsLib.getDocument({
+      url: url,
+      cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
+      disableAutoFetch: false,
+      disableStream: false,
+      disableRange: false,
+      rangeChunkSize: 65536 * 4, // 256KB chunks for fast initial page render
+    });
+  }
+
+  try {
+    const pdfDocument = await loadingTask.promise;
+
+    // Store in Memory Cache (LRU eviction)
+    if (activeDocuments.size >= MAX_ACTIVE_DOCS) {
+      const oldestKey = activeDocuments.keys().next().value;
+      const oldestDoc = activeDocuments.get(oldestKey);
+      activeDocuments.delete(oldestKey);
+      try {
+        oldestDoc.destroy();
+      } catch {}
+    }
+    activeDocuments.set(url, pdfDocument);
+
+    return pdfDocument;
+  } catch (error) {
+    // Fallback for Android APK/AAB WebViews where Range headers or CORS may block direct streaming
+    if (source === "remote" && /^https?:\/\//i.test(url)) {
+      try {
+        const fallbackTask = pdfjsLib.getDocument({
+          url: url,
+          cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
+          cMapPacked: true,
+          standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
+          disableAutoFetch: true,
+          disableStream: true,
+          disableRange: true,
+        });
+        const pdfDocument = await fallbackTask.promise;
+        activeDocuments.set(url, pdfDocument);
+        return pdfDocument;
+      } catch {
+        try {
+          const proxiedUrl = apiUrl(`/api/proxy-image?url=${encodeURIComponent(url)}`);
+          const proxyTask = pdfjsLib.getDocument({
+            url: proxiedUrl,
+            cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
+            cMapPacked: true,
+            standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
+            disableAutoFetch: true,
+            disableStream: true,
+            disableRange: true,
+          });
+          const pdfDocument = await proxyTask.promise;
+          activeDocuments.set(url, pdfDocument);
+          return pdfDocument;
+        } catch {
+          // Proceed to error handler below
+        }
+      }
+    }
+    console.error("PDF Load Error:", error);
+    throw new Error(getArabicPdfErrorMessage(error));
+  }
 }
 
-/** Get a cached page dataURL. */
-export function getCachedPage(key) {
-  return _pageCache.get(key);
+export async function extractPageText(pdf, pageNum) {
+  if (!pdf || !pageNum) return "";
+  const docId = pdf?.fingerprints?.[0] || "doc";
+  const cacheKey = `${docId}_p${pageNum}`;
+  if (pageTextCache.has(cacheKey)) {
+    return pageTextCache.get(cacheKey);
+  }
+  try {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    const text = (content?.items || [])
+      .map((item) => item?.str || "")
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (pageTextCache.size > 500) {
+      const firstKey = pageTextCache.keys().next().value;
+      pageTextCache.delete(firstKey);
+    }
+    pageTextCache.set(cacheKey, text);
+    return text;
+  } catch {
+    return "";
+  }
 }
 
-/** Clear all caches (e.g., on unmount). */
 export function clearPageCache() {
-  _pageCache.clear();
+  pageTextCache.clear();
 }
 
-/**
- * Warm the PDF worker, chunk and document caches in the background — call the
- * moment the user taps "read" so the book opens visibly faster.
- */
-export function prefetchPdf(url, metadata = {}) {
-  if (!url) return;
-  loadPdfDocument(url, metadata).catch(() => {});
+function getArabicPdfErrorMessage(error) {
+  if (!error) return "حدث خطأ غير معروف أثناء تحميل الكتاب.";
+
+  const msg = (error.message || "").toLowerCase();
+  const name = (error.name || "").toLowerCase();
+
+  if (name === "invalidpdferror" || msg.includes("invalid pdf")) {
+    return "ملف الكتاب تالف أو ليس بصيغة PDF صالحة.";
+  }
+  if (name === "missingpdferror" || msg.includes("missing pdf") || msg.includes("404")) {
+    return "لم يتم العثور على ملف الكتاب في الخادم (404).";
+  }
+  if (name === "unexpectedresponseexception" || msg.includes("network") || msg.includes("failed to fetch") || msg.includes("cors")) {
+    return "تعذر الاتصال بالخادم لتحميل الكتاب. يرجى التحقق من اتصال الإنترنت أو صلاحيات الرابط.";
+  }
+  if (name === "passwordexception" || msg.includes("password")) {
+    return "هذا الكتاب محمي بكلمة مرور ولا يمكن فتحه.";
+  }
+
+  return "تعذر فتح الكتاب. قد يكون الرابط غير مدعوم أو هناك مشكلة في الشبكة.";
 }

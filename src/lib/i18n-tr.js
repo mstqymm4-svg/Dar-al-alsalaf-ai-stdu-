@@ -1,6 +1,6 @@
 // Turkish translations — extracted from src/lib/i18n.js
 export default {
-  dir: "ltr",
+  dir: "rtl",
   appName: "İslami Kütüphane",
   appSubtitle: "İlmin Işığı",
   navHome: "Ana Sayfa",

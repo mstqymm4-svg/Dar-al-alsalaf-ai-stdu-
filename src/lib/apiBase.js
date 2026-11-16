@@ -10,7 +10,7 @@
 const DEFAULT_REMOTE_API =
   "https://ais-pre-taxhi5e3sszvdhq5syo3ia-174510247368.europe-west3.run.app";
 
-function isCapacitorNativeRuntime() {
+export function isCapacitorNativeRuntime() {
   if (typeof window === "undefined") return false;
   try {
     if (/** @type {any} */ (window).Capacitor?.isNativePlatform?.()) return true;
@@ -19,6 +19,10 @@ function isCapacitorNativeRuntime() {
       return true;
     }
     if (hostname === "localhost" && !port) {
+      return true;
+    }
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
+    if (/;\s*wv\)/i.test(ua)) {
       return true;
     }
   } catch {

@@ -100,8 +100,14 @@ function isNetworkLikeError(err) {
   return (
     (typeof navigator !== "undefined" && navigator.onLine === false) ||
     code === "unavailable" ||
+    code === "not-found" ||
+    code === "permission-denied" ||
+    code === "unauthenticated" ||
     msg.includes("client is offline") ||
     msg.includes("failed to get document because the client is offline") ||
+    msg.includes("permission-denied") ||
+    msg.includes("missing or insufficient permissions") ||
+    msg.includes("not-found") ||
     msg.includes("network")
   );
 }

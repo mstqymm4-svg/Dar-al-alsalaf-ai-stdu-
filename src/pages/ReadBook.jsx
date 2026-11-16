@@ -38,8 +38,14 @@ export default function ReadBook() {
 
   // Anti-screenshot & content protection
   useEffect(() => {
-    // When window loses focus (e.g. snipping tool or screen grabber is invoked), shield content
-    const handleBlur = () => setIsWindowBlurred(true);
+    const isTouchDevice =
+      typeof window !== "undefined" &&
+      ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+    // On desktop, shield content when window loses focus (e.g. snipping tool).
+    // On Android WebView / touch devices, avoid sticky blur on volume/notification shade; rely on visibilitychange.
+    const handleBlur = () => {
+      if (!isTouchDevice) setIsWindowBlurred(true);
+    };
     const handleFocus = () => setIsWindowBlurred(false);
     const handleVisibility = () => {
       if (document.hidden) setIsWindowBlurred(true);
@@ -109,6 +115,12 @@ export default function ReadBook() {
       className={`fixed inset-x-0 bottom-0 z-40 flex flex-col bg-background select-none transition-all ${
         isZenMode ? "top-0 z-50" : "top-16"
       }`}
+      onPointerDown={() => {
+        if (isWindowBlurred) setIsWindowBlurred(false);
+      }}
+      onTouchStart={() => {
+        if (isWindowBlurred) setIsWindowBlurred(false);
+      }}
       onContextMenu={(e) => e.preventDefault()}
       onCopy={(e) => e.preventDefault()}
       onDragStart={(e) => e.preventDefault()}

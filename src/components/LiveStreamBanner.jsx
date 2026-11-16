@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Radio, Play, Tv } from "lucide-react";
 import { getVideoChannels } from "@/lib/offlineSync";
 import { useT } from "@/lib/i18n";
+import { apiUrl } from "@/lib/apiBase";
 import SmartImage from "./SmartImage";
 
 export default function LiveStreamBanner({ channelId = null }) {
@@ -13,7 +14,7 @@ export default function LiveStreamBanner({ channelId = null }) {
       const channels = await getVideoChannels();
       if (!channels || channels.length === 0) return;
 
-      const res = await fetch("/api/check-live-streams", {
+      const res = await fetch(apiUrl("/api/check-live-streams"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

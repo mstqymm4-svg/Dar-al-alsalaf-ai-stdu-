@@ -95,8 +95,6 @@ export function checkIpRateLimit(ip: string): boolean {
   return true;
 }
 
-const REPLY_TO_EMAIL = 'daraluloom258@gmail.com';
-
 // Configure single Gmail SMTP transporter using ONLY process.env.SMTP_USER and process.env.SMTP_PASS
 function getSmtpConfig() {
   loadEnv();
@@ -172,10 +170,10 @@ function createEmailTemplate(otp: string): string {
     <!-- Top Header Banner -->
     <div style="background:linear-gradient(135deg,#064e3b 0%,#047857 55%,#0d9488 100%);padding:38px 28px;text-align:center;">
       <div style="display:inline-block;padding:5px 16px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);border-radius:999px;margin-bottom:14px;">
-        <span style="color:#d1fae5;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">Official Verification</span>
+        <span style="color:#d1fae5;font-size:12px;font-weight:700;letter-spacing:0.5px;">دار العلوم • DAR AL ULOOM</span>
       </div>
-      <h1 style="color:#ffffff;margin:0;font-size:30px;font-weight:900;letter-spacing:0.5px;">DAR AL ULOOM</h1>
-      <p style="color:#a7f3d0;margin:8px 0 0;font-size:14px;font-weight:500;">Light of Knowledge &amp; Learning</p>
+      <h1 style="color:#ffffff;margin:0;font-size:32px;font-weight:900;letter-spacing:0.5px;">دار العلوم</h1>
+      <p style="color:#a7f3d0;margin:8px 0 0;font-size:14px;font-weight:600;">نور العلم والمعرفة</p>
     </div>
 
     <!-- Gold Accent Divider -->
@@ -184,11 +182,11 @@ function createEmailTemplate(otp: string): string {
     <!-- Main Content Card -->
     <div style="padding:36px 30px;text-align:center;">
       
-      <h2 style="margin:0 0 14px;color:#064e3b;font-size:22px;font-weight:800;letter-spacing:-0.2px;">Verify Your Email Address</h2>
+      <h2 style="margin:0 0 14px;color:#064e3b;font-size:22px;font-weight:800;letter-spacing:-0.2px;">رمز تسجيل الدخول والتحقق — دار العلوم</h2>
       
       <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.7;">
-        Hello,<br>
-        Please use the 6-digit verification code below to verify your email address and secure your account on <strong>Dar Al Uloom</strong>:
+        مرحباً بك في <strong>دار العلوم</strong>،<br>
+        استخدم رمز التحقق المكوّن من 6 أرقام أدناه لتسجيل الدخول وتأكيد حسابك:
       </p>
 
       <!-- 6-Digit Verification Code Table -->
@@ -312,22 +310,18 @@ export async function sendOtp(email: string, clientIp: string) {
 
   try {
     await transporter.sendMail({
-      from: `"DAR AL ULOOM" <${process.env.SMTP_USER}>`,
-      replyTo: REPLY_TO_EMAIL,
+      from: `"دار العلوم" <${process.env.SMTP_USER}>`,
       to: normalizedEmail,
-      subject: `Dar Al Uloom — Your Verification Code: ${otpCode}`,
+      subject: `دار العلوم — رمز تسجيل الدخول والتحقق: ${otpCode}`,
       text: [
-        'Hello,',
+        'مرحباً بك في دار العلوم،',
         '',
-        `Your verification code for Dar Al Uloom is: ${otpCode}`,
+        `رمز تسجيل الدخول والتحقق الخاص بك في تطبيق دار العلوم هو: ${otpCode}`,
         '',
-        'This code is valid for 10 minutes only.',
-        'Security Notice: Never share this code with anyone.',
+        'صلاحية هذا الرمز 10 دقائق فقط.',
+        'تنبيه أمني: لا تشارك هذا الرمز مع أي شخص.',
         '',
-        'If you did not request this verification code, please ignore this email.',
-        '',
-        'Dar Al Uloom — Light of Knowledge & Learning',
-        '© 2026 Dar Al Uloom. All rights reserved.',
+        '© 2026 دار العلوم. جميع الحقوق محفوظة.',
       ].join('\n'),
       html: createEmailTemplate(otpCode),
     });
@@ -494,8 +488,8 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
     const mailSubject = subject || `[دار العلوم — رسالة تواصل جديدة]: ${senderName}`;
 
     await transporter.sendMail({
-      from: `"DAR AL ULOOM" <${process.env.SMTP_USER}>`,
-      replyTo: REPLY_TO_EMAIL,
+      from: `"دار العلوم" <${process.env.SMTP_USER}>`,
+      replyTo: normalizedEmail,
       to: officialRecipient,
       subject: mailSubject,
       text: `رسالة تواصل جديدة من تطبيق دار العلوم:\n\nالاسم: ${senderName}\nالبريد: ${normalizedEmail}\n\nنص الرسالة:\n${bodyText}\n\n---\nتطبيق دار العلوم`,

@@ -291,12 +291,17 @@ export default function ProBookViewer({
   }, []);
 
   const toggleFullscreen = useCallback(() => {
-    const el = rootRef.current;
-    if (!document.fullscreenElement) {
-      (el || document.documentElement).requestFullscreen?.();
-    } else {
-      document.exitFullscreen?.();
-    }
+    try {
+      const el = rootRef.current || document.documentElement;
+      const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!isFs) {
+        const req = el?.requestFullscreen || el?.webkitRequestFullscreen;
+        if (req) Promise.resolve(req.call(el)).catch(() => {});
+      } else {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) Promise.resolve(exit.call(document)).catch(() => {});
+      }
+    } catch {}
   }, []);
 
   const cycleViewMode = useCallback(() => {

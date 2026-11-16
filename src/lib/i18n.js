@@ -453,7 +453,7 @@ export const TRANSLATIONS = {
     cloudSaveError: "تعذر حفظ التعديلات سحابياً — سيتم الحفظ تلقائياً عند توفر الاتصال",
   },
   en: {
-    dir: "ltr",
+    dir: "rtl",
     appName: "Islamic Library",
     appSubtitle: "Light of Knowledge",
     navHome: "Home",
@@ -902,7 +902,7 @@ export const TRANSLATIONS = {
     cloudSaveError: "Could not save to cloud — changes will sync automatically when online",
   },
   fr: {
-    dir: "ltr",
+    dir: "rtl",
     appName: "Bibliothèque Islamique",
     appSubtitle: "Lumière du Savoir",
     navHome: "Accueil",
@@ -1800,7 +1800,7 @@ export const TRANSLATIONS = {
     cloudSaveError: "کلاؤڈ میں محفوظ نہیں ہو سکا — انٹرنیٹ بحال ہونے پر خودکار محفوظ ہو جائے گا",
   },
   hi: {
-    dir: "ltr",
+    dir: "rtl",
     appName: "इस्लामी पुस्तकालय",
     appSubtitle: "ज्ञान का प्रकाश",
     navHome: "मुख्य पृष्ठ",
@@ -2259,10 +2259,10 @@ const ls = {
 const LANG_META = {
   ar: { dir: "rtl", langCode: "ar", fontFamily: "'Tajawal', sans-serif" },
   ur: { dir: "rtl", langCode: "ur", fontFamily: "'Noto Nastaliq Urdu', serif" },
-  en: { dir: "ltr", langCode: "en", fontFamily: "'Inter', sans-serif" },
-  fr: { dir: "ltr", langCode: "fr", fontFamily: "'Inter', sans-serif" },
-  tr: { dir: "ltr", langCode: "tr", fontFamily: "'Inter', sans-serif" },
-  hi: { dir: "ltr", langCode: "hi", fontFamily: "'Noto Sans Devanagari', sans-serif" },
+  en: { dir: "rtl", langCode: "en", fontFamily: "'Inter', sans-serif" },
+  fr: { dir: "rtl", langCode: "fr", fontFamily: "'Inter', sans-serif" },
+  tr: { dir: "rtl", langCode: "tr", fontFamily: "'Inter', sans-serif" },
+  hi: { dir: "rtl", langCode: "hi", fontFamily: "'Noto Sans Devanagari', sans-serif" },
 };
 
 export function useT() {
