@@ -535,13 +535,7 @@ export default function VerifyEmail() {
                 </h1>
                 <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                   {t.otpSuccessDesc2}
-                  <span className="block mt-1 font-mono font-medium text-foreground" dir="ltr">{email}</span>
                 </p>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 font-medium flex items-center justify-center gap-2">
-                <ShieldCheck className="w-4 h-4" />
-                <span>{t.otpSuccessBadgeDesc}</span>
               </div>
 
               <div className="pt-2">

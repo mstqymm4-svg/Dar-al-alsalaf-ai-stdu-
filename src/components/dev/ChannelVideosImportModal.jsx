@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,16 @@ import {
   CheckSquare, Square, AlertCircle, Sparkles, Tv
 } from "lucide-react";
 import { fetchChannelVideos, extractYoutubeId, getThumbnail } from "@/lib/youtubeMeta";
-import { useT } from "@/lib/i18n";
 
-export default function ChannelVideosImportModal({ channel, isOpen, onClose, onSuccess }) {
-  const t = useT();
-  const [limit, setLimit] = useState("15");
+export default function ChannelVideosImportModal({
+  channel,
+  isOpen,
+  onClose,
+  onSuccess,
+  initialType = "all",
+}) {
+  const [contentType, setContentType] = useState(initialType || "all"); // "shorts" | "videos" | "all"
+  const [limit, setLimit] = useState("25");
   const [customLimit, setCustomLimit] = useState("");
   const [loading, setLoading] = useState(false);
   const [videos, setVideos] = useState([]);
@@ -25,61 +30,77 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
 
+  const handleFetchVideos = useCallback(
+    async (overrideType) => {
+      if (!channel?.youtube_url) {
+        toast.error("القناة لا تحتوي على رابط يوتيوب صالح");
+        return;
+      }
+
+      const activeType = overrideType || contentType;
+      setLoading(true);
+      setVideos([]);
+      setSelectedIds(new Set());
+
+      try {
+        const fetched = await fetchChannelVideos(channel.youtube_url, limit, activeType);
+        if (!fetched || fetched.length === 0) {
+          toast.error(
+            activeType === "shorts"
+              ? "تعذر العثور على مقاطع قصيرة (Shorts) في هذه القناة"
+              : "تعذر العثور على فيديوهات في القناة، تأكد من صحة الرابط"
+          );
+          setLoading(false);
+          return;
+        }
+
+        setVideos(fetched);
+
+        // Auto-select videos that are not yet in the database
+        const newIds = new Set();
+        fetched.forEach((v) => {
+          const id = extractYoutubeId(v.youtube_url);
+          if (id && !existingVideoUrls.has(id)) {
+            newIds.add(id);
+          }
+        });
+        setSelectedIds(newIds);
+
+        toast.success(
+          activeType === "shorts"
+            ? `تم استخراج ${fetched.length} مقطع قصير (Shorts) مع العناوين والبيانات تلقائياً ✓`
+            : `تم استخراج ${fetched.length} فيديو من القناة ✓`
+        );
+      } catch (err) {
+        console.error("Error fetching channel videos:", err);
+        toast.error("حدث خطأ أثناء الاتصال باليوتيوب");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [channel, contentType, limit, existingVideoUrls]
+  );
+
   // Load existing videos from DB when modal opens to mark duplicates
   useEffect(() => {
     if (!isOpen || !channel) return;
+    const startType = initialType || "all";
+    setContentType(startType);
     setVideos([]);
     setSelectedIds(new Set());
     setProgress({ current: 0, total: 0 });
 
-    base44.entities.Video.list("-created_date", 1000).then((list) => {
-      const set = new Set();
-      (list || []).forEach((v) => {
-        const id = extractYoutubeId(v.youtube_url);
-        if (id) set.add(id);
-      });
-      setExistingVideoUrls(set);
-    }).catch(() => {});
-  }, [isOpen, channel]);
-
-  const handleFetchVideos = async () => {
-    if (!channel?.youtube_url) {
-      toast.error("القناة لا تحتوي على رابط يوتيوب صالح");
-      return;
-    }
-
-    setLoading(true);
-    setVideos([]);
-    setSelectedIds(new Set());
-
-    try {
-      const fetched = await fetchChannelVideos(channel.youtube_url, limit);
-      if (!fetched || fetched.length === 0) {
-        toast.error("تعذر العثور على فيديوهات في القناة، تأكد من صحة الرابط أو خصوصية القناة");
-        setLoading(false);
-        return;
-      }
-
-      setVideos(fetched);
-
-      // Auto-select videos that are not yet in the database
-      const newIds = new Set();
-      fetched.forEach((v) => {
-        const id = extractYoutubeId(v.youtube_url);
-        if (id && !existingVideoUrls.has(id)) {
-          newIds.add(id);
-        }
-      });
-      setSelectedIds(newIds);
-
-      toast.success(`تم استخراج ${fetched.length} فيديو من القناة`);
-    } catch (err) {
-      console.error("Error fetching channel videos:", err);
-      toast.error("حدث خطأ أثناء الاتصال باليوتيوب");
-    } finally {
-      setLoading(false);
-    }
-  };
+    base44.entities.Video.list("-created_date", 1000)
+      .then((list) => {
+        const set = new Set();
+        (list || []).forEach((v) => {
+          const id = extractYoutubeId(v.youtube_url);
+          if (id) set.add(id);
+        });
+        setExistingVideoUrls(set);
+      })
+      .catch(() => {});
+  }, [isOpen, channel, initialType]);
 
   const toggleSelect = (id) => {
     const next = new Set(selectedIds);
@@ -111,7 +132,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
     });
 
     if (toImport.length === 0) {
-      toast.error("يرجى تحديد فيديو واحد على الأقل للاستيراد");
+      toast.error("يرجى تحديد مقطع واحد على الأقل للاستيراد");
       return;
     }
 
@@ -121,16 +142,17 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
     let successCount = 0;
     for (let i = 0; i < toImport.length; i++) {
       const v = toImport[i];
+      const isShort = v.video_type === "short" || contentType === "shorts" || v.youtube_url?.includes("/shorts/");
       try {
         await base44.entities.Video.create({
           title: v.title,
           youtube_url: v.youtube_url,
-          duration: v.duration || "",
+          duration: v.duration || (isShort ? "0:60" : ""),
           thumbnail: v.thumbnail || getThumbnail(v.youtube_url),
           channel_id: channel.id || "",
           channel_name: channel.name || v.channel_name || "",
           category: channel.category || "عام",
-          video_type: v.video_type || "normal",
+          video_type: isShort ? "short" : (v.video_type || "normal"),
           description: v.description || "",
           is_featured: false,
           visible: true,
@@ -144,7 +166,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
     }
 
     setImporting(false);
-    toast.success(`تم استيراد ${successCount} فيديو بنجاح إلى قاعدة البيانات! 🎉`);
+    toast.success(`تم استيراد ${successCount} مقطع بنجاح إلى التطبيق! 🎉`);
     if (onSuccess) onSuccess();
     onClose();
   };
@@ -165,8 +187,8 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
               )}
             </div>
             <div className="flex-1 min-w-0 text-right">
-              <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2">
-                <span>استيراد فيديوهات القناة تلقائياً</span>
+              <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2 flex-wrap">
+                <span>استيراد المقاطع من القناة تلقائياً</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
                   {channel.name}
                 </span>
@@ -182,16 +204,58 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {/* Controls bar */}
           <div className="bg-muted/40 border border-border rounded-xl p-3.5 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* Content Type Selector: Shorts vs Regular vs All */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold text-foreground block">
+                نوع المقاطع المطلوب سحبها من القناة:
+              </Label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setContentType("shorts")}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    contentType === "shorts"
+                      ? "bg-purple-600 text-white border-purple-600 shadow-sm"
+                      : "bg-card border-border hover:border-purple-500/40 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>🟣 المقاطع القصيرة (Shorts)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContentType("videos")}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    contentType === "videos"
+                      ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                      : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>📺 الفيديوهات العادية</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContentType("all")}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                    contentType === "all"
+                      ? "bg-amber-600 text-white border-amber-600 shadow-sm"
+                      : "bg-card border-border hover:border-amber-500/40 text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span>🔥 الكل معاً</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <Label className="text-xs font-bold text-foreground">
-                خيارات استخراج الفيديوهات:
+                عدد المقاطع المطلوب استخراجها:
               </Label>
               <span className="text-[11px] text-muted-foreground">
-                حدد عدداً محدداً، اكتب أي عدد، أو اختر سحب جميع الفيديوهات
+                يجلب العنوان والصورة واسم القناة والمدة تلقائياً
               </span>
             </div>
 
-            {/* Mode selection buttons */}
+            {/* Limit selection buttons */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <button
                 type="button"
@@ -202,7 +266,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                     : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                10 فيديوهات
+                10 مقاطع
               </button>
 
               <button
@@ -214,7 +278,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                     : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                25 فيديو
+                25 مقطع
               </button>
 
               <button
@@ -226,7 +290,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                     : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                50 فيديو
+                50 مقطع
               </button>
 
               <button
@@ -238,7 +302,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                     : "bg-card border-border hover:border-amber-500/40 text-muted-foreground hover:text-foreground"
                 }`}
               >
-                🔥 جميع الفيديوهات (الكل)
+                🔥 جميع المقاطع (الكل)
               </button>
             </div>
 
@@ -256,7 +320,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                     setCustomLimit(val);
                     if (val) setLimit(val);
                   }}
-                  placeholder="مثال: 15 أو 40 أو 100"
+                  placeholder="مثال: 15 أو 40"
                   className="h-8 text-xs w-36 bg-background font-mono"
                   disabled={loading || importing}
                 />
@@ -264,9 +328,13 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
 
               <Button
                 size="sm"
-                onClick={handleFetchVideos}
+                onClick={() => handleFetchVideos(contentType)}
                 disabled={loading || importing}
-                className="h-9 text-xs gap-1.5 shadow-sm bg-primary hover:bg-primary/90 text-primary-foreground font-bold shrink-0"
+                className={`h-9 text-xs gap-1.5 shadow-sm font-bold shrink-0 ${
+                  contentType === "shorts"
+                    ? "bg-purple-600 hover:bg-purple-700 text-white"
+                    : "bg-primary hover:bg-primary/90 text-primary-foreground"
+                }`}
               >
                 {loading ? (
                   <>
@@ -275,7 +343,11 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                 ) : (
                   <>
                     <Sparkles className="w-3.5 h-3.5" />
-                    {limit === "all" ? "استخراج جميع فيديوهات القناة" : `استخراج (${customLimit || limit}) فيديو`}
+                    {contentType === "shorts"
+                      ? `سحب المقاطع القصيرة (${limit === "all" ? "الكل" : customLimit || limit})`
+                      : limit === "all"
+                      ? "استخراج جميع مقاطع القناة"
+                      : `استخراج (${customLimit || limit}) مقطع`}
                   </>
                 )}
               </Button>
@@ -289,9 +361,13 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                 <Film className="w-6 h-6" />
               </div>
               <div className="max-w-sm mx-auto">
-                <h4 className="font-bold text-sm text-foreground">جاهز لاستخراج الفيديوهات من القناة</h4>
+                <h4 className="font-bold text-sm text-foreground">
+                  {contentType === "shorts"
+                    ? "جاهز لسحب المقاطع القصيرة (Shorts) من القناة"
+                    : "جاهز لاستخراج المقاطع من القناة"}
+                </h4>
                 <p className="text-xs text-muted-foreground mt-1">
-                  اختر عدد الفيديوهات (من 1 إلى 50) ثم اضغط "استخراج الفيديوهات الآن" لعرض قائمة مقاطع القناة واختيار ما تريد رفعه.
+                  اضغط على زر الاستخراج أعلاه ليقوم النظام بجلب المقاطع وعناوينها وصورها واسم القناة تلقائياً.
                 </p>
               </div>
             </div>
@@ -302,7 +378,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
                 <span>
-                  تم العثور على <strong className="text-foreground">{videos.length}</strong> فيديو
+                  تم العثور على <strong className="text-foreground">{videos.length}</strong> مقطع
                   (تم تحديد <strong className="text-primary">{selectedIds.size}</strong>)
                 </span>
                 <div className="flex items-center gap-2">
@@ -329,6 +405,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                   const vId = extractYoutubeId(v.youtube_url);
                   const isExisting = vId && existingVideoUrls.has(vId);
                   const isSelected = vId && selectedIds.has(vId);
+                  const isShortItem = v.video_type === "short" || v.youtube_url?.includes("/shorts/");
 
                   return (
                     <div
@@ -366,7 +443,12 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                       {/* Info */}
                       <div className="flex-1 min-w-0 text-right">
                         <p className="text-xs font-bold line-clamp-2 leading-snug">{v.title}</p>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {isShortItem && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/15 text-purple-600 dark:text-purple-400 font-bold">
+                              🟣 شورتس
+                            </span>
+                          )}
                           {isExisting ? (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-medium flex items-center gap-1">
                               <AlertCircle className="w-3 h-3 text-amber-500" /> مضاف مسبقاً
@@ -399,7 +481,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
             <div className="bg-primary/5 border border-primary/20 rounded-xl p-4 space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="flex items-center gap-1.5 text-primary">
-                  <Loader2 className="w-4 h-4 animate-spin" /> جاري استيراد الفيديوهات وحفظها...
+                  <Loader2 className="w-4 h-4 animate-spin" /> جاري استيراد المقاطع وحفظها...
                 </span>
                 <span className="font-mono text-primary">
                   {progress.current} / {progress.total}
@@ -442,7 +524,7 @@ export default function ChannelVideosImportModal({ channel, isOpen, onClose, onS
                 </>
               ) : (
                 <>
-                  <DownloadCloud className="w-4 h-4" /> استيراد الفيديوهات المحددة ({selectedIds.size} فيديو)
+                  <DownloadCloud className="w-4 h-4" /> استيراد المقاطع المحددة ({selectedIds.size})
                 </>
               )}
             </Button>

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  X, Heart, Share2, Volume2, VolumeX, ChevronUp, ChevronDown,
+  X, Volume2, VolumeX, ChevronUp, ChevronDown,
   Sparkles, Tv
 } from "lucide-react";
 import { extractYoutubeId } from "@/lib/youtubeMeta";
@@ -14,8 +14,6 @@ export default function ShortsPlayerModal({
   shortsList = [],
   isOpen,
   onClose,
-  onToggleFavorite,
-  favorites = [],
   user = null,
 }) {
   const t = useT();
@@ -24,7 +22,6 @@ export default function ShortsPlayerModal({
   const initialIndex = list.findIndex((v) => v.id === initialVideo?.id);
   const [currentIndex, setCurrentIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
   const [muted, setMuted] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(true);
   const [showHint, setShowHint] = useState(true);
   const [direction, setDirection] = useState(0); // 1 = next (down), -1 = prev (up)
 
@@ -69,7 +66,7 @@ export default function ShortsPlayerModal({
     }
   }, [currentIndex]);
 
-  // Keyboard navigation (ArrowDown / ArrowUp / Space / Escape)
+  // Keyboard navigation (ArrowDown / ArrowUp / Escape / M)
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e) => {
@@ -106,47 +103,35 @@ export default function ShortsPlayerModal({
     }
   }, [goToNext, goToPrev]);
 
-  // Touch gesture handling (Swipe up / down)
+  // Touch & pointer drag gesture handling (Swipe up / down like YouTube Shorts)
   const touchStartY = useRef(null);
   const handleTouchStart = (e) => {
-    touchStartY.current = e.touches[0].clientY;
+    touchStartY.current = e.touches?.[0]?.clientY ?? null;
   };
   const handleTouchEnd = (e) => {
     if (touchStartY.current === null) return;
-    const deltaY = e.changedTouches[0].clientY - touchStartY.current;
-    if (deltaY < -45) {
-      goToNext(); // Swipe Up -> Next short
-    } else if (deltaY > 45) {
-      goToPrev(); // Swipe Down -> Prev short
+    const endY = e.changedTouches?.[0]?.clientY;
+    if (typeof endY === "number") {
+      const deltaY = endY - touchStartY.current;
+      if (deltaY < -40) {
+        goToNext(); // Swipe Up -> Next short
+      } else if (deltaY > 40) {
+        goToPrev(); // Swipe Down -> Prev short
+      }
     }
     touchStartY.current = null;
   };
 
-  const handleShare = async () => {
-    if (!currentVideo) return;
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: currentVideo.title, url: currentVideo.youtube_url });
-      } catch {}
-    } else {
-      try {
-        await navigator.clipboard.writeText(currentVideo.youtube_url);
-        toast.success(t.linkCopied || "تم نسخ الرابط");
-      } catch {}
-    }
-  };
-
   if (!isOpen || !currentVideo) return null;
-
-  const isFav = currentVideo?.id && favorites.includes(currentVideo.id);
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 select-none overflow-hidden"
+      className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 select-none overflow-hidden"
       style={{ touchAction: "none" }}
       onWheel={handleWheel}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onContextMenu={(e) => e.preventDefault()}
       dir={t.dir}
     >
       {/* Close button top corner */}
@@ -160,8 +145,8 @@ export default function ShortsPlayerModal({
 
       {/* Main Shorts Container: 9:16 aspect ratio */}
       <div className="relative w-full h-full sm:h-[92vh] sm:max-w-[430px] sm:rounded-3xl overflow-hidden bg-black shadow-2xl flex flex-col justify-between border border-white/10">
-        {/* Active Short Video (IFrame Embed) */}
-        <div className="absolute inset-0 z-0 bg-black flex items-center justify-center">
+        {/* Active Short Video (Non-interactive IFrame + Protective Touch Shield) */}
+        <div className="absolute inset-0 z-0 bg-black flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentVideo.id || videoId}
@@ -169,15 +154,15 @@ export default function ShortsPlayerModal({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -direction * 80 }}
               transition={{ duration: 0.28, ease: "easeOut" }}
-              className="w-full h-full relative"
+              className="w-full h-full relative overflow-hidden"
             >
               {videoId ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&playsinline=1`}
+                  src={`https://www.youtube.com/embed/${videoId}?autoplay=1&mute=${muted ? 1 : 0}&loop=1&playlist=${videoId}&controls=0&disablekb=1&fs=0&iv_load_policy=3&modestbranding=1&rel=0&playsinline=1`}
                   title={currentVideo.title}
-                  className="w-full h-full object-cover pointer-events-auto"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
+                  tabIndex={-1}
+                  className="w-full h-[116%] -mt-[8%] object-cover pointer-events-none select-none border-0"
+                  allow="autoplay; encrypted-media"
                 />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center text-white/50 p-6 text-center">
@@ -187,11 +172,20 @@ export default function ShortsPlayerModal({
               )}
             </motion.div>
           </AnimatePresence>
+
+          {/* Transparent Protective Shield: Blocks all clicks/interactions with the embedded video while capturing swipe gestures */}
+          <div
+            className="absolute inset-0 z-10 cursor-default"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onWheel={handleWheel}
+            onContextMenu={(e) => e.preventDefault()}
+          />
         </div>
 
         {/* Top Gradient & Short Index */}
         <div className="relative z-20 p-4 pt-3 flex items-center justify-between bg-gradient-to-b from-black/80 via-black/30 to-transparent pointer-events-none">
-          <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="flex items-center gap-2">
             <span className="px-2.5 py-1 rounded-full bg-purple-600 text-white text-xs font-bold shadow-md flex items-center gap-1">
               <Sparkles className="w-3 h-3" /> {t.shortsBadge || "شورتس"}
             </span>
@@ -211,63 +205,37 @@ export default function ShortsPlayerModal({
           </div>
         </div>
 
-        {/* Floating Right Actions (Vertical Bar) */}
-        <div className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3.5 text-white">
-          {/* Favorite */}
-          <div className="flex flex-col items-center gap-1">
+        {/* Vertical Swipe Navigation Arrows Only (No interaction buttons on the clip) */}
+        {list.length > 1 && (
+          <div className="absolute right-3.5 bottom-24 z-30 flex flex-col items-center gap-3 text-white">
+            {/* Prev Short (Up) */}
             <button
-              onClick={() => onToggleFavorite?.(currentVideo.id)}
-              className={`p-3 rounded-full backdrop-blur-md transition-transform active:scale-90 shadow-lg ${
-                isFav
-                  ? "bg-red-500 text-white"
-                  : "bg-black/50 hover:bg-black/70 text-white border border-white/15"
+              onClick={goToPrev}
+              disabled={currentIndex === 0}
+              className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
+                currentIndex === 0 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100"
               }`}
-              title={t.likeOrFavorite || "إعجاب / مفضلة"}
+              title={t.prevShortUp || "المقطع السابق (سهم للأعلى)"}
             >
-              <Heart className={`w-5 h-5 ${isFav ? "fill-white" : ""}`} />
+              <ChevronUp className="w-5 h-5" />
             </button>
-            <span className="text-[10px] text-white/80 font-medium">{t.favBtn || "مفضلة"}</span>
-          </div>
 
-          {/* Share */}
-          <div className="flex flex-col items-center gap-1">
+            {/* Next Short (Down) */}
             <button
-              onClick={handleShare}
-              className="p-3 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-transform active:scale-90 shadow-lg"
-              title={t.share || "مشاركة"}
+              onClick={goToNext}
+              disabled={currentIndex === list.length - 1}
+              className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
+                currentIndex === list.length - 1 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100 animate-bounce"
+              }`}
+              title={t.nextShortDown || "المقطع التالي (سهم للأسفل)"}
             >
-              <Share2 className="w-5 h-5" />
+              <ChevronDown className="w-5 h-5" />
             </button>
-            <span className="text-[10px] text-white/80 font-medium">{t.shareBtn || "مشاركة"}</span>
           </div>
+        )}
 
-          {/* Prev Short (Up) */}
-          <button
-            onClick={goToPrev}
-            disabled={currentIndex === 0}
-            className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
-              currentIndex === 0 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100"
-            }`}
-            title={t.prevShortUp || "المقطع السابق (سهم للأعلى)"}
-          >
-            <ChevronUp className="w-5 h-5" />
-          </button>
-
-          {/* Next Short (Down) */}
-          <button
-            onClick={goToNext}
-            disabled={currentIndex === list.length - 1}
-            className={`p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-white border border-white/15 transition-all active:scale-90 ${
-              currentIndex === list.length - 1 ? "opacity-30 cursor-not-allowed" : "opacity-90 hover:opacity-100 animate-bounce"
-            }`}
-            title={t.nextShortDown || "المقطع التالي (سهم للأسفل)"}
-          >
-            <ChevronDown className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Bottom Overlay Info (Channel & Title) */}
-        <div className="relative z-20 p-4 pb-6 bg-gradient-to-t from-black/95 via-black/70 to-transparent text-white space-y-2 pointer-events-auto pr-16">
+        {/* Bottom Overlay Info (Read-Only Channel & Title) */}
+        <div className="relative z-20 p-4 pb-6 bg-gradient-to-t from-black/95 via-black/70 to-transparent text-white space-y-2 pointer-events-none pr-16">
           {/* Channel Name */}
           {currentVideo.channel_name && (
             <div className="flex items-center gap-2">

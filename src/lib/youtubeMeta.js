@@ -193,15 +193,20 @@ export async function autoUploadChannelLogo(logoUrl, channelName = "channel") {
 }
 
 /**
- * Fetches the videos of a YouTube channel by channel URL or handle
+ * Fetches the videos or Shorts of a YouTube channel by channel URL or handle
  * @param {string} channelUrl
  * @param {number|string} [limit=30]
+ * @param {string} [type="all"] - "all" | "shorts" | "videos"
  */
-export async function fetchChannelVideos(channelUrl, limit = 30) {
+export async function fetchChannelVideos(channelUrl, limit = 30, type = "all") {
   if (!channelUrl) return [];
   const normalized = normalizeChannelUrl(channelUrl);
   try {
-    const res = await fetch(apiUrl(`/api/youtube-channel-videos?url=${encodeURIComponent(normalized)}&limit=${limit}`));
+    const res = await fetch(
+      apiUrl(
+        `/api/youtube-channel-videos?url=${encodeURIComponent(normalized)}&limit=${encodeURIComponent(limit)}&type=${encodeURIComponent(type)}`
+      )
+    );
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && Array.isArray(data.videos)) {
@@ -213,5 +218,6 @@ export async function fetchChannelVideos(channelUrl, limit = 30) {
   }
   return [];
 }
+
 
 

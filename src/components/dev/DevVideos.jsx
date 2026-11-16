@@ -37,6 +37,7 @@ function ChannelsTab() {
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [uploadingAutoLogo, setUploadingAutoLogo] = useState(false);
   const [importChannel, setImportChannel] = useState(null);
+  const [importInitialType, setImportInitialType] = useState("all");
   const [autoImportOnCreate, setAutoImportOnCreate] = useState(false);
   const [autoImportLimit, setAutoImportLimit] = useState(10);
   const [savingAndImporting, setSavingAndImporting] = useState(false);
@@ -437,18 +438,36 @@ function ChannelsTab() {
                 <p className="text-xs text-muted-foreground truncate" dir="ltr">{ch.youtube_url || "بدون رابط"}</p>
               </div>
 
-              {/* Import Videos Button */}
+              {/* Import Videos & Shorts Buttons */}
               {ch.youtube_url && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 px-2.5 text-xs gap-1.5 text-primary border-primary/30 hover:bg-primary/10 shrink-0"
-                  onClick={() => setImportChannel(ch)}
-                  title="استخراج واستيراد فيديوهات القناة"
-                >
-                  <DownloadCloud className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">استيراد فيديوهات</span>
-                </Button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-2.5 text-xs gap-1 text-purple-600 border-purple-500/30 hover:bg-purple-500/10 shrink-0"
+                    onClick={() => {
+                      setImportInitialType("shorts");
+                      setImportChannel(ch);
+                    }}
+                    title="سحب المقاطع القصيرة (Shorts) من القناة تلقائياً"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">شورتس القناة</span>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 px-2.5 text-xs gap-1.5 text-primary border-primary/30 hover:bg-primary/10 shrink-0"
+                    onClick={() => {
+                      setImportInitialType("all");
+                      setImportChannel(ch);
+                    }}
+                    title="استخراج واستيراد فيديوهات القناة"
+                  >
+                    <DownloadCloud className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">استيراد فيديوهات</span>
+                  </Button>
+                </div>
               )}
 
               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={async () => {
@@ -502,6 +521,7 @@ function ChannelsTab() {
       {/* Import Channel Videos Modal */}
       <ChannelVideosImportModal
         channel={importChannel}
+        initialType={importInitialType}
         isOpen={Boolean(importChannel)}
         onClose={() => setImportChannel(null)}
         onSuccess={load}
@@ -522,6 +542,10 @@ function VideosTab() {
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteVideoId, setConfirmDeleteVideoId] = useState(null);
+  const [showShortsImporter, setShowShortsImporter] = useState(false);
+  const [shortsChannelUrl, setShortsChannelUrl] = useState("");
+  const [selectedShortsChannelId, setSelectedShortsChannelId] = useState("");
+  const [shortsImportTarget, setShortsImportTarget] = useState(null);
   const lastFetchedVideoId = useRef("");
 
   const [form, setForm] = useState({
@@ -651,15 +675,23 @@ function VideosTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-bold">الفيديوهات ({videos.length})</h3>
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold">الفيديوهات والمقاطع القصيرة ({videos.length})</h3>
+        <div className="flex flex-wrap gap-2">
           <Input
             placeholder="بحث..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="h-8 w-32 text-sm"
           />
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10 gap-1"
+            onClick={() => setShowShortsImporter((prev) => !prev)}
+          >
+            <Sparkles className="w-3.5 h-3.5" /> سحب شورتس من قناة
+          </Button>
           <Button size="sm" onClick={() => {
             setEditing(null);
             lastFetchedVideoId.current = "";
@@ -679,10 +711,81 @@ function VideosTab() {
             });
             setShowForm(true);
           }}>
-            <Plus className="w-4 h-4 ml-1" /> إضافة فيديو
+            <Plus className="w-4 h-4 ml-1" /> إضافة فيديو / شورت
           </Button>
         </div>
       </div>
+
+      {showShortsImporter && (
+        <div className="bg-purple-500/5 border border-purple-500/25 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4" /> سحب المقاطع القصيرة (Shorts) من القناة تلقائياً مع الاسم وكافة البيانات
+            </h4>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowShortsImporter(false)}>
+              إغلاق
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs mb-1 block">اختر من القنوات المضافة:</Label>
+              <Select
+                value={selectedShortsChannelId}
+                onValueChange={(val) => {
+                  setSelectedShortsChannelId(val);
+                  const ch = channels.find((c) => c.id === val);
+                  if (ch?.youtube_url) setShortsChannelUrl(ch.youtube_url);
+                }}
+              >
+                <SelectTrigger className="h-9 text-sm bg-background">
+                  <SelectValue placeholder="اختر قناة لسحب مقاطعها القصيرة..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {channels.filter((c) => c.youtube_url).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">أو الصق رابط أي قناة يوتيوب مباشرةً:</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={shortsChannelUrl}
+                  onChange={(e) => setShortsChannelUrl(e.target.value)}
+                  placeholder="https://youtube.com/@channelName"
+                  className="h-9 text-sm bg-background"
+                  dir="ltr"
+                />
+                <Button
+                  size="sm"
+                  className="h-9 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shrink-0 gap-1"
+                  disabled={!shortsChannelUrl.trim()}
+                  onClick={async () => {
+                    const matched = channels.find(
+                      (c) => c.id === selectedShortsChannelId || c.youtube_url === shortsChannelUrl.trim()
+                    );
+                    if (matched) {
+                      setShortsImportTarget(matched);
+                    } else {
+                      const meta = await fetchChannelMetadata(shortsChannelUrl.trim());
+                      setShortsImportTarget({
+                        id: "",
+                        name: meta?.name || "قناة يوتيوب",
+                        channel_logo: meta?.channel_logo || "",
+                        youtube_url: meta?.youtube_url || normalizeChannelUrl(shortsChannelUrl.trim()),
+                        category: "عام",
+                      });
+                    }
+                  }}
+                >
+                  <DownloadCloud className="w-3.5 h-3.5" /> فتح ساحب الشورتس
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && (
         <div className="bg-muted/30 border border-border rounded-xl p-4 space-y-3">
@@ -975,6 +1078,14 @@ function VideosTab() {
           ))}
         </div>
       )}
+
+      <ChannelVideosImportModal
+        channel={shortsImportTarget}
+        initialType="shorts"
+        isOpen={Boolean(shortsImportTarget)}
+        onClose={() => setShortsImportTarget(null)}
+        onSuccess={load}
+      />
     </div>
   );
 }

@@ -332,6 +332,8 @@ async function startServer() {
       console.warn('Watch page fetch error:', e?.message);
     }
 
+    const detectedShort = isShort || (duration_seconds > 0 && duration_seconds <= 60);
+
     return res.json({
       success: true,
       type: 'video',
@@ -339,20 +341,21 @@ async function startServer() {
       title: title || '',
       channel_name: channel_name || '',
       channel_url: channel_url || '',
-      duration: duration || '',
+      duration: duration || (detectedShort ? '0:60' : ''),
       duration_seconds,
       description: description || '',
       thumbnail: defaultThumbnail,
       thumbnail_hq: hqThumbnail,
-      video_type: isShort ? 'short' : 'normal',
-      youtube_url: canonicalVideoUrl,
+      video_type: detectedShort ? 'short' : 'normal',
+      youtube_url: detectedShort ? `https://www.youtube.com/shorts/${videoId}` : canonicalVideoUrl,
     });
   });
 
-  // API endpoint to extract videos from a YouTube channel
+  // API endpoint to extract videos and/or Shorts from a YouTube channel
   app.get('/api/youtube-channel-videos', async (req, res) => {
     const rawUrl = (req.query.url as string || '').trim();
     const limitParam = (req.query.limit as string || '30').trim().toLowerCase();
+    const typeParam = (req.query.type as string || 'all').trim().toLowerCase();
     const isAll = limitParam === 'all' || limitParam === 'جميع' || limitParam === '0' || limitParam === 'كل';
     const parsedLimit = parseInt(limitParam, 10);
     const limit = isAll ? 500 : (isNaN(parsedLimit) ? 30 : Math.min(Math.max(parsedLimit, 1), 500));
@@ -368,7 +371,14 @@ async function startServer() {
       channelUrl = `https://www.youtube.com/@${channelUrl}`;
     }
 
-    const baseUrl = channelUrl.replace(/\/(videos|featured|shorts|playlists|community)\/?$/, '');
+    const urlImpliesShorts = /\/shorts\/?$/i.test(channelUrl);
+    const contentType = typeParam === 'shorts' || typeParam === 'short' || (typeParam === 'all' && urlImpliesShorts)
+      ? 'shorts'
+      : typeParam === 'videos' || typeParam === 'normal'
+      ? 'videos'
+      : 'all';
+
+    const baseUrl = channelUrl.replace(/\/(videos|featured|shorts|playlists|community|streams|live)\/?$/i, '');
     const videosPageUrl = `${baseUrl}/videos`;
     const shortsPageUrl = `${baseUrl}/shorts`;
 
@@ -379,76 +389,137 @@ async function startServer() {
     };
 
     try {
-      const response = await fetch(videosPageUrl, { headers: fetchHeaders });
-      const html = await response.text();
-
-      // Extract Channel Name
       let channelName = '';
-      const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
-                         html.match(/<meta\s+name="title"\s+content="([^"]+)"/i) ||
-                         html.match(/<title>([^<]+?)(?:\s*-\s*YouTube)?<\/title>/i);
-      if (titleMatch) {
-        channelName = decodeHtml(titleMatch[1]);
-      }
-
-      // Extract Channel ID
-      const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/i) ||
-                             html.match(/<meta\s+itemprop="channelId"\s+content="(UC[a-zA-Z0-9_-]+)"/i) ||
-                             html.match(/"externalId":"(UC[a-zA-Z0-9_-]+)"/i);
-      const channelId = channelIdMatch ? channelIdMatch[1] : '';
-
+      let channelId = '';
       const videos: any[] = [];
       const seenVideoIds = new Set<string>();
 
-      // Strategy A: Parse videoRenderer items from channel page HTML
-      const videoRendererRegex = /"videoRenderer":\s*\{([\s\S]*?)(?="videoRenderer"|"continuationItemRenderer"|\}\}\]\}|\}\]\}|,\s*"trackingParams")/g;
-      let match;
-      while ((match = videoRendererRegex.exec(html)) !== null && videos.length < limit) {
-        const block = match[1];
-        const idMatch = block.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-        if (!idMatch) continue;
-        const vId = idMatch[1];
-        if (seenVideoIds.has(vId)) continue;
-        seenVideoIds.add(vId);
-
-        let vTitle = '';
-        const titleM = block.match(/"title":\s*\{\s*"runs":\s*\[\s*\{\s*"text":"([^"]+)"/i) ||
-                       block.match(/"title":\s*\{\s*"simpleText":"([^"]+)"/i);
-        if (titleM) {
-          vTitle = decodeHtml(titleM[1]);
+      const extractChannelIdentity = (htmlStr: string) => {
+        if (!channelName) {
+          const titleMatch = htmlStr.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i) ||
+                             htmlStr.match(/<meta\s+name="title"\s+content="([^"]+)"/i) ||
+                             htmlStr.match(/<title>([^<]+?)(?:\s*-\s*YouTube)?<\/title>/i);
+          if (titleMatch) {
+            channelName = decodeHtml(titleMatch[1]);
+          }
         }
-
-        let vDuration = '';
-        const lenM = block.match(/"lengthText":\s*\{\s*"simpleText":"([^"]+)"/i) ||
-                     block.match(/"lengthText":\s*\{\s*"accessibility":\s*\{\s*"accessibilityData":\s*\{\s*"label":"([^"]+)"/i);
-        if (lenM) {
-          vDuration = lenM[1];
+        if (!channelId) {
+          const channelIdMatch = htmlStr.match(/"channelId":"(UC[a-zA-Z0-9_-]+)"/i) ||
+                                 htmlStr.match(/<meta\s+itemprop="channelId"\s+content="(UC[a-zA-Z0-9_-]+)"/i) ||
+                                 htmlStr.match(/"externalId":"(UC[a-zA-Z0-9_-]+)"/i);
+          if (channelIdMatch) {
+            channelId = channelIdMatch[1];
+          }
         }
+      };
 
-        let vDesc = '';
-        const descM = block.match(/"descriptionSnippet":\s*\{\s*"runs":\s*\[\s*\{\s*"text":"([^"]+)"/i);
-        if (descM) {
-          vDesc = decodeHtml(descM[1]);
+      // Strategy A: Regular Videos (when contentType is 'videos' or 'all')
+      if (contentType === 'videos' || contentType === 'all') {
+        try {
+          const response = await fetch(videosPageUrl, { headers: fetchHeaders });
+          if (response.ok) {
+            const html = await response.text();
+            extractChannelIdentity(html);
+
+            const videoRendererRegex = /"videoRenderer":\s*\{([\s\S]*?)(?="videoRenderer"|"continuationItemRenderer"|\}\}\]\}|\}\]\}|,\s*"trackingParams")/g;
+            let match;
+            while ((match = videoRendererRegex.exec(html)) !== null && videos.length < limit) {
+              const block = match[1];
+              const idMatch = block.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+              if (!idMatch) continue;
+              const vId = idMatch[1];
+              if (seenVideoIds.has(vId)) continue;
+              seenVideoIds.add(vId);
+
+              let vTitle = '';
+              const titleM = block.match(/"title":\s*\{\s*"runs":\s*\[\s*\{\s*"text":"([^"]+)"/i) ||
+                             block.match(/"title":\s*\{\s*"simpleText":"([^"]+)"/i);
+              if (titleM) {
+                vTitle = decodeHtml(titleM[1]);
+              }
+
+              let vDuration = '';
+              const lenM = block.match(/"lengthText":\s*\{\s*"simpleText":"([^"]+)"/i) ||
+                           block.match(/"lengthText":\s*\{\s*"accessibility":\s*\{\s*"accessibilityData":\s*\{\s*"label":"([^"]+)"/i);
+              if (lenM) {
+                vDuration = lenM[1];
+              }
+
+              let vDesc = '';
+              const descM = block.match(/"descriptionSnippet":\s*\{\s*"runs":\s*\[\s*\{\s*"text":"([^"]+)"/i);
+              if (descM) {
+                vDesc = decodeHtml(descM[1]);
+              }
+
+              videos.push({
+                videoId: vId,
+                youtube_url: `https://www.youtube.com/watch?v=${vId}`,
+                title: vTitle || '',
+                duration: vDuration,
+                thumbnail: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
+                channel_name: channelName,
+                video_type: 'normal',
+                description: vDesc,
+              });
+            }
+          }
+        } catch (vidErr) {
+          console.warn('Regular videos page fetch error:', vidErr);
         }
-
-        videos.push({
-          videoId: vId,
-          youtube_url: `https://www.youtube.com/watch?v=${vId}`,
-          title: vTitle || `فيديو ${vId}`,
-          duration: vDuration,
-          thumbnail: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
-          channel_name: channelName,
-          video_type: 'normal',
-          description: vDesc,
-        });
       }
 
-      // Strategy B: Fetch Shorts page if more videos requested or if isAll
-      if (videos.length < limit) {
+      // Strategy B: Fetch Shorts page (when contentType is 'shorts' or 'all')
+      if ((contentType === 'shorts' || contentType === 'all') && videos.length < limit) {
         try {
           const shortsRes = await fetch(shortsPageUrl, { headers: fetchHeaders });
           if (shortsRes.ok) {
             const shortsHtml = await shortsRes.text();
+            extractChannelIdentity(shortsHtml);
+
+            // 1. Modern YouTube shortsLockupViewModel format
+            const lockupRegex = /"shortsLockupViewModel":\s*\{([\s\S]*?)(?="shortsLockupViewModel"|"continuationItemRenderer"|\}\}\}\}\])/g;
+            let lockupMatch;
+            while ((lockupMatch = lockupRegex.exec(shortsHtml)) !== null && videos.length < limit) {
+              const lBlock = lockupMatch[1];
+              const idMatch =
+                lBlock.match(/"videoId":"([a-zA-Z0-9_-]{11})"/) ||
+                lBlock.match(/shorts-shelf-item-([a-zA-Z0-9_-]{11})/) ||
+                lBlock.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+              if (!idMatch) continue;
+              const rId = idMatch[1];
+              if (seenVideoIds.has(rId)) continue;
+              seenVideoIds.add(rId);
+
+              let rTitle = '';
+              const primaryTextM = lBlock.match(/"overlayMetadata":\s*\{\s*"primaryText":\s*\{\s*"content":"([^"]+)"/i) ||
+                                   lBlock.match(/"primaryText":\s*\{\s*"content":"([^"]+)"/i);
+              if (primaryTextM) {
+                rTitle = decodeHtml(primaryTextM[1]);
+              } else {
+                const accM = lBlock.match(/"accessibilityText":"([^"]+)"/i);
+                if (accM) {
+                  rTitle = decodeHtml(
+                    accM[1]
+                      .replace(/,\s*[\d.,]+\s*(?:ألف|مليون|ألف مشاهدة|مشاهدة|views|K views|M views).*$/i, '')
+                      .replace(/\s*-\s*(?:play Short|تشغيل Short).*$/i, '')
+                      .trim()
+                  );
+                }
+              }
+
+              videos.push({
+                videoId: rId,
+                youtube_url: `https://www.youtube.com/shorts/${rId}`,
+                title: rTitle || '',
+                duration: '0:60',
+                thumbnail: `https://img.youtube.com/vi/${rId}/hqdefault.jpg`,
+                channel_name: channelName,
+                video_type: 'short',
+                description: '',
+              });
+            }
+
+            // 2. Legacy reelItemRenderer format
             const reelRegex = /"reelItemRenderer":\s*\{([\s\S]*?)(?="reelItemRenderer"|"continuationItemRenderer"|\}\}\]\}|\}\]\}|,\s*"trackingParams")/g;
             let reelMatch;
             while ((reelMatch = reelRegex.exec(shortsHtml)) !== null && videos.length < limit) {
@@ -467,7 +538,7 @@ async function startServer() {
               videos.push({
                 videoId: rId,
                 youtube_url: `https://www.youtube.com/shorts/${rId}`,
-                title: rTitle || `شورت ${rId}`,
+                title: rTitle || '',
                 duration: '0:60',
                 thumbnail: `https://img.youtube.com/vi/${rId}/hqdefault.jpg`,
                 channel_name: channelName,
@@ -475,14 +546,35 @@ async function startServer() {
                 description: '',
               });
             }
+
+            // 3. Fallback: scan reelWatchEndpoint if still empty
+            if (videos.length < limit) {
+              const endpointRegex = /"reelWatchEndpoint":\s*\{\s*"videoId":"([a-zA-Z0-9_-]{11})"/g;
+              let epMatch;
+              while ((epMatch = endpointRegex.exec(shortsHtml)) !== null && videos.length < limit) {
+                const rId = epMatch[1];
+                if (seenVideoIds.has(rId)) continue;
+                seenVideoIds.add(rId);
+                videos.push({
+                  videoId: rId,
+                  youtube_url: `https://www.youtube.com/shorts/${rId}`,
+                  title: '',
+                  duration: '0:60',
+                  thumbnail: `https://img.youtube.com/vi/${rId}/hqdefault.jpg`,
+                  channel_name: channelName,
+                  video_type: 'short',
+                  description: '',
+                });
+              }
+            }
           }
         } catch (shortsErr) {
           console.warn('Shorts page fetch error:', shortsErr);
         }
       }
 
-      // Strategy C: If videos < limit and we have channelId, fetch channel RSS feed
-      if (videos.length < limit && channelId) {
+      // Strategy C: If regular videos requested and still < limit, check RSS feed
+      if (contentType !== 'shorts' && videos.length < limit && channelId) {
         try {
           const rssRes = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`, { headers: fetchHeaders });
           if (rssRes.ok) {
@@ -503,7 +595,7 @@ async function startServer() {
               videos.push({
                 videoId: vId,
                 youtube_url: `https://www.youtube.com/watch?v=${vId}`,
-                title: titleM ? decodeHtml(titleM[1]) : `فيديو ${vId}`,
+                title: titleM ? decodeHtml(titleM[1]) : '',
                 duration: '',
                 thumbnail: `https://img.youtube.com/vi/${vId}/hqdefault.jpg`,
                 channel_name: channelName,
@@ -514,6 +606,42 @@ async function startServer() {
           }
         } catch (rssErr) {
           console.warn('RSS feed fetch error:', rssErr);
+        }
+      }
+
+      // Enrich any items missing title or channel_name via YouTube oEmbed
+      const itemsNeedingMeta = videos.filter((v) => !v.title || !v.channel_name).slice(0, 40);
+      if (itemsNeedingMeta.length > 0) {
+        await Promise.all(
+          itemsNeedingMeta.map(async (item) => {
+            try {
+              const oRes = await fetch(
+                `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${item.videoId}`)}&format=json`,
+                { headers: fetchHeaders }
+              );
+              if (oRes.ok) {
+                const oData: any = await oRes.json();
+                if (!item.title && oData.title) item.title = oData.title;
+                if (!item.channel_name && oData.author_name) {
+                  item.channel_name = oData.author_name;
+                  if (!channelName) channelName = oData.author_name;
+                }
+              }
+            } catch {}
+            if (!item.title) {
+              item.title = item.video_type === 'short' ? `مقطع قصير ${item.videoId}` : `فيديو ${item.videoId}`;
+            }
+            if (!item.channel_name && channelName) {
+              item.channel_name = channelName;
+            }
+          })
+        );
+      }
+
+      for (const item of videos) {
+        if (!item.channel_name && channelName) item.channel_name = channelName;
+        if (!item.title) {
+          item.title = item.video_type === 'short' ? `مقطع قصير ${item.videoId}` : `فيديو ${item.videoId}`;
         }
       }
 
