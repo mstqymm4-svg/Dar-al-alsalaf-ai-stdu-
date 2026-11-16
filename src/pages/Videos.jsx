@@ -187,20 +187,6 @@ export default function Videos() {
     return sortList(result);
   }, [videos, matchesContextFilters, videoTypeFilter, sortList]);
 
-  // Counts per tab for current channel/category/search context
-  const tabCounts = useMemo(() => {
-    const contextVideos = videos.filter(matchesContextFilters);
-    const shortsCount = contextVideos.filter((v) => isShortVideo(v)).length;
-    const liveCount = contextVideos.filter((v) => !isShortVideo(v) && v.video_type === "live").length;
-    const normalCount = contextVideos.filter((v) => !isShortVideo(v) && v.video_type !== "live").length;
-    return {
-      all: contextVideos.length,
-      normal: normalCount,
-      short: shortsCount,
-      live: liveCount,
-    };
-  }, [videos, matchesContextFilters]);
-
   // Featured video for 16:9 spotlight (NEVER a Short!)
   const featuredVideo = useMemo(() => {
     const nonShortVisible = videos.filter((v) => v.visible !== false && !isShortVideo(v));
@@ -246,34 +232,41 @@ export default function Videos() {
     }
   };
 
-  // Render a vertical 9:16 Short card (Read-only, opens ShortsPlayerModal)
+  // Render a vertical 9:16 Short card compatible across all mobile/tablet/desktop screens
   const renderShortCard = (sv, isGrid = false) => {
     const ch = sv.channel_id ? channelsById[sv.channel_id] : null;
     const chLogo = ch?.channel_logo || "";
     const chName = ch?.name || sv.channel_name || "";
     const thumb = sv.thumbnail || getThumbnail(sv.youtube_url);
+    const isLetterboxedHq = thumb && thumb.includes("hqdefault");
 
     return (
       <div
         key={sv.id}
         onClick={() => handlePlayVideo(sv)}
         className={`${
-          isGrid ? "w-full" : "shrink-0 w-40 sm:w-48"
-        } aspect-[9/16] rounded-2xl overflow-hidden relative group cursor-pointer border border-border/80 shadow-md hover:shadow-xl hover:shadow-purple-500/15 hover:-translate-y-1 transition-all duration-300 bg-zinc-950 select-none`}
+          isGrid
+            ? "w-full"
+            : "shrink-0 w-[138px] sm:w-[168px] md:w-[184px] snap-start"
+        } aspect-[9/16] rounded-2xl overflow-hidden relative group cursor-pointer border border-border/80 shadow-md hover:shadow-xl hover:shadow-purple-500/15 hover:-translate-y-0.5 active:scale-[0.98] transition-all duration-200 bg-zinc-950 select-none`}
       >
         {thumb && (
           <img
             src={thumb}
             alt={sv.title}
             loading="lazy"
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className={`w-full h-full object-cover transition-transform duration-300 ${
+              isLetterboxedHq
+                ? "scale-[1.35] group-hover:scale-[1.4]"
+                : "group-hover:scale-105"
+            }`}
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-black/30" />
 
-        {/* Hover Play Icon */}
+        {/* Center Play Icon */}
         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <div className="w-12 h-12 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-xl ring-4 ring-white/20">
+          <div className="w-11 h-11 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-xl ring-4 ring-white/20">
             <Play className="w-5 h-5 fill-current ml-0.5" />
           </div>
         </div>
@@ -286,17 +279,17 @@ export default function Videos() {
         </div>
 
         {/* Bottom Info */}
-        <div className="absolute bottom-3 inset-x-3 text-right space-y-1.5">
-          <p className="text-xs font-bold text-white line-clamp-2 leading-snug drop-shadow">
+        <div className="absolute bottom-2.5 inset-x-2.5 text-right space-y-1">
+          <p className="text-[11px] sm:text-xs font-bold text-white line-clamp-2 leading-snug drop-shadow">
             {sv.title}
           </p>
           {chName && (
             <div className="flex items-center gap-1.5">
-              <div className="w-5 h-5 rounded-full bg-white/15 border border-white/25 overflow-hidden flex items-center justify-center shrink-0">
+              <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-white/15 border border-white/25 overflow-hidden flex items-center justify-center shrink-0">
                 {chLogo ? (
                   <img src={chLogo} alt={chName} className="w-full h-full object-cover" />
                 ) : (
-                  <Tv className="w-3 h-3 text-white/90" />
+                  <Tv className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white/90" />
                 )}
               </div>
               <p className="text-[10px] text-white/85 font-medium truncate">{chName}</p>
@@ -490,7 +483,7 @@ export default function Videos() {
               </h2>
             </div>
 
-            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide pt-1">
+            <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide pt-1 touch-pan-x">
               {/* All channels button */}
               <button
                 onClick={() => setSelectedChannelId("all")}
@@ -516,7 +509,7 @@ export default function Videos() {
                   <div
                     key={ch.id}
                     onClick={() => setSelectedChannelId(isSelected ? "all" : ch.id)}
-                    className={`shrink-0 min-w-[170px] max-w-[220px] rounded-2xl border p-2.5 transition-all cursor-pointer flex items-center gap-2.5 ${
+                    className={`shrink-0 min-w-[160px] max-w-[220px] rounded-2xl border p-2.5 transition-all cursor-pointer flex items-center gap-2.5 ${
                       isSelected
                         ? "bg-primary/10 border-primary shadow-md shadow-primary/10 ring-2 ring-primary/20"
                         : "bg-card border-border hover:border-primary/40 hover:-translate-y-0.5"
@@ -582,12 +575,12 @@ export default function Videos() {
           {/* Middle Row: Video Types & Sort */}
           <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border/50">
             {/* Video Type Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide py-0.5 touch-pan-x">
               {[
-                { id: "all", label: t.all || "الكل", count: tabCounts.all },
-                { id: "normal", label: t.videoLectures || "محاضرات ودروس", count: tabCounts.normal },
-                { id: "short", label: "مقاطع قصيرة", count: tabCounts.short, isShorts: true },
-                { id: "live", label: t.videoLive || "بث مباشر", count: tabCounts.live },
+                { id: "all", label: t.all || "الكل" },
+                { id: "normal", label: t.videoLectures || "محاضرات ودروس" },
+                { id: "short", label: "مقاطع قصيرة", isShorts: true },
+                { id: "live", label: t.videoLive || "بث مباشر" },
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -625,7 +618,7 @@ export default function Videos() {
 
           {/* Bottom Row: Category Chips */}
           {categories.length > 1 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 scrollbar-hide border-t border-border/40">
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-1 scrollbar-hide border-t border-border/40 touch-pan-x">
               <span className="text-xs text-muted-foreground shrink-0 ml-1 flex items-center gap-1">
                 <Filter className="w-3 h-3" /> {t.category || "التصنيف"}:
               </span>
@@ -674,7 +667,7 @@ export default function Videos() {
               </button>
             </div>
 
-            <div className="flex gap-3.5 overflow-x-auto pb-3 pt-1 scrollbar-hide">
+            <div className="flex gap-3 sm:gap-3.5 overflow-x-auto pb-3 pt-1 scrollbar-hide snap-x snap-mandatory touch-pan-x">
               {filteredShorts.map((sv) => renderShortCard(sv, false))}
             </div>
           </section>
@@ -720,7 +713,7 @@ export default function Videos() {
                 </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
                 {filteredShorts.map((sv) => renderShortCard(sv, true))}
               </div>
             )}

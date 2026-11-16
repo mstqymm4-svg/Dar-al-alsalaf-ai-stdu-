@@ -9,7 +9,8 @@ export function extractYoutubeId(url) {
   if (!url) return null;
   const trimmed = String(url).trim();
   const patterns = [
-    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+    /(?:youtube\.com\/(?:shorts\/|embed\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+    /[?&]v=([a-zA-Z0-9_-]{11})/i,
     /^([a-zA-Z0-9_-]{11})$/,
   ];
   for (const p of patterns) {
@@ -218,6 +219,3 @@ export async function fetchChannelVideos(channelUrl, limit = 30, type = "all") {
   }
   return [];
 }
-
-
-

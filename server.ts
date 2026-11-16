@@ -507,12 +507,18 @@ async function startServer() {
                 }
               }
 
+              let rThumb = `https://img.youtube.com/vi/${rId}/hqdefault.jpg`;
+              const thumbM = lBlock.match(/"url":"(https:\/\/i\.ytimg\.com\/vi\/[^"]+)"/i);
+              if (thumbM && thumbM[1]) {
+                rThumb = thumbM[1].replace(/\\u0026/g, '&');
+              }
+
               videos.push({
                 videoId: rId,
                 youtube_url: `https://www.youtube.com/shorts/${rId}`,
                 title: rTitle || '',
                 duration: '0:60',
-                thumbnail: `https://img.youtube.com/vi/${rId}/hqdefault.jpg`,
+                thumbnail: rThumb,
                 channel_name: channelName,
                 video_type: 'short',
                 description: '',
