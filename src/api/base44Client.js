@@ -1280,15 +1280,182 @@ async function compressImageToDataUrl(file, maxDim = 1200, quality = 0.82) {
   });
 }
 
-async function handleLocalOrCloudUpload({ file }) {
+function uint8ToBase64(bytes) {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(b64) {
+  const binary = atob(b64);
+  const len = binary.length;
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+}
+
+const FIRESTORE_PDF_PREFIX = "firestore://book_files/";
+const PDF_CHUNK_RAW_BYTES = 420 * 1024; // ~560KB base64 per Firestore document (<1MB limit)
+
+export async function fetchFirestorePdfBuffer(pdfUrl, onProgress) {
+  if (!pdfUrl || !String(pdfUrl).startsWith(FIRESTORE_PDF_PREFIX)) {
+    throw new Error("Invalid cloud PDF reference");
+  }
+  const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
+  const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    throw new Error("لم يتم العثور على ملف الكتاب في السحابة");
+  }
+  const chunks = [];
+  snap.forEach((d) => {
+    const data = d.data();
+    if (data && typeof data.chunk_index === "number" && typeof data.chunk_data === "string") {
+      chunks.push(data);
+    }
+  });
+  chunks.sort((a, b) => a.chunk_index - b.chunk_index);
+  const expectedTotal = chunks[0]?.total_chunks || chunks.length;
+  if (chunks.length < expectedTotal) {
+    throw new Error("ملف الكتاب غير مكتمل في السحابة");
+  }
+
+  const decodedParts = [];
+  let totalBytes = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const part = base64ToUint8(chunks[i].chunk_data);
+    decodedParts.push(part);
+    totalBytes += part.byteLength;
+    onProgress?.({
+      received: totalBytes,
+      total: chunks[0]?.size_bytes || totalBytes,
+      percent: Math.round(((i + 1) / chunks.length) * 100),
+    });
+  }
+
+  const merged = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const part of decodedParts) {
+    merged.set(part, offset);
+    offset += part.byteLength;
+  }
+
+  const fileName = chunks[0]?.file_name || "book.pdf";
+  await offlineDB.cachePdf(pdfUrl, merged.buffer, pdfUrl, fileName).catch(() => {});
+  return merged.buffer;
+}
+
+export async function deleteFirestorePdfChunks(pdfUrl) {
+  if (!pdfUrl || !String(pdfUrl).startsWith(FIRESTORE_PDF_PREFIX)) return;
+  try {
+    const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
+    const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
+    const snap = await getDocs(q);
+    await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, "book_files", d.id))));
+  } catch {}
+}
+
+async function handleLocalOrCloudUpload({ file, onProgress }) {
   if (!file) throw new Error("لم يتم اختيار ملف");
 
-  // PDF files: cache ArrayBuffer in IndexedDB so pdfLoader.js loads it natively
+  // PDF files: chunk and upload to Firestore (book_files) so ALL users can read the book anywhere,
+  // and also cache locally in IndexedDB for instant offline playback on this device.
   if (file.type === "application/pdf" || file.name?.toLowerCase().endsWith(".pdf")) {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      throw new Error("يلزم الاتصال بالإنترنت لنشر ملف PDF ليصبح متاحاً لجميع المستخدمين");
+    }
     const buffer = await file.arrayBuffer();
-    const safeName = String(file.name || "book.pdf").replace(/[^a-zA-Z0-9._\-]/g, "_");
-    const pdfUrl = `https://local.daraluloom.app/pdfs/${Date.now()}_${safeName}`;
-    await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, file.name || "كتاب").catch(() => {});
+    const bytes = new Uint8Array(buffer);
+    if (bytes.length === 0) {
+      throw new Error("ملف PDF فارغ");
+    }
+    const totalChunks = Math.ceil(bytes.length / PDF_CHUNK_RAW_BYTES);
+    if (totalChunks > 1000) {
+      throw new Error("حجم ملف PDF كبير جداً (الحد الأقصى 400 ميجابايت)");
+    }
+
+    const fileId = sanitizeId(`pdf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, "pdf");
+    const safeFileName = truncStr(file.name || "book.pdf", 300);
+    const now = new Date().toISOString();
+    const startedAt = Date.now();
+    const uploadedDocIds = [];
+
+    const uploadSingleChunk = async (idx) => {
+      const start = idx * PDF_CHUNK_RAW_BYTES;
+      const end = Math.min(bytes.length, start + PDF_CHUNK_RAW_BYTES);
+      const chunkBytes = bytes.subarray(start, end);
+      const chunkData = uint8ToBase64(chunkBytes);
+      const chunkId = sanitizeId(`${fileId}_p${idx}`, "chk");
+      const docPayload = {
+        id: chunkId,
+        file_id: fileId,
+        chunk_index: idx,
+        total_chunks: totalChunks,
+        file_name: safeFileName,
+        mime_type: "application/pdf",
+        size_bytes: bytes.length,
+        chunk_data: chunkData,
+        created_date: now,
+      };
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await setDoc(doc(db, "book_files", chunkId), docPayload);
+          uploadedDocIds.push(chunkId);
+          return;
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          }
+        }
+      }
+      throw lastErr;
+    };
+
+    try {
+      let completed = 0;
+      const CONCURRENCY = 3;
+      for (let i = 0; i < totalChunks; i += CONCURRENCY) {
+        const batch = [];
+        for (let j = i; j < Math.min(totalChunks, i + CONCURRENCY); j++) {
+          batch.push(
+            uploadSingleChunk(j).then(() => {
+              completed++;
+              const elapsedSec = Math.max(0.2, (Date.now() - startedAt) / 1000);
+              const bytesUploaded = Math.min(bytes.length, completed * PDF_CHUNK_RAW_BYTES);
+              const mbPerSec = (bytesUploaded / (1024 * 1024) / elapsedSec).toFixed(1);
+              onProgress?.({
+                percent: Math.round((completed / totalChunks) * 100),
+                loaded: bytesUploaded,
+                total: bytes.length,
+                speedText: `${mbPerSec} MB/s`,
+              });
+            })
+          );
+        }
+        await Promise.all(batch);
+      }
+    } catch (err) {
+      await Promise.allSettled(uploadedDocIds.map((cid) => deleteDoc(doc(db, "book_files", cid))));
+      const rawMsg = String(err?.message || "");
+      const code = String(err?.code || "").toLowerCase();
+      if (code === "permission-denied" || rawMsg.toLowerCase().includes("permission")) {
+        throw new Error("رفضت قاعدة البيانات السحابية رفع الملف (تأكد من صلاحيات السحابة)");
+      }
+      if (code === "resource-exhausted" || rawMsg.toLowerCase().includes("quota")) {
+        throw new Error("تم تجاوز حصة السحابة اليومية لرفع الملفات");
+      }
+      throw new Error(rawMsg || "فشل رفع ملف PDF إلى السحابة، يرجى المحاولة مرة أخرى");
+    }
+
+    const pdfUrl = `${FIRESTORE_PDF_PREFIX}${fileId}`;
+    await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
     return { file_url: pdfUrl, url: pdfUrl };
   }
 

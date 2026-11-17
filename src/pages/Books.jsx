@@ -15,6 +15,7 @@ import PullToRefresh from "@/components/PullToRefresh";
 import { forceSyncNow } from "@/lib/contentSyncEngine";
 import { Link, useNavigate } from "react-router-dom";
 import SmartImage from "@/components/SmartImage";
+import { toast } from "sonner";
 
 export default function Books() {
   const t = useT();
@@ -49,11 +50,10 @@ export default function Books() {
       setPreferredLanguage(u.preferred_language);
     }
     setLoading(false);
-    if (u) {
-      getFavoriteIds(getAccountEmail(u))
-        .then((favIds) => setFavorites(favIds || []))
-        .catch(() => {});
-    }
+    const favEmail = getAccountEmail(u) || "guest@local";
+    getFavoriteIds(favEmail)
+      .then((favIds) => setFavorites(favIds || []))
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -64,11 +64,12 @@ export default function Books() {
   useContentRefresh(["books"], loadData);
 
   const handleToggleFavorite = async (bookId) => {
-    if (!user) return;
-    const added = await toggleFavorite(bookId, getAccountEmail(user));
+    const favEmail = getAccountEmail(user) || "guest@local";
+    const added = await toggleFavorite(bookId, favEmail);
     setFavorites((prev) =>
       added ? [...prev, bookId] : prev.filter((id) => id !== bookId)
     );
+    toast.success(added ? (t.addFav || "تمت الإضافة إلى المفضلة ✓") : (t.removeFav || "تمت الإزالة من المفضلة"));
   };
 
   // Extract unique categories and counts
@@ -312,7 +313,7 @@ export default function Books() {
                 key={book.id}
                 book={book}
                 isFavorite={favorites.includes(book.id)}
-                onToggleFavorite={user ? handleToggleFavorite : null}
+                onToggleFavorite={handleToggleFavorite}
               />
             ))}
           </div>
@@ -369,21 +370,21 @@ export default function Books() {
                   </Link>
 
                   <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                    {user && (
-                      <button
-                        onClick={() => handleToggleFavorite(book.id)}
-                        className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${
-                          isFav
-                            ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30 text-red-500"
-                            : "border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
-                        }`}
-                        title={isFav ? t.removeFav : t.addFav}
-                      >
-                        <Heart
-                          className={`w-4 h-4 ${isFav ? "fill-red-500" : ""}`}
-                        />
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFavorite(book.id)}
+                      className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-colors ${
+                        isFav
+                          ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30 text-red-500"
+                          : "border-border hover:border-primary/40 text-muted-foreground hover:text-foreground"
+                      }`}
+                      title={isFav ? t.removeFav : t.addFav}
+                      aria-label={isFav ? t.removeFav : t.addFav}
+                    >
+                      <Heart
+                        className={`w-4 h-4 ${isFav ? "fill-red-500 text-red-500" : ""}`}
+                      />
+                    </button>
                     <button
                       onClick={() => navigate(`/read/${book.id}`)}
                       className="px-4 py-2 rounded-[4px_20px_4px_20px] bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors flex items-center gap-1.5"

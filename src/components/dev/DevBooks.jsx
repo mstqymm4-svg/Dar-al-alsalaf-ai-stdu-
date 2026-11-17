@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { base44, deleteFirestorePdfChunks } from "@/api/base44Client";
 import { BookPlus, Pencil, Trash2, Upload, Check, Search, RefreshCw, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,7 +101,10 @@ export default function DevBooks() {
     try {
       await base44.entities.Book.delete(book.id);
       await deleteCachedBook(book.id).catch(() => {});
-      if (book.pdf_url) await deleteCachedPdf(book.pdf_url).catch(() => {});
+      if (book.pdf_url) {
+        await deleteCachedPdf(book.pdf_url).catch(() => {});
+        await deleteFirestorePdfChunks(book.pdf_url).catch(() => {});
+      }
       setBooks(prev => prev.filter(b => b.id !== book.id));
       toast.success("تم الحذف ✓");
     } catch (err) {
@@ -124,6 +127,7 @@ export default function DevBooks() {
     await Promise.all([
       ...ids.map(id => deleteCachedBook(id).catch(() => {})),
       ...selectedBooks.filter(b => b.pdf_url).map(b => deleteCachedPdf(b.pdf_url).catch(() => {})),
+      ...selectedBooks.filter(b => b.pdf_url).map(b => deleteFirestorePdfChunks(b.pdf_url).catch(() => {})),
     ]);
     setSelected([]);
     await loadBooks();
@@ -144,7 +148,15 @@ export default function DevBooks() {
     }
 
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const { file_url } = await base44.integrations.Core.UploadFile({
+        file,
+        onProgress: isPdf
+          ? ({ percent, speedText }) => {
+              setPdfProgress(percent || 0);
+              if (speedText) setPdfSpeed(speedText);
+            }
+          : undefined,
+      });
       setForm(p => {
         const next = { ...p, [field]: file_url };
         // Auto-fill the title from the PDF filename if the title is still empty
@@ -154,8 +166,10 @@ export default function DevBooks() {
         }
         return next;
       });
-      if (isPdf && String(file_url || "").startsWith("https://local.daraluloom.app/")) {
-        toast.warning("تم حفظ ملف PDF على هذا الجهاز فقط — لمزامنة الملف مع كل الأجهزة والتحديثات يُفضّل وضع رابط PDF مباشر (https://)");
+      if (isPdf && String(file_url || "").startsWith("firestore://book_files/")) {
+        toast.success("تم رفع ملف PDF إلى السحابة ✓ — سيكون متاحاً لجميع المستخدمين فور حفظ الكتاب");
+      } else if (isPdf && String(file_url || "").startsWith("https://local.daraluloom.app/")) {
+        toast.warning("تم حفظ ملف PDF محلياً فقط");
       } else {
         toast.success("تم رفع " + (isPdf ? "الملف" : "الغلاف") + " ✓");
       }
@@ -347,7 +361,7 @@ export default function DevBooks() {
               <div>
                 <Label className="text-xs">ملف PDF</Label>
                 <label className="cursor-pointer block mt-1">
-                  <input type="file" accept=".pdf" onChange={e=>uploadFile(e,"pdf_url",setPdfUploading)} className="sr-only" />
+                  <input type="file" accept=".pdf,application/pdf" onChange={e=>uploadFile(e,"pdf_url",setPdfUploading)} className="sr-only" />
                   <div className={`flex items-center justify-center gap-1 h-9 rounded-xl border-2 border-dashed transition-colors ${form.pdf_url?"border-primary bg-primary/5":"border-border hover:border-primary/40"}`}>
                     {pdfUploading
                       ? <><div className="w-3 h-3 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /><span className="text-xs text-primary tabular-nums">{pdfProgress}% · {pdfProgressInfo} · {pdfSpeed}</span></>
@@ -385,16 +399,21 @@ export default function DevBooks() {
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={!form.pdf_url || pdfUploading || form.pdf_url.startsWith("blob:") || form.pdf_url.includes("base44") || form.pdf_url.startsWith("https://local.daraluloom.app/")}
+                  disabled={!form.pdf_url || pdfUploading || form.pdf_url.startsWith("blob:") || form.pdf_url.includes("base44") || form.pdf_url.startsWith("firestore://") || form.pdf_url.startsWith("https://local.daraluloom.app/")}
                   onClick={() => handleAutoUploadFromUrl(form.pdf_url)}
                   className="text-xs h-8 shrink-0 gap-1 rounded-lg"
                 >
                   <Upload className="w-3.5 h-3.5" /> حفظ نسخة أوفلاين
                 </Button>
               </div>
+              {String(form.pdf_url || "").startsWith("firestore://book_files/") && (
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  ✓ الملف مرفوع في السحابة — عند حفظ الكتاب سيكون متاحاً للقراءة فوراً لجميع المستخدمين على جميع الأجهزة.
+                </p>
+              )}
               {String(form.pdf_url || "").startsWith("https://local.daraluloom.app/") && (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  تنبيه: هذا الملف محفوظ محلياً على هذا الجهاز فقط — لمشاركته في جميع الأجهزة والإصدارات استخدم رابط PDF مباشر (https://).
+                  تنبيه: هذا الملف محفوظ محلياً على هذا الجهاز فقط — لمشاركته في جميع الأجهزة والإصدارات ارفع ملف PDF مجدداً أو استخدم رابط PDF مباشر (https://).
                 </p>
               )}
             </div>

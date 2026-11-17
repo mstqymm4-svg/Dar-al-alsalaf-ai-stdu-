@@ -60,14 +60,17 @@ export default function BookCard({ book, isFavorite, onToggleFavorite }) {
 
           {onToggleFavorite &&
           <button
+            type="button"
+            aria-label={isFavorite ? t.removeFav : t.addFav}
+            title={isFavorite ? t.removeFav : t.addFav}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
               onToggleFavorite(book.id);
             }}
-            className="absolute top-3 left-3 w-9 h-9 rounded-full bg-white/80 dark:bg-black/50 backdrop-blur-md flex items-center justify-center shadow-lg hover:scale-110 active:scale-90 transition-transform border border-white/20">
+            className="absolute top-3 left-3 z-10 w-9 h-9 rounded-full bg-white/90 dark:bg-black/60 backdrop-blur-md flex items-center justify-center shadow-lg hover:scale-110 active:scale-90 transition-transform border border-white/30">
             
-              <Heart className={`w-4 h-4 transition-colors ${isFavorite ? "fill-red-500 text-red-500" : "text-gray-600 dark:text-gray-300"}`} />
+              <Heart className={`w-4 h-4 transition-colors ${isFavorite ? "fill-red-500 text-red-500" : "text-gray-700 dark:text-gray-200"}`} />
             </button>
           }
 

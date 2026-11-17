@@ -9,7 +9,7 @@
  * 5. Provide offline-aware data access for pages
  */
 
-import { base44 } from "@/api/base44Client";
+import { base44, fetchFirestorePdfBuffer } from "@/api/base44Client";
 import { entities } from "@/lib/dataSource";
 import * as db from "@/lib/offlineDB";
 import { getSetting } from "@/lib/settingsStore";
@@ -90,6 +90,12 @@ export async function downloadBookPdf(book, onProgress) {
   // Check if already downloaded
   const existing = await db.getCachedPdf(book.pdf_url);
   if (existing) return { alreadyCached: true, size: existing.size };
+
+  if (String(book.pdf_url).startsWith("firestore://book_files/")) {
+    const buffer = await fetchFirestorePdfBuffer(book.pdf_url, onProgress);
+    await db.cachePdf(book.pdf_url, buffer, book.id, book.title);
+    return { alreadyCached: false, size: buffer.byteLength };
+  }
 
   const res = await fetch(book.pdf_url);
   if (!res.ok) throw new Error("فشل تنزيل الملف");

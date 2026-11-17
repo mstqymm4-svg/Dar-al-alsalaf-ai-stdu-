@@ -34,4 +34,8 @@ base44/.app.jsonc
 credentials.json
 *.pem
 *.key
+*.keystore
+*.aab
+artifacts/
+android/local.properties
 .credentials

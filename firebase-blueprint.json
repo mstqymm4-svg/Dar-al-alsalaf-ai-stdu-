@@ -170,6 +170,23 @@
         "created_date": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "name", "email", "message", "ownerUid", "created_date"]
+    },
+    "BookFileChunk": {
+      "title": "BookFileChunk",
+      "description": "Chunked PDF binary stored in Firestore for cross-device public reading.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "file_id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "chunk_index": { "type": "number" },
+        "total_chunks": { "type": "number" },
+        "file_name": { "type": "string", "maxLength": 300 },
+        "mime_type": { "type": "string", "maxLength": 64 },
+        "size_bytes": { "type": "number" },
+        "chunk_data": { "type": "string", "maxLength": 750000 },
+        "created_date": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "file_id", "chunk_index", "total_chunks", "chunk_data", "created_date"]
     }
   },
   "firestore": {
@@ -212,6 +229,10 @@
     "/contact_messages/{messageId}": {
       "schema": "ContactMessage",
       "description": "Contact form submissions."
+    },
+    "/book_files/{chunkId}": {
+      "schema": "BookFileChunk",
+      "description": "Public chunked PDF files managed by admins."
     }
   }
 }

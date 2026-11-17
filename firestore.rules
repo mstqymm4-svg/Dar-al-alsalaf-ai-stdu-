@@ -195,6 +195,23 @@ service cloud.firestore {
         data.created_date is string && data.created_date.size() <= 64;
     }
 
+    function isValidBookFileChunk(data) {
+      return data.keys().hasAll(['id', 'file_id', 'chunk_index', 'total_chunks', 'chunk_data', 'created_date']) &&
+        data.keys().hasOnly([
+          'id', 'file_id', 'chunk_index', 'total_chunks', 'file_name',
+          'mime_type', 'size_bytes', 'chunk_data', 'created_date'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.file_id is string && data.file_id.size() >= 1 && data.file_id.size() <= 128 && data.file_id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.chunk_index is number && data.chunk_index >= 0 && data.chunk_index < 1000 &&
+        data.total_chunks is number && data.total_chunks >= 1 && data.total_chunks <= 1000 &&
+        (!('file_name' in data) || (data.file_name is string && data.file_name.size() <= 300)) &&
+        (!('mime_type' in data) || (data.mime_type is string && data.mime_type.size() <= 64)) &&
+        (!('size_bytes' in data) || (data.size_bytes is number && data.size_bytes >= 0)) &&
+        data.chunk_data is string && data.chunk_data.size() >= 1 && data.chunk_data.size() <= 750000 &&
+        data.created_date is string && data.created_date.size() <= 64;
+    }
+
     match /books/{bookId} {
       allow get: if isValidId(bookId);
       allow list: if true;
@@ -346,6 +363,14 @@ service cloud.firestore {
         isVerifiedUser();
       allow update: if false;
       allow delete: if isSignedIn() && isValidId(messageId) && isAdmin();
+    }
+
+    match /book_files/{chunkId} {
+      allow get: if isValidId(chunkId);
+      allow list: if true;
+      allow create: if isValidId(chunkId) && isValidBookFileChunk(incoming()) && incoming().id == chunkId;
+      allow update: if false;
+      allow delete: if isValidId(chunkId);
     }
   }
 }

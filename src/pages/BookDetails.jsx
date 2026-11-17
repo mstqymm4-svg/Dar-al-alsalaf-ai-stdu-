@@ -49,17 +49,17 @@ export default function BookDetails() {
         .then(({ prefetchPdf }) => prefetchPdf(b.pdf_url, { bookId: b.id, title: b.title }))
         .catch(() => {});
     }
-    if (u) {
-      getFavoriteIds(getAccountEmail(u))
-        .then((favIds) => { if (isActive()) setIsFavorite(favIds.includes(id)); })
-        .catch(() => {});
-    }
+    const favEmail = getAccountEmail(u) || "guest@local";
+    getFavoriteIds(favEmail)
+      .then((favIds) => { if (isActive()) setIsFavorite(favIds.includes(id)); })
+      .catch(() => {});
   };
 
   const handleToggleFavorite = async () => {
-    if (!user) return;
-    const added = await toggleFavorite(id, getAccountEmail(user));
-    setIsFavorite(added);
+    const favEmail = getAccountEmail(user) || "guest@local";
+    const added = await toggleFavorite(id, favEmail);
+    setIsFavorite(Boolean(added));
+    toast.success(added ? (t.addFav || "تمت الإضافة إلى المفضلة ✓") : (t.removeFav || "تمت الإزالة من المفضلة"));
   };
 
   const handleDownload = async () => {
@@ -152,14 +152,17 @@ export default function BookDetails() {
               </span>
               <h1 className="text-2xl md:text-3xl font-black text-foreground leading-tight">{book.title}</h1>
             </div>
-            {user &&
             <button
+              type="button"
               onClick={handleToggleFavorite}
-              className="shrink-0 w-11 h-11 rounded-xl border border-border flex items-center justify-center hover:bg-muted hover:border-primary/30 active:scale-95 transition-all">
+              title={isFavorite ? t.removeFav : t.addFav}
+              aria-label={isFavorite ? t.removeFav : t.addFav}
+              className={`shrink-0 w-11 h-11 rounded-xl border flex items-center justify-center hover:bg-muted active:scale-95 transition-all ${
+                isFavorite ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30" : "border-border hover:border-primary/30"
+              }`}>
 
-              <Heart className={`w-5 h-5 transition-all text-[hsl(var(--background))] ${isFavorite ? "fill-red-500 scale-110" : "text-muted-foreground"}`} />
+              <Heart className={`w-5 h-5 transition-all ${isFavorite ? "fill-red-500 text-red-500 scale-110" : "text-muted-foreground"}`} />
             </button>
-            }
           </div>
 
           <div className="flex items-center gap-2 text-muted-foreground mb-6">

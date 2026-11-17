@@ -39,14 +39,10 @@ export default function Favorites() {
   const loadFavorites = async () => {
     const u = await base44.auth.me().catch(() => null);
     setUser(u);
-    const em = getAccountEmail(u);
+    const em = getAccountEmail(u) || "guest@local";
     setVideoFavIds(getVideoFavIds(em));
     setVideos((await getVideos()) || []);
 
-    if (!u) {
-      setLoading(false);
-      return;
-    }
     const ids = await getFavoriteIds(em);
     setFavoriteIds(ids);
     if (ids.length > 0) {
@@ -65,8 +61,8 @@ export default function Favorites() {
   useContentRefresh(["books", "videos"], loadFavorites);
 
   const handleToggleFavorite = async (bookId) => {
-    if (!user) return;
-    await toggleFavorite(bookId, getAccountEmail(user));
+    const em = getAccountEmail(user) || "guest@local";
+    await toggleFavorite(bookId, em);
     setFavoriteIds((prev) => prev.filter((id) => id !== bookId));
     setBooks((prev) => prev.filter((b) => b.id !== bookId));
     toast.success(t.removeFav || "تمت الإزالة من المفضلة");

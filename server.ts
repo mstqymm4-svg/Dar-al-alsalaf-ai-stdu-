@@ -1,5 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sendOtp, verifyOtp, sendContactEmail, logSmtpStatusOnStart } from './server/otpManager';
@@ -778,6 +779,107 @@ async function startServer() {
       return res.json({ success: true, liveStreams: [] });
     }
   });
+
+  // Resolve latest signed AAB bundle on disk
+  const resolveAabFile = (): { filePath: string; stat: fs.Stats } | null => {
+    const candidates = [
+      path.join(__dirname, 'artifacts', 'dar-al-uloom.aab'),
+      path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'dar-al-uloom.aab'),
+      path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab'),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if (fs.existsSync(candidate)) {
+          const stat = fs.statSync(candidate);
+          if (stat.isFile() && stat.size > 0) {
+            return { filePath: candidate, stat };
+          }
+        }
+      } catch {
+        // continue checking next candidate
+      }
+    }
+    return null;
+  };
+
+  app.get('/api/aab-info', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const found = resolveAabFile();
+    if (!found) {
+      return res.json({
+        available: false,
+        fileName: 'dar-al-uloom.aab',
+        sizeBytes: 0,
+        sizeMB: '0',
+        updatedAt: null,
+      });
+    }
+    return res.json({
+      available: true,
+      fileName: 'dar-al-uloom.aab',
+      sizeBytes: found.stat.size,
+      sizeMB: (found.stat.size / (1024 * 1024)).toFixed(2),
+      updatedAt: found.stat.mtime.toISOString(),
+    });
+  });
+
+  const handleAabDownload = (req: express.Request, res: express.Response) => {
+    const found = resolveAabFile();
+    if (!found) {
+      return res.status(404).json({
+        success: false,
+        error: 'ملف AAB غير متوفر حالياً. يرجى بناء الحزمة أولاً.',
+      });
+    }
+
+    const { filePath, stat } = found;
+    const totalSize = stat.size;
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="dar-al-uloom.aab"');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+
+    if (req.method === 'HEAD') {
+      res.setHeader('Content-Length', String(totalSize));
+      return res.status(200).end();
+    }
+
+    const rangeHeader = req.headers.range;
+    if (rangeHeader && /^bytes=\d*-\d*$/.test(rangeHeader)) {
+      const [rawStart, rawEnd] = rangeHeader.replace(/^bytes=/, '').split('-');
+      const start = rawStart ? parseInt(rawStart, 10) : 0;
+      const end = rawEnd ? Math.min(parseInt(rawEnd, 10), totalSize - 1) : totalSize - 1;
+      if (isNaN(start) || isNaN(end) || start > end || start >= totalSize) {
+        res.setHeader('Content-Range', `bytes */${totalSize}`);
+        return res.status(416).end();
+      }
+      const chunkSize = end - start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+      res.setHeader('Content-Length', String(chunkSize));
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.on('error', () => {
+        if (!res.headersSent) res.status(500).end();
+      });
+      return stream.pipe(res);
+    }
+
+    res.status(200);
+    res.setHeader('Content-Length', String(totalSize));
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => {
+      if (!res.headersSent) res.status(500).end();
+    });
+    return stream.pipe(res);
+  };
+
+  app.get('/api/download-aab', handleAabDownload);
+  app.head('/api/download-aab', handleAabDownload);
+  app.get('/dar-al-uloom.aab', handleAabDownload);
+  app.head('/dar-al-uloom.aab', handleAabDownload);
 
   // Vite middleware setup for development
   if (process.env.NODE_ENV !== 'production') {

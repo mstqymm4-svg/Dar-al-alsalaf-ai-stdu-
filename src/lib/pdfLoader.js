@@ -1,5 +1,6 @@
 import * as pdfjsLib from "pdfjs-dist";
 import { apiUrl } from "@/lib/apiBase";
+import { fetchFirestorePdfBuffer } from "@/api/base44Client";
 import { getCachedPdf } from "./offlineDB";
 
 // Bundle worker locally using Vite's asset handling with fallback for older Android WebViews
@@ -67,7 +68,19 @@ export async function loadPdfDocument(url, _metadata = {}) {
     console.warn("Failed to load from IndexedDB cache, falling back to network:", err);
   }
 
-  // 3. Network Load with Progressive Streaming & Range Requests
+  // 3. Cloud Firestore PDF (uploaded directly without external URL)
+  if (!loadingTask && String(url).startsWith("firestore://book_files/")) {
+    const cloudBuffer = await fetchFirestorePdfBuffer(url);
+    loadingTask = pdfjsLib.getDocument({
+      data: cloudBuffer,
+      cMapUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/standard_fonts/",
+    });
+    source = "cloud-firestore";
+  }
+
+  // 4. Network Load with Progressive Streaming & Range Requests
   if (!loadingTask) {
     loadingTask = pdfjsLib.getDocument({
       url: url,

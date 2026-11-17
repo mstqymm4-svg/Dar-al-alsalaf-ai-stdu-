@@ -4,10 +4,11 @@ import {
   LayoutDashboard, BookOpen, Type, Palette, Layers, Sliders,
   Navigation, Image, Users, HardDrive, Archive, Activity, Zap, Settings, ChevronRight, Moon, Sun, Menu, X,
   ImagePlay, GalleryHorizontal, Paintbrush, Share2, Video, WifiOff, Wrench, FlaskConical, MessageCircle, Search,
-  Cloud, CloudUpload, RefreshCw
+  Cloud, CloudUpload, RefreshCw, Download, Copy, Smartphone, Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { subscribeToSettings, flushAllPendingSettings, getSaveStatus, onSaveStatus } from "@/lib/settingsStore";
@@ -15,6 +16,7 @@ import { setThemeMode, getThemeState } from "@/lib/themeEngine";
 import { auth, base44 } from "@/api/base44Client";
 import { onAuthStateChanged } from "firebase/auth";
 import { forceSyncNow } from "@/lib/contentSyncEngine";
+import { apiUrl } from "@/lib/apiBase";
 
 // ─── Section Components ───────────────────────────────────────────────────────
 import DevDashboard from "@/components/dev/DevDashboard";
@@ -97,6 +99,25 @@ export default function DevPanel() {
   const [fbUser, setFbUser]               = useState(() => auth.currentUser);
   const [syncingCloud, setSyncingCloud]   = useState(false);
   const [saveStatus, setSaveStatus]       = useState(() => getSaveStatus());
+  const [aabDialogOpen, setAabDialogOpen] = useState(false);
+  const [aabInfo, setAabInfo]             = useState(null);
+  const [aabDownloading, setAabDownloading] = useState(false);
+  const [aabProgress, setAabProgress]     = useState(0);
+  const [aabCopied, setAabCopied]         = useState(false);
+
+  const loadAabInfo = async () => {
+    try {
+      const res = await fetch(apiUrl("/api/aab-info"), { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setAabInfo(data);
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    loadAabInfo();
+  }, []);
 
   // Sync dark mode
   useEffect(() => {
@@ -144,6 +165,81 @@ export default function DevPanel() {
 
   const handleToggleDark = () => {
     setThemeMode(getThemeState().isDark ? "light" : "dark");
+  };
+
+  const getDirectAabUrl = () => {
+    const resolved = apiUrl("/api/download-aab");
+    if (resolved.startsWith("http")) return resolved;
+    return `${window.location.origin}${resolved}`;
+  };
+
+  const handleDownloadAabBlob = async () => {
+    if (aabDownloading) return;
+    setAabDownloading(true);
+    setAabProgress(0);
+    try {
+      const res = await fetch(apiUrl("/api/download-aab"), { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error("ملف AAB غير متوفر حالياً");
+      }
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("text/html")) {
+        throw new Error("استجابة غير صالحة من الخادم");
+      }
+      const contentLength = Number(res.headers.get("content-length") || 0);
+      let blob;
+      if (res.body && typeof res.body.getReader === "function") {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            received += value.byteLength;
+            if (contentLength > 0) {
+              setAabProgress(Math.min(100, Math.round((received / contentLength) * 100)));
+            }
+          }
+        }
+        blob = new Blob(chunks, { type: "application/octet-stream" });
+      } else {
+        blob = await res.blob();
+      }
+      if (!blob || blob.size < 10000) {
+        throw new Error("حجم الملف المحمّل غير مكتمل");
+      }
+      setAabProgress(100);
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = "dar-al-uloom.aab";
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 4000);
+      toast.success("بدأ تنزيل ملف dar-al-uloom.aab ✓");
+    } catch (err) {
+      toast.error((err?.message || "تعذر تنزيل الملف من داخل الإطار") + " — جرب نسخ الرابط المباشر");
+    } finally {
+      setAabDownloading(false);
+    }
+  };
+
+  const handleCopyAabUrl = async () => {
+    const url = getDirectAabUrl();
+    try {
+      await navigator.clipboard.writeText(url);
+      setAabCopied(true);
+      toast.success("تم نسخ رابط التحميل المباشر ✓ — الصقه في متصفحك لتنزيل الملف");
+      setTimeout(() => setAabCopied(false), 3000);
+    } catch {
+      toast.info(url);
+    }
   };
 
   // ── Lock screen ──
@@ -326,6 +422,19 @@ export default function DevPanel() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => { loadAabInfo(); setAabDialogOpen(true); }}
+              className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+              title="تحميل حزمة الأندرويد الموقعة AAB"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">ملف AAB</span>
+              {aabInfo?.available && (
+                <span className="text-[10px] opacity-80 hidden md:inline">({aabInfo.sizeMB} MB)</span>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleSyncCloud}
               disabled={syncingCloud}
               className="h-8 text-xs gap-1.5"
@@ -374,6 +483,90 @@ export default function DevPanel() {
           <ActiveSection />
         </main>
       </div>
+
+      {/* AAB Download Modal */}
+      <Dialog open={aabDialogOpen} onOpenChange={setAabDialogOpen}>
+        <DialogContent className="max-w-md" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Smartphone className="w-5 h-5 text-primary" />
+              حزمة التطبيق الموقّعة (AAB)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-1">
+            {aabInfo?.available ? (
+              <>
+                <div className="p-3.5 rounded-xl bg-muted/60 border border-border text-xs space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">اسم الحزمة:</span>
+                    <span className="font-bold font-mono" dir="ltr">dar-al-uloom.aab</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">الحجم:</span>
+                    <span className="font-bold">{aabInfo.sizeMB} MB</span>
+                  </div>
+                  {aabInfo.updatedAt && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">تاريخ البناء:</span>
+                      <span className="font-medium" dir="ltr">{new Date(aabInfo.updatedAt).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+
+                {aabDownloading && (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">جاري التحميل...</span>
+                      <span className="font-bold text-primary tabular-nums">{aabProgress}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full bg-primary transition-all duration-200" style={{ width: `${aabProgress}%` }} />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2.5">
+                  <Button
+                    onClick={handleDownloadAabBlob}
+                    disabled={aabDownloading}
+                    className="w-full h-11 rounded-xl font-bold gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    {aabDownloading ? `جاري التنزيل (${aabProgress}%)...` : "تنزيل ملف AAB الآن"}
+                  </Button>
+
+                  <a
+                    href={getDirectAabUrl()}
+                    download="dar-al-uloom.aab"
+                    className="w-full h-10 rounded-xl border border-border bg-card hover:bg-muted transition-colors flex items-center justify-center gap-2 text-xs font-bold"
+                  >
+                    <Download className="w-3.5 h-3.5 text-primary" />
+                    تنزيل عبر المتصفح مباشرة
+                  </a>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleCopyAabUrl}
+                    className="w-full h-10 rounded-xl text-xs font-bold gap-2"
+                  >
+                    {aabCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    {aabCopied ? "تم نسخ الرابط ✓" : "نسخ رابط التحميل المباشر"}
+                  </Button>
+                </div>
+
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  إذا لم يبدأ التنزيل داخل نافذة المعاينة، انسخ رابط التحميل المباشر والصقه في متصفح Chrome أو Safari وسيبدأ التحميل فوراً.
+                </p>
+              </>
+            ) : (
+              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                ملف AAB غير جاهز بعد. سيتم تحديث الحالة فور اكتمال البناء.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

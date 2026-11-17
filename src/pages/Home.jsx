@@ -16,6 +16,7 @@ import { getAccountEmail } from "@/lib/activeUser";
 import { useContentRefresh } from "@/hooks/useContentSync";
 import PullToRefresh from "@/components/PullToRefresh";
 import { forceSyncNow } from "@/lib/contentSyncEngine";
+import { toast } from "sonner";
 
 export default function Home() {
   const t = useT();
@@ -41,11 +42,10 @@ export default function Home() {
     setFeaturedBooks(allBooks?.feat || []);
     setRecentBooks(allBooks?.rec || []);
     setLoading(false);
-    if (u) {
-      getFavoriteIds(getAccountEmail(u))
-        .then((favIds) => setFavorites(favIds || []))
-        .catch(() => {});
-    }
+    const favEmail = getAccountEmail(u) || "guest@local";
+    getFavoriteIds(favEmail)
+      .then((favIds) => setFavorites(favIds || []))
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -62,11 +62,12 @@ export default function Home() {
   useContentRefresh(["books", "videos", "channels", "social"], loadData);
 
   const handleToggleFavorite = async (bookId) => {
-    if (!user) return;
-    const added = await toggleFavorite(bookId, getAccountEmail(user));
+    const favEmail = getAccountEmail(user) || "guest@local";
+    const added = await toggleFavorite(bookId, favEmail);
     setFavorites((prev) =>
       added ? [...prev, bookId] : prev.filter((id) => id !== bookId)
     );
+    toast.success(added ? (t.addFav || "تمت الإضافة إلى المفضلة ✓") : (t.removeFav || "تمت الإزالة من المفضلة"));
   };
 
   if (loading) {
@@ -151,7 +152,7 @@ export default function Home() {
                   key={book.id}
                   book={book}
                   isFavorite={favorites.includes(book.id)}
-                  onToggleFavorite={user ? handleToggleFavorite : null}
+                  onToggleFavorite={handleToggleFavorite}
                 />
               ))}
             </div>
