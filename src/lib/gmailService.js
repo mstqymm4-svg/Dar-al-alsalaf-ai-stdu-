@@ -32,15 +32,9 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Filter out Workspace Add-on manifest-only scopes (.addons.current.) and conflicting
-// metadata/admin-only scopes when building the web OAuth popup request so Google OAuth
-// does not reject the popup with Error 400: invalid_scope.
-SCOPES.filter(
-  (scope) =>
-    !scope.includes('.addons.current.') &&
-    !scope.includes('.settings.') &&
-    !scope.endsWith('/gmail.metadata')
-).forEach((scope) => provider.addScope(scope));
+provider.addScope('https://www.googleapis.com/auth/userinfo.email');
+provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
+provider.addScope('https://www.googleapis.com/auth/gmail.send');
 provider.setCustomParameters({ prompt: 'select_account' });
 
 // Flag to indicate if we are in the middle of a sign-in flow.
@@ -138,12 +132,22 @@ export const initAuth = (onAuthSuccess, onAuthFailure) => {
 
 // Must be called from a button click or user interaction
 export const googleSignIn = async () => {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw createCodedError(
+      'لا يوجد اتصال بالإنترنت حالياً. يرجى التحقق من الشبكة والمحاولة مرة أخرى.',
+      'NETWORK_ERROR'
+    );
+  }
+
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('تعذر الحصول على صلاحية الوصول إلى Gmail من حساب Google');
+      throw createCodedError(
+        'تعذر الحصول على صلاحية الوصول من حساب Google',
+        'TOKEN_MISSING'
+      );
     }
 
     cachedAccessToken = credential.accessToken;
@@ -154,14 +158,37 @@ export const googleSignIn = async () => {
     const code = error?.code || '';
     const msg = String(error?.message || '');
     const inWebView = isEmbeddedNativeWebView();
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
 
-    // Standard mobile browser blocked popup -> retry with redirect
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw createCodedError(
+        'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.',
+        'POPUP_CLOSED'
+      );
+    }
+
+    // Standard mobile browser blocked popup -> retry with redirect outside WebView/iframe
     if (
       !inWebView &&
+      !inIframe &&
       (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment')
     ) {
-      await signInWithRedirect(auth, provider);
-      return null;
+      try {
+        await signInWithRedirect(auth, provider);
+        return null;
+      } catch {
+        throw createCodedError(
+          'تعذر فتح نافذة تسجيل الدخول. يرجى السماح بالنوافذ المنبثقة أو استخدام رمز التحقق (OTP).',
+          'POPUP_BLOCKED'
+        );
+      }
+    }
+
+    if (code === 'auth/network-request-failed' || code === 'NETWORK_ERROR') {
+      throw createCodedError(
+        'تعذر الاتصال بخادم مصادقة Google. تحقق من اتصال الإنترنت أو استخدم تسجيل الدخول برمز التحقق (OTP).',
+        'NETWORK_ERROR'
+      );
     }
 
     if (
@@ -170,15 +197,16 @@ export const googleSignIn = async () => {
       code === 'auth/operation-not-supported-in-this-environment' ||
       msg.includes('disallowed_useragent')
     ) {
-      const friendly = createCodedError(
-        'تسجيل الدخول عبر نافذة Google غير مدعوم داخل تطبيق الأندرويد. يرجى تسجيل الدخول عبر التحقق بالبريد الإلكتروني (رمز OTP).',
+      throw createCodedError(
+        'تسجيل الدخول عبر نافذة Google غير مدعوم في هذا المتصفح أو النطاق. يرجى استخدام التحقق بالبريد الإلكتروني (رمز OTP).',
         'WEBVIEW_GOOGLE_BLOCKED'
       );
-      throw friendly;
     }
 
-    console.error('Sign in error:', error);
-    throw error;
+    throw createCodedError(
+      'تعذر إتمام تسجيل الدخول عبر Google حالياً. يمكنك استخدام التحقق بالبريد الإلكتروني (رمز OTP).',
+      code || 'AUTH_ERROR'
+    );
   } finally {
     isSigningIn = false;
   }

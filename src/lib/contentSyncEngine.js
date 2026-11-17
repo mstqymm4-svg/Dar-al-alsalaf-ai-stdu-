@@ -175,7 +175,10 @@ async function syncSocialChannelsIncremental() {
 }
 
 async function syncSettingsIncremental() {
-  const serverSettings = await entities.AppSettings.list("-created_date", 1000).catch(() => []);
+  const serverSettings = await (entities.AppSettings.syncFromServer
+    ? entities.AppSettings.syncFromServer()
+    : entities.AppSettings.list("-created_date", 1000)
+  ).catch(() => []);
   if (Array.isArray(serverSettings) && serverSettings.length > 0) {
     await db.replaceCachedSettings(serverSettings).catch(() => {});
     return { total: serverSettings.length };
@@ -275,7 +278,13 @@ export function startContentSyncEngine() {
   };
   document.addEventListener("visibilitychange", handleVisibility);
 
-  // Forward local entity CRUD changes directly to all subscribed pages
+  // Start real-time Firestore listeners so DevPanel changes propagate immediately
+  const stopRealtime =
+    typeof base44.startRealtimeCatalogSync === "function"
+      ? base44.startRealtimeCatalogSync()
+      : null;
+
+  // Forward local/realtime entity CRUD changes directly to all subscribed pages
   const handleLocalContentChanged = (e) => {
     const rawEntity = e?.detail?.entity;
     const mapped =
@@ -283,6 +292,8 @@ export function startContentSyncEngine() {
         ? "channels"
         : rawEntity === "social_channels"
         ? "social"
+        : rawEntity === "app_settings"
+        ? "settings"
         : rawEntity;
     if (mapped) {
       emit({ type: "content_changed", entity: mapped, new: 1, updated: 1, deleted: 1 });
@@ -291,6 +302,7 @@ export function startContentSyncEngine() {
   window.addEventListener("dau_content_changed", handleLocalContentChanged);
 
   cleanupFns = [
+    () => stopRealtime?.(),
     () => clearTimeout(initialTimer),
     () => clearInterval(pollTimer),
     () => window.removeEventListener("online", handleOnline),

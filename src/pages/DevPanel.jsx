@@ -12,9 +12,8 @@ import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { subscribeToSettings, flushAllPendingSettings, getSaveStatus, onSaveStatus } from "@/lib/settingsStore";
 import { setThemeMode, getThemeState } from "@/lib/themeEngine";
-import { auth } from "@/api/base44Client";
+import { auth, base44 } from "@/api/base44Client";
 import { onAuthStateChanged } from "firebase/auth";
-import { googleSignIn } from "@/lib/gmailService";
 import { forceSyncNow } from "@/lib/contentSyncEngine";
 
 // ─── Section Components ───────────────────────────────────────────────────────
@@ -129,11 +128,12 @@ export default function DevPanel() {
 
   const handleGoogleAuth = async () => {
     try {
-      await googleSignIn();
+      await base44.auth.signInWithGoogle();
       toast.success("تم تسجيل الدخول كمسؤول بنجاح ✓");
       await forceSyncNow();
     } catch (e) {
-      toast.error("تعذر تسجيل الدخول: " + (e?.message || "يرجى التحقق من الصلاحيات"));
+      if (e?.code === "POPUP_CLOSED") return;
+      toast.error(e?.message || "تعذر تسجيل الدخول عبر Google حالياً");
     }
   };
 

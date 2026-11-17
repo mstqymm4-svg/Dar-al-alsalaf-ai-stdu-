@@ -3,6 +3,7 @@ name: Build signed AAB
 on:
   workflow_dispatch:   # run manually from the Actions tab
   push:
+    branches: [ "main", "master" ]
     tags:
       - "v*"           # or push a tag such as v1.0.1
 
@@ -35,26 +36,49 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Build release bundle
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build release bundle (AAB)
         working-directory: android
         run: ./gradlew bundleRelease
 
-      - name: Sign AAB
+      - name: Sign AAB (Uses GitHub Secrets or auto-generates keystore)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            STORE_PASS="${KEYSTORE_PASSWORD}"
+            ALIAS_NAME="${KEY_ALIAS}"
+            KEY_PASS="${KEY_PASSWORD}"
+          else
+            STORE_PASS="daraluloom123"
+            ALIAS_NAME="daraluloom"
+            KEY_PASS="daraluloom123"
+            keytool -genkeypair -v \
+              -keystore "$RUNNER_TEMP/release.keystore" \
+              -alias "$ALIAS_NAME" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+              -dname "CN=Dar Al Uloom, OU=Mobile, O=Dar Al Uloom, L=Riyadh, S=Riyadh, C=SA"
+            cp "$RUNNER_TEMP/release.keystore" android/app/build/outputs/bundle/release/release.keystore
+          fi
           jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
             -keystore "$RUNNER_TEMP/release.keystore" \
-            -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" \
-            android/app/build/outputs/bundle/release/app-release.aab "$KEY_ALIAS"
+            -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
+            android/app/build/outputs/bundle/release/app-release.aab "$ALIAS_NAME"
           jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab
+          cp android/app/build/outputs/bundle/release/app-release.aab android/app/build/outputs/bundle/release/dar-al-uloom.aab
           rm -f "$RUNNER_TEMP/release.keystore"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: app-release-aab
-          path: android/app/build/outputs/bundle/release/app-release.aab
+          name: dar-al-uloom-aab
+          path: |
+            android/app/build/outputs/bundle/release/dar-al-uloom.aab
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/bundle/release/release.keystore

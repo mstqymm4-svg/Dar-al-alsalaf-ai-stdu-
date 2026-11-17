@@ -633,6 +633,55 @@ export async function loadSettings(userEmail) {
   return _cache;
 }
 
+let _isRefreshingRemoteSettings = false;
+async function refreshSettingsFromRemote() {
+  if (_isRefreshingRemoteSettings) return;
+  _isRefreshingRemoteSettings = true;
+  try {
+    const dbData = await dbGetAll();
+    if (!dbData || Object.keys(dbData).length === 0) return;
+    const merged = { ...DEFAULT_SETTINGS, ...dbData };
+    const latestLocal = ls.getAll();
+    let latestLang = "";
+    try { latestLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
+    if (latestLang) latestLocal.app_lang = latestLang;
+
+    USER_LOCAL_PREF_KEYS.forEach((k) => {
+      const localVal = latestLocal[k];
+      if (localVal !== undefined && localVal !== null && localVal !== "") {
+        merged[k] = String(localVal);
+      }
+    });
+    Object.entries(readDirtyMap()).forEach(([k, v]) => {
+      merged[k] = String(v);
+    });
+    Object.entries(_pendingSaves).forEach(([k, v]) => {
+      merged[k] = String(v);
+    });
+
+    const changed = Object.keys(merged).some((k) => (_cache[k] ?? "") !== (merged[k] ?? "")) ||
+      Object.keys(_cache).some((k) => !(k in merged));
+    if (!changed) return;
+
+    _cache = merged;
+    ls.setAll(_cache);
+    applySettingsToDom(_cache);
+    dispatchChange();
+  } catch {
+    // ignore refresh failures
+  } finally {
+    _isRefreshingRemoteSettings = false;
+  }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("dau_content_changed", (e) => {
+    if (e?.detail?.entity === "app_settings") {
+      refreshSettingsFromRemote();
+    }
+  });
+}
+
 /** Get all current settings */
 export function getAllSettings() { return { ..._cache }; }
 

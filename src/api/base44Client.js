@@ -8,6 +8,7 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  onSnapshot,
   query,
   where,
   getDocFromServer,
@@ -361,6 +362,7 @@ function createPublicCatalogEntity({
   let memCache = null;
   let localLoadPromise = null;
   let inFlightFetch = null;
+  let realtimeUnsub = null;
   let lastNetworkFetchAt = 0;
   const NETWORK_TTL_MS = 25000;
 
@@ -716,6 +718,64 @@ function createPublicCatalogEntity({
     },
     flushPending: flushPendingForThisCollection,
     syncFromServer: () => fetchFromFirestore({ notifyOnDiff: true }),
+    subscribeRealtime() {
+      if (realtimeUnsub) return realtimeUnsub;
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return () => {};
+      try {
+        realtimeUnsub = onSnapshot(
+          collection(db, collectionName),
+          (snap) => {
+            const deleted = getDeletedIds();
+            const docs = [];
+            snap.forEach((d) => {
+              const data = d.data();
+              const docId = String(d.id || data?.id);
+              if (
+                data &&
+                !deleted.has(docId) &&
+                !deleted.has(String(data?.id || "")) &&
+                !deleted.has(sanitizeId(docId))
+              ) {
+                docs.push(sanitizeFn({ ...data, id: docId }, data));
+              }
+            });
+
+            if (snap.metadata?.fromCache && docs.length === 0) return;
+
+            lastNetworkFetchAt = Date.now();
+            if (typeof localStorage !== "undefined") {
+              localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+            }
+
+            const prev = memCache;
+            const changed = hasListChanged(prev, docs);
+            memCache = docs;
+
+            if (changed) {
+              if (typeof replaceCachedAll === "function") {
+                replaceCachedAll(docs).catch(() => {});
+              } else if (docs.length > 0) {
+                cacheAll(docs).catch(() => {});
+              }
+              if (prev !== null) {
+                dispatchChanged();
+              }
+            }
+          },
+          () => {
+            // Ignore transient offline/snapshot errors
+          }
+        );
+      } catch {
+        realtimeUnsub = null;
+      }
+      return () => {
+        if (realtimeUnsub) {
+          try { realtimeUnsub(); } catch {}
+          realtimeUnsub = null;
+        }
+      };
+    },
   };
 }
 
@@ -1371,6 +1431,21 @@ const entitiesProxy = new Proxy(entitiesMap, {
 export const base44 = {
   entities: entitiesProxy,
 
+  startRealtimeCatalogSync() {
+    const unsubs = [
+      BookEntity.subscribeRealtime?.(),
+      VideoEntity.subscribeRealtime?.(),
+      VideoChannelEntity.subscribeRealtime?.(),
+      SocialChannelEntity.subscribeRealtime?.(),
+      AppSettingsEntity.subscribeRealtime?.(),
+    ].filter((fn) => typeof fn === "function");
+    return () => {
+      unsubs.forEach((fn) => {
+        try { fn(); } catch {}
+      });
+    };
+  },
+
   auth: {
     async me() {
       return readCurrentUserProfile();
@@ -1484,12 +1559,44 @@ export const base44 = {
     },
 
     async signInWithGoogle() {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        const err = new Error("لا يوجد اتصال بالإنترنت حالياً. يرجى التحقق من الشبكة والمحاولة مرة أخرى.");
+        err.code = "NETWORK_ERROR";
+        throw err;
+      }
       localStorage.removeItem("dau_logged_out");
       const basicGoogleProvider = new GoogleAuthProvider();
       basicGoogleProvider.addScope("https://www.googleapis.com/auth/userinfo.email");
       basicGoogleProvider.addScope("https://www.googleapis.com/auth/userinfo.profile");
       basicGoogleProvider.setCustomParameters({ prompt: "select_account" });
-      const result = await signInWithPopup(auth, basicGoogleProvider);
+      let result;
+      try {
+        result = await signInWithPopup(auth, basicGoogleProvider);
+      } catch (error) {
+        const code = error?.code || "";
+        if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+          const err = new Error("تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.");
+          err.code = "POPUP_CLOSED";
+          throw err;
+        }
+        if (code === "auth/network-request-failed") {
+          const err = new Error("تعذر الاتصال بخادم مصادقة Google. يرجى التحقق من الشبكة أو استخدام تسجيل الدخول برمز التحقق (OTP).");
+          err.code = "NETWORK_ERROR";
+          throw err;
+        }
+        if (
+          code === "auth/unauthorized-domain" ||
+          code === "auth/operation-not-supported-in-this-environment" ||
+          code === "auth/popup-blocked"
+        ) {
+          const err = new Error("تعذر فتح نافذة تسجيل الدخول عبر Google في هذا المتصفح. يمكنك استخدام تسجيل الدخول برمز التحقق (OTP).");
+          err.code = "WEBVIEW_GOOGLE_BLOCKED";
+          throw err;
+        }
+        const err = new Error("تعذر إتمام تسجيل الدخول عبر Google حالياً.");
+        err.code = code || "AUTH_ERROR";
+        throw err;
+      }
       const fbUser = result?.user;
       if (!fbUser?.email) {
         throw new Error("NO_EMAIL");
