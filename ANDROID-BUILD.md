@@ -47,5 +47,5 @@ npx cap open android
 ارفع `versionCode` (و`versionName`) في `android/app/build.gradle`.
 
 ## قبل أول رفع على Google Play
-معرّف التطبيق الحالي `com.daralulom.app` (في `capacitor.config.json` و`android/app/build.gradle`).
+معرّف التطبيق الحالي `com.daraltawhid.app` (في `capacitor.config.json` و`android/app/build.gradle`).
 غيّره الآن إن أردت معرّفًا آخر، فلا يمكن تغييره بعد النشر.

@@ -1,4 +1,4 @@
-package com.daralulom.app;
+package com.daraltawhid.app;
 
 import com.getcapacitor.BridgeActivity;
 

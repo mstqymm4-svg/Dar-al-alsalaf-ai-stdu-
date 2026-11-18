@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">DAR AL TAWHID</string>
     <string name="title_activity_main">DAR AL TAWHID</string>
-    <string name="package_name">com.daralulom.app</string>
-    <string name="custom_url_scheme">com.daralulom.app</string>
+    <string name="package_name">com.daraltawhid.app</string>
+    <string name="custom_url_scheme">com.daraltawhid.app</string>
 </resources>

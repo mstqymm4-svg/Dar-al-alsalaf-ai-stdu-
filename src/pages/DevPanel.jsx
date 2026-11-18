@@ -498,8 +498,12 @@ export default function DevPanel() {
               <>
                 <div className="p-3.5 rounded-xl bg-muted/60 border border-border text-xs space-y-1.5">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">اسم الحزمة:</span>
+                    <span className="text-muted-foreground">اسم الملف:</span>
                     <span className="font-bold font-mono" dir="ltr">dar-al-tawhid.aab</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Package Name:</span>
+                    <span className="font-bold font-mono text-primary" dir="ltr">com.daraltawhid.app</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">الحجم:</span>

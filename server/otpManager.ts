@@ -158,8 +158,11 @@ export function logSmtpStatusOnStart() {
   }
 }
 
-// Clean English HTML email template designed for high deliverability to Primary Inbox
-function createEmailTemplate(otp: string): string {
+const APP_LOGO_URL =
+  'https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/d46293c8d_C06AC024-1230-4B65-91B9-B30DDE077171.png';
+
+// Google-style minimalist verification card with the app's official logo
+function createEmailTemplate(otp: string, recipientEmail: string): string {
   return `<!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
@@ -167,28 +170,41 @@ function createEmailTemplate(otp: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DAR AL TAWHID</title>
 </head>
-<body style="margin:0;padding:24px 12px;background-color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;direction:ltr;text-align:left;">
-  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
-    <div style="background:#065f46;padding:24px 20px;text-align:center;">
-      <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:0.5px;">DAR AL TAWHID</h1>
-      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">Islamic Knowledge &amp; Digital Library</p>
-    </div>
-    <div style="padding:28px 24px;text-align:center;">
-      <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
-        Assalamu Alaikum,<br>
-        Welcome to <strong>DAR AL TAWHID</strong>. Here is your 6-digit code:
-      </p>
-      <div dir="ltr" style="font-size:34px;font-weight:800;letter-spacing:8px;color:#065f46;background:#f0fdf4;border:2px solid #059669;border-radius:12px;padding:16px 12px;margin:18px auto;max-width:260px;font-family:'Segoe UI',Roboto,Helvetica,Arial,monospace;">
-        ${otp}
-      </div>
-      <p style="margin:16px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">
-        This code is valid for <strong>10 minutes</strong>.
-      </p>
-    </div>
-    <div style="background-color:#f9fafb;padding:16px 20px;text-align:center;border-top:1px solid #f3f4f6;font-size:12px;color:#6b7280;">
-      <strong>DAR AL TAWHID</strong> &bull; daraltawhid25@gmail.com
-    </div>
-  </div>
+<body style="margin:0;padding:0;direction:ltr;text-align:left;">
+  <table width="100%" height="100%" style="min-width:348px;" border="0" cellspacing="0" cellpadding="0" lang="en">
+    <tbody>
+      <tr height="32" style="height:32px;"><td></td></tr>
+      <tr align="center">
+        <td>
+          <table border="0" cellspacing="0" cellpadding="0" style="padding-bottom:20px;max-width:516px;min-width:220px;">
+            <tbody>
+              <tr>
+                <td width="8" style="width:8px;"></td>
+                <td>
+                  <div style="border-style:solid;border-width:thin;border-color:#dadce0;border-radius:8px;padding:40px 20px;" align="center">
+                    <img src="${APP_LOGO_URL}" width="68" height="68" aria-hidden="true" style="margin-bottom:16px;display:block;width:68px;height:68px;object-fit:contain;" alt="DAR AL TAWHID">
+                    <div style="font-family:'Google Sans',Roboto,RobotoDraft,Helvetica,Arial,sans-serif;border-bottom:thin solid #dadce0;color:rgba(0,0,0,0.87);line-height:32px;padding-bottom:24px;text-align:center;word-break:break-word;">
+                      <div style="font-size:24px;">Verify your email address</div>
+                    </div>
+                    <div style="font-family:Roboto-Regular,Helvetica,Arial,sans-serif;font-size:14px;color:rgba(0,0,0,0.87);line-height:20px;padding-top:20px;text-align:left;">
+                      Use this code to complete setting up and verifying <b>${recipientEmail}</b> on <b>DAR AL TAWHID</b>:
+                      <div style="text-align:center;font-size:36px;margin-top:20px;line-height:44px;">${otp}</div>
+                      <br>
+                      This code will expire in 10 minutes.
+                      <br><br>
+                      If you don't recognize <b>DAR AL TAWHID</b>, you can safely ignore this email.
+                    </div>
+                  </div>
+                </td>
+                <td width="8" style="width:8px;"></td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+      <tr height="32" style="height:32px;"><td></td></tr>
+    </tbody>
+  </table>
 </body>
 </html>`;
 }
@@ -272,16 +288,17 @@ export async function sendOtp(email: string, clientIp: string) {
       to: normalizedEmail,
       subject: `DAR AL TAWHID - Code: ${otpCode}`,
       text: [
-        'Assalamu Alaikum,',
+        'Verify your email address',
         '',
-        `Welcome to DAR AL TAWHID. Here is your 6-digit code: ${otpCode}`,
+        `Use this code to complete setting up and verifying ${normalizedEmail} on DAR AL TAWHID:`,
         '',
-        'This code is valid for 10 minutes.',
+        otpCode,
         '',
-        'DAR AL TAWHID',
-        'daraltawhid25@gmail.com',
+        'This code will expire in 10 minutes.',
+        '',
+        "If you don't recognize DAR AL TAWHID, you can safely ignore this email.",
       ].join('\n'),
-      html: createEmailTemplate(otpCode),
+      html: createEmailTemplate(otpCode, normalizedEmail),
     });
 
     console.log(`[OTP Service] Email successfully sent from ${smtpUser} to ${normalizedEmail}`);

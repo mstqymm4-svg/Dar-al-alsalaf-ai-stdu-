@@ -351,8 +351,6 @@ export async function sendGmailMessage({ to, subject, body, html, cc = undefined
 }
 
 export async function sendVerificationEmailViaGmail(recipientEmail, code) {
-  // Check cachedAccessToken synchronously so signInWithPopup is invoked directly
-  // within the user's click gesture without any preceding await.
   let token = cachedAccessToken;
   if (!token) {
     const authRes = await googleSignIn();
@@ -362,37 +360,62 @@ export async function sendVerificationEmailViaGmail(recipientEmail, code) {
     throw createCodedError('يرجى تسجيل الدخول بحساب Google لإرسال رمز التحقق', 'AUTH_REQUIRED');
   }
 
-  const subject = `DAR AL TAWHID — Verification Code: ${code}`;
+  const appLogoUrl =
+    'https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/d46293c8d_C06AC024-1230-4B65-91B9-B30DDE077171.png';
+  const subject = `DAR AL TAWHID - Code: ${code}`;
   const plain = [
-    'Welcome to DAR AL TAWHID,',
+    'Verify your email address',
     '',
-    'Your verification code for DAR AL TAWHID is:',
+    `Use this code to complete setting up and verifying ${recipientEmail} on DAR AL TAWHID:`,
     '',
     code,
     '',
-    'Expires in: This code is valid for 10 minutes only. Never share this code with anyone.',
+    'This code will expire in 10 minutes.',
     '',
-    '© 2026 DAR AL TAWHID. All rights reserved.',
+    "If you don't recognize DAR AL TAWHID, you can safely ignore this email.",
   ].join('\n');
 
   const html = `<!DOCTYPE html>
 <html dir="ltr" lang="en">
 <head>
   <meta charset="utf-8">
-  <title>DAR AL TAWHID — Verification Code</title>
+  <title>DAR AL TAWHID</title>
 </head>
-<body style="margin:0;padding:24px;background:#f8faf8;font-family:system-ui,-apple-system,'Segoe UI',Tahoma,Arial,sans-serif;direction:ltr;text-align:left;">
-  <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.05);">
-    <div style="background:linear-gradient(135deg,#064e3b,#059669);padding:26px 20px;text-align:center;">
-      <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:bold;">DAR AL TAWHID</h1>
-      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">Email Verification Code</p>
-    </div>
-    <div style="padding:28px 24px;color:#1f2937;font-size:14px;line-height:1.8;text-align:center;">
-      <p style="margin:0 0 16px;color:#4b5563;">Welcome to <strong>DAR AL TAWHID</strong>. Your verification code is:</p>
-      <div dir="ltr" style="font-size:36px;font-weight:900;letter-spacing:10px;color:#047857;background:#f0fdf4;border:2px dashed #10b981;border-radius:12px;padding:16px 0;margin:0 0 16px;font-family:monospace;">${code}</div>
-      <p style="margin:0;color:#6b7280;font-size:13px;">This code is valid for <strong>10 minutes</strong> only. Never share this code with anyone.</p>
-    </div>
-  </div>
+<body style="margin:0;padding:0;direction:ltr;text-align:left;">
+  <table width="100%" height="100%" style="min-width:348px;" border="0" cellspacing="0" cellpadding="0" lang="en">
+    <tbody>
+      <tr height="32" style="height:32px;"><td></td></tr>
+      <tr align="center">
+        <td>
+          <table border="0" cellspacing="0" cellpadding="0" style="padding-bottom:20px;max-width:516px;min-width:220px;">
+            <tbody>
+              <tr>
+                <td width="8" style="width:8px;"></td>
+                <td>
+                  <div style="border-style:solid;border-width:thin;border-color:#dadce0;border-radius:8px;padding:40px 20px;" align="center">
+                    <img src="${appLogoUrl}" width="68" height="68" aria-hidden="true" style="margin-bottom:16px;display:block;width:68px;height:68px;object-fit:contain;" alt="DAR AL TAWHID">
+                    <div style="font-family:'Google Sans',Roboto,RobotoDraft,Helvetica,Arial,sans-serif;border-bottom:thin solid #dadce0;color:rgba(0,0,0,0.87);line-height:32px;padding-bottom:24px;text-align:center;word-break:break-word;">
+                      <div style="font-size:24px;">Verify your email address</div>
+                    </div>
+                    <div style="font-family:Roboto-Regular,Helvetica,Arial,sans-serif;font-size:14px;color:rgba(0,0,0,0.87);line-height:20px;padding-top:20px;text-align:left;">
+                      Use this code to complete setting up and verifying <b>${recipientEmail}</b> on <b>DAR AL TAWHID</b>:
+                      <div style="text-align:center;font-size:36px;margin-top:20px;line-height:44px;">${code}</div>
+                      <br>
+                      This code will expire in 10 minutes.
+                      <br><br>
+                      If you don't recognize <b>DAR AL TAWHID</b>, you can safely ignore this email.
+                    </div>
+                  </div>
+                </td>
+                <td width="8" style="width:8px;"></td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>
+      <tr height="32" style="height:32px;"><td></td></tr>
+    </tbody>
+  </table>
 </body>
 </html>`;
 
