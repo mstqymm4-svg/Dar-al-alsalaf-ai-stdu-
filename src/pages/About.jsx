@@ -11,9 +11,9 @@ export default function About() {
   const rawName = (getSetting("app_name") || "").trim();
   const rawSub = (getSetting("app_subtitle") || "").trim();
   const appName =
-    t.langCode === "ar" && rawName && rawName !== "المكتبة الدينية" && rawName.toUpperCase() !== "DAR AL ULOOM"
+    rawName && rawName !== "." && rawName !== "المكتبة الدينية" && rawName.toUpperCase() !== "DAR AL ULOOM"
       ? rawName
-      : (t.brandName || t.appName || "دار العلوم");
+      : (t.brandName || t.appName || "DAR AL TAWHID");
   const appSubtitle =
     t.langCode === "ar" && rawSub && rawSub !== "." && rawSub !== "نور العلم والمعرفة"
       ? rawSub
@@ -62,7 +62,7 @@ export default function About() {
         {/* Intro */}
         <div className="bg-card border border-border rounded-2xl p-6 sm:p-8 space-y-4 mb-8">
           <p className="text-foreground leading-relaxed text-base sm:text-lg">
-            {t.aboutP1?.replace("{appName}", appName) || `تطبيق ${appName} — دار العلوم المحمدية السلفية.`}
+            {t.aboutP1?.replace("{appName}", appName) || `تطبيق ${appName}.`}
           </p>
           <p className="text-muted-foreground leading-relaxed">{t.aboutP2}</p>
         </div>
@@ -116,7 +116,7 @@ export default function About() {
         <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6 text-center space-y-3">
           <h3 className="font-bold text-base text-foreground">{t.contactTitle || "تواصل معنا"}</h3>
           <p className="text-xs sm:text-sm text-muted-foreground max-w-md mx-auto">
-            {t.contactIntro || "نسعد بتواصلكم معنا لأي استفسار أو اقتراح أو ملاحظة. تصل رسالتكم مباشرة إلى بريد تطبيق دار العلوم."}
+            {t.contactIntro || "نسعد بتواصلكم معنا لأي استفسار أو اقتراح أو ملاحظة. تصل رسالتكم مباشرة إلى بريد تطبيق DAR AL TAWHID."}
           </p>
           <div className="pt-2">
             <a

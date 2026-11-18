@@ -334,7 +334,7 @@ export async function sendGmailMessage({ to, subject, body, html, cc = undefined
     subject,
     body,
     html,
-    fromName: currentGoogleUser?.displayName || 'دار العلوم | Dar Al Uloom',
+    fromName: currentGoogleUser?.displayName || 'DAR AL TAWHID',
     fromEmail: currentGoogleUser?.email || '',
     cc,
     bcc,
@@ -362,35 +362,35 @@ export async function sendVerificationEmailViaGmail(recipientEmail, code) {
     throw createCodedError('يرجى تسجيل الدخول بحساب Google لإرسال رمز التحقق', 'AUTH_REQUIRED');
   }
 
-  const subject = 'رمز التحقق — دار العلوم';
+  const subject = `DAR AL TAWHID — Verification Code: ${code}`;
   const plain = [
-    'السلام عليكم ورحمة الله وبركاته،',
+    'Welcome to DAR AL TAWHID,',
     '',
-    'رمز التحقق الخاص بك في تطبيق دار العلوم هو:',
+    'Your verification code for DAR AL TAWHID is:',
     '',
     code,
     '',
-    'الرمز صالح لمدة 10 دقائق فقط. يرجى عدم مشاركته مع أي شخص.',
+    'Expires in: This code is valid for 10 minutes only. Never share this code with anyone.',
     '',
-    'دار العلوم — نور العلم والمعرفة',
+    '© 2026 DAR AL TAWHID. All rights reserved.',
   ].join('\n');
 
   const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
+<html dir="ltr" lang="en">
 <head>
   <meta charset="utf-8">
-  <title>رمز التحقق — دار العلوم</title>
+  <title>DAR AL TAWHID — Verification Code</title>
 </head>
-<body style="margin:0;padding:24px;background:#f8faf8;font-family:system-ui,-apple-system,'Segoe UI',Tahoma,Arial,sans-serif;">
+<body style="margin:0;padding:24px;background:#f8faf8;font-family:system-ui,-apple-system,'Segoe UI',Tahoma,Arial,sans-serif;direction:ltr;text-align:left;">
   <div style="max-width:440px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,0.05);">
     <div style="background:linear-gradient(135deg,#064e3b,#059669);padding:26px 20px;text-align:center;">
-      <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:bold;">دار العلوم</h1>
-      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">رمز التحقق من البريد الإلكتروني</p>
+      <h1 style="color:#ffffff;margin:0;font-size:22px;font-weight:bold;">DAR AL TAWHID</h1>
+      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">Email Verification Code</p>
     </div>
     <div style="padding:28px 24px;color:#1f2937;font-size:14px;line-height:1.8;text-align:center;">
-      <p style="margin:0 0 16px;color:#4b5563;">السلام عليكم ورحمة الله وبركاته، رمز التحقق الخاص بك هو:</p>
+      <p style="margin:0 0 16px;color:#4b5563;">Welcome to <strong>DAR AL TAWHID</strong>. Your verification code is:</p>
       <div dir="ltr" style="font-size:36px;font-weight:900;letter-spacing:10px;color:#047857;background:#f0fdf4;border:2px dashed #10b981;border-radius:12px;padding:16px 0;margin:0 0 16px;font-family:monospace;">${code}</div>
-      <p style="margin:0;color:#6b7280;font-size:13px;">الرمز صالح لمدة <strong>10 دقائق</strong> فقط. لا تشارك هذا الرمز مع أي شخص.</p>
+      <p style="margin:0;color:#6b7280;font-size:13px;">This code is valid for <strong>10 minutes</strong> only. Never share this code with anyone.</p>
     </div>
   </div>
 </body>

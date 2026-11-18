@@ -12,6 +12,7 @@ import {
   query,
   where,
   getDocFromServer,
+  setLogLevel,
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import * as offlineDB from "@/lib/offlineDB";
@@ -28,6 +29,9 @@ import seedTranslations from "../../data-export/Translations.json";
 
 // ─── Firebase Initialization ──────────────────────────────────────────────────
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+try {
+  setLogLevel("silent");
+} catch {}
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
@@ -76,7 +80,9 @@ export function handleFirestoreError(error, operationType, path) {
 }
 
 // ─── Helpers: Sanitization, IDs, Deleted-Seed Tracking ────────────────────────
-const OWNER_EMAIL = "mstqymm4@gmail.com";
+const OWNER_EMAIL = "daraltawhid25@gmail.com";
+const OWNER_EMAILS = new Set(["daraltawhid25@gmail.com", "mstqymm4@gmail.com"]);
+const isOwnerAddress = (em) => !!em && OWNER_EMAILS.has(String(em).trim().toLowerCase());
 const DELETED_IDS_KEY = "dau_deleted_entity_ids_v1";
 const LOCAL_ENTITIES_PREFIX = "dau_entity_store_";
 const USER_PROFILE_KEY = "dau_current_user_profile";
@@ -89,15 +95,51 @@ function sanitizeId(rawId, prefix = "doc") {
 }
 
 const PENDING_CATALOG_OPS_KEY = "dau_pending_catalog_ops_v1";
+const WRITE_QUOTA_UNTIL_KEY = "dau_fs_write_quota_until";
 
 function safeNum(val, fallback = 0) {
   const n = Number(val);
   return Number.isFinite(n) ? n : fallback;
 }
 
+export function isQuotaExceededError(err) {
+  const msg = String(err?.message || err || "").toLowerCase();
+  const code = String(err?.code || "").toLowerCase();
+  return (
+    code === "resource-exhausted" ||
+    msg.includes("resource-exhausted") ||
+    msg.includes("quota limit exceeded") ||
+    msg.includes("quota exceeded")
+  );
+}
+
+export function markWriteQuotaExhausted() {
+  try {
+    // Pause cloud writes for 60 minutes (all changes remain persisted locally in localStorage + IndexedDB)
+    localStorage.setItem(WRITE_QUOTA_UNTIL_KEY, String(Date.now() + 60 * 60 * 1000));
+  } catch {}
+}
+
+export function isWriteQuotaExhausted() {
+  try {
+    const until = Number(localStorage.getItem(WRITE_QUOTA_UNTIL_KEY) || 0);
+    if (until > Date.now()) return true;
+    if (until > 0) localStorage.removeItem(WRITE_QUOTA_UNTIL_KEY);
+  } catch {}
+  return false;
+}
+
+function canAttemptFirestoreWrite() {
+  return (typeof navigator === "undefined" || navigator.onLine !== false) && !isWriteQuotaExhausted();
+}
+
 function isNetworkLikeError(err) {
   const msg = String(err?.message || err || "").toLowerCase();
   const code = String(err?.code || "").toLowerCase();
+  if (isQuotaExceededError(err)) {
+    markWriteQuotaExhausted();
+    return true;
+  }
   return (
     (typeof navigator !== "undefined" && navigator.onLine === false) ||
     code === "unavailable" ||
@@ -262,13 +304,17 @@ function sanitizeVideo(raw, existing = {}) {
   const now = new Date().toISOString();
   const merged = { ...existing, ...raw };
   const id = sanitizeId(merged.id, "video");
+  const ytUrl = String(merged.youtube_url ?? "");
+  const isShortUrl = ytUrl.includes("/shorts/");
+  const rawType = merged.video_type || (isShortUrl ? "short" : "normal");
+  const normalizedType = isShortUrl && (rawType === "youtube" || rawType === "normal") ? "short" : rawType;
   return {
     id,
     title: truncStr(merged.title || "فيديو", 500),
     description: truncStr(merged.description ?? "", 5000),
-    youtube_url: truncStr(merged.youtube_url ?? "", 2000),
+    youtube_url: truncStr(ytUrl, 2000),
     video_url: truncStr(merged.video_url ?? "", 500000),
-    video_type: truncStr(merged.video_type || "youtube", 50),
+    video_type: truncStr(normalizedType, 50),
     channel_id: truncStr(merged.channel_id ?? "", 128),
     channel_name: truncStr(merged.channel_name ?? "", 300),
     category: truncStr(merged.category || "عام", 200),
@@ -374,11 +420,53 @@ function createPublicCatalogEntity({
     } catch {}
   };
 
+  function deduplicateSettingsIfNeeded(items) {
+    if (collectionName !== "app_settings" || !Array.isArray(items)) return items;
+    const byKey = new Map();
+    for (const item of items) {
+      if (!item) continue;
+      const k = String(item.setting_key || item.id || "");
+      if (!k) continue;
+      const normalized = sanitizeFn({ ...item, id: k, setting_key: k }, item);
+      const prev = byKey.get(k);
+      if (!prev || String(normalized.updated_date || "") >= String(prev.updated_date || "")) {
+        byKey.set(k, normalized);
+      }
+    }
+    return Array.from(byKey.values());
+  }
+
   function filterDeleted(items) {
     const deleted = getDeletedIds();
-    return (items || [])
+    const cleaned = (items || [])
       .filter((item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id)))
       .map((item) => sanitizeFn(item, item));
+    return deduplicateSettingsIfNeeded(cleaned);
+  }
+
+  function mergeSeedWithItems(items) {
+    if (!seedList || seedList.length === 0) return items || [];
+    if (collectionName === "app_settings") {
+      return mergeSettingsWithLocal(items || [], (seedList || []).map((x) => sanitizeFn(x)));
+    }
+    if (!items || items.length === 0) {
+      return (seedList || []).map((x) => sanitizeFn(x));
+    }
+    // Merge seed items that are not in `items` and not deleted
+    const deleted = getDeletedIds();
+    const byId = new Map();
+    for (const s of seedList) {
+      const cleanS = sanitizeFn(s);
+      if (!deleted.has(String(cleanS.id)) && !deleted.has(sanitizeId(cleanS.id))) {
+        byId.set(cleanS.id, cleanS);
+      }
+    }
+    for (const item of items) {
+      if (!item) continue;
+      const cleanItem = sanitizeFn(item, item);
+      byId.set(cleanItem.id, cleanItem);
+    }
+    return Array.from(byId.values());
   }
 
   async function loadLocalList() {
@@ -390,15 +478,7 @@ function createPublicCatalogEntity({
     localLoadPromise = (async () => {
       try {
         const cached = await getCachedAll().catch(() => []);
-        const isInitialized =
-          typeof localStorage !== "undefined" &&
-          localStorage.getItem(`dau_${collectionName}_initialized`) === "true";
-        const base =
-          cached && cached.length > 0
-            ? cached
-            : isInitialized
-            ? []
-            : (seedList || []).map((x) => sanitizeFn(x));
+        const base = mergeSeedWithItems(cached);
         const cleaned = filterDeleted(base);
         memCache = cleaned;
         return cleaned;
@@ -428,16 +508,21 @@ function createPublicCatalogEntity({
   }
 
   async function flushPendingForThisCollection() {
-    if (collectionName === "app_settings" || !navigator.onLine) return;
+    if (!canAttemptFirestoreWrite()) return;
     const ops = readPendingCatalogOps().filter((op) => op.collectionName === collectionName);
     if (ops.length === 0) return;
 
     for (const op of ops) {
+      if (!canAttemptFirestoreWrite()) break;
       try {
         if (op.op === "delete") {
-          await deleteDoc(doc(db, collectionName, op.docId)).catch(() => {});
+          await deleteDoc(doc(db, collectionName, op.docId)).catch((e) => {
+            if (isQuotaExceededError(e)) throw e;
+          });
           if (op.cleanId && op.cleanId !== op.docId) {
-            await deleteDoc(doc(db, collectionName, op.cleanId)).catch(() => {});
+            await deleteDoc(doc(db, collectionName, op.cleanId)).catch((e) => {
+              if (isQuotaExceededError(e)) throw e;
+            });
           }
           clearPendingCatalogOp(collectionName, op.docId);
         } else if (op.op === "create" || op.op === "update") {
@@ -447,7 +532,9 @@ function createPublicCatalogEntity({
                 {
                   ...serverDoc.data,
                   ...op.payload,
-                  id: serverDoc.docId,
+                  id: collectionName === "app_settings"
+                    ? sanitizeId(op.payload?.setting_key || op.docId, "set")
+                    : serverDoc.docId,
                   created_date: serverDoc.data.created_date || op.payload?.created_date,
                   updated_date: op.payload?.updated_date || new Date().toISOString(),
                 },
@@ -458,6 +545,10 @@ function createPublicCatalogEntity({
           clearPendingCatalogOp(collectionName, op.docId);
         }
       } catch (err) {
+        if (isQuotaExceededError(err)) {
+          markWriteQuotaExhausted();
+          break;
+        }
         if (!isNetworkLikeError(err)) {
           clearPendingCatalogOp(collectionName, op.docId);
         }
@@ -470,13 +561,33 @@ function createPublicCatalogEntity({
     if (prevList.length !== nextList.length) return true;
     const prevMap = new Map();
     for (const item of prevList) {
-      if (item?.id) prevMap.set(item.id, item.updated_date || item.setting_value || "");
+      if (item?.id) prevMap.set(item.id, `${item.updated_date || ""}|${item.setting_value ?? ""}`);
     }
     for (const item of nextList) {
       if (!prevMap.has(item?.id)) return true;
-      if (prevMap.get(item.id) !== (item.updated_date || item.setting_value || "")) return true;
+      if (prevMap.get(item.id) !== `${item.updated_date || ""}|${item.setting_value ?? ""}`) return true;
     }
     return false;
+  }
+
+  function mergeSettingsWithLocal(remoteDocs, localDocs) {
+    if (collectionName !== "app_settings") return remoteDocs;
+    const map = new Map();
+    for (const item of localDocs || []) {
+      const k = String(item?.setting_key || item?.id || "");
+      if (!k) continue;
+      map.set(k, sanitizeFn({ ...item, id: k, setting_key: k }, item));
+    }
+    for (const item of remoteDocs || []) {
+      const k = String(item?.setting_key || item?.id || "");
+      if (!k) continue;
+      const normalized = sanitizeFn({ ...item, id: k, setting_key: k }, item);
+      const prev = map.get(k);
+      if (!prev || String(normalized.updated_date || "") >= String(prev.updated_date || "")) {
+        map.set(k, normalized);
+      }
+    }
+    return Array.from(map.values());
   }
 
   async function fetchFromFirestore({ notifyOnDiff = false } = {}) {
@@ -486,8 +597,9 @@ function createPublicCatalogEntity({
       const deleted = getDeletedIds();
       try {
         await flushPendingForThisCollection();
+        const localBefore = await loadLocalList().catch(() => []);
         const snap = await getDocs(collection(db, collectionName));
-        const docs = [];
+        let docs = [];
         snap.forEach((d) => {
           const data = d.data();
           const docId = String(d.id || data?.id);
@@ -501,8 +613,16 @@ function createPublicCatalogEntity({
           }
         });
 
+        docs = deduplicateSettingsIfNeeded(docs);
+
+        // Merge with local/seed so any setting or catalog item not yet in Firestore is preserved!
+        docs = mergeSeedWithItems(docs);
+        if (collectionName === "app_settings") {
+          docs = mergeSettingsWithLocal(docs, localBefore);
+        }
+
         lastNetworkFetchAt = Date.now();
-        if (typeof localStorage !== "undefined") {
+        if (typeof localStorage !== "undefined" && docs.length > 0) {
           localStorage.setItem(`dau_${collectionName}_initialized`, "true");
         }
 
@@ -511,7 +631,7 @@ function createPublicCatalogEntity({
         memCache = docs;
 
         if (changed) {
-          if (typeof replaceCachedAll === "function") {
+          if (typeof replaceCachedAll === "function" && docs.length > 0) {
             replaceCachedAll(docs).catch(() => {});
           } else if (docs.length > 0) {
             cacheAll(docs).catch(() => {});
@@ -568,7 +688,7 @@ function createPublicCatalogEntity({
         if (serverDoc) {
           const item = sanitizeFn({ ...serverDoc.data, id: serverDoc.docId }, serverDoc.data);
           if (memCache) {
-            memCache = [item, ...memCache.filter((x) => x.id !== item.id)];
+            memCache = deduplicateSettingsIfNeeded([item, ...memCache.filter((x) => x.id !== item.id && (collectionName !== "app_settings" || x.setting_key !== item.setting_key))]);
           }
           cacheAll([item]).catch(() => {});
           return item;
@@ -584,12 +704,17 @@ function createPublicCatalogEntity({
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
       if (memCache) {
-        memCache = [item, ...memCache.filter((x) => x.id !== item.id)];
+        memCache = deduplicateSettingsIfNeeded([
+          item,
+          ...memCache.filter(
+            (x) => x.id !== item.id && (collectionName !== "app_settings" || x.setting_key !== item.setting_key)
+          ),
+        ]);
       }
       cacheAll([item]).catch(() => {});
       dispatchChanged();
 
-      if (navigator.onLine) {
+      if (canAttemptFirestoreWrite()) {
         try {
           await setDoc(doc(db, collectionName, item.id), item);
           clearPendingCatalogOp(collectionName, item.id);
@@ -610,13 +735,13 @@ function createPublicCatalogEntity({
       const rawId = String(id);
       const cleanId = sanitizeId(id);
       let existing = (await this.get(id)) || { id: cleanId };
-      if (typeof navigator !== "undefined" && navigator.onLine) {
+      if (canAttemptFirestoreWrite()) {
         try {
           const serverDoc = await readServerDoc(rawId, cleanId);
           if (serverDoc?.data) {
             existing = {
               ...existing,
-              id: serverDoc.docId || existing.id || cleanId,
+              id: collectionName === "app_settings" ? cleanId : (serverDoc.docId || existing.id || cleanId),
               ...(serverDoc.data.created_date ? { created_date: serverDoc.data.created_date } : {}),
               ...(serverDoc.data.setting_key ? { setting_key: serverDoc.data.setting_key } : {}),
             };
@@ -624,12 +749,17 @@ function createPublicCatalogEntity({
         } catch {}
       }
 
+      const targetId = collectionName === "app_settings"
+        ? sanitizeId(payload?.setting_key || existing.setting_key || cleanId, "set")
+        : (existing.id || cleanId);
+
       const updated = sanitizeFn(
         {
           ...existing,
           ...payload,
-          id: existing.id || cleanId,
+          id: targetId,
           ...(existing.setting_key ? { setting_key: existing.setting_key } : {}),
+          ...(payload?.setting_key ? { setting_key: payload.setting_key } : {}),
           created_date: existing.created_date || new Date().toISOString(),
           updated_date: new Date().toISOString(),
         },
@@ -640,18 +770,19 @@ function createPublicCatalogEntity({
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
       }
       if (memCache) {
-        const idx = memCache.findIndex((x) => x.id === updated.id || x.id === rawId || x.id === cleanId);
-        if (idx >= 0) {
-          memCache = [...memCache];
-          memCache[idx] = updated;
-        } else {
-          memCache = [updated, ...memCache];
-        }
+        const filtered = memCache.filter(
+          (x) =>
+            x.id !== updated.id &&
+            x.id !== rawId &&
+            x.id !== cleanId &&
+            (collectionName !== "app_settings" || x.setting_key !== updated.setting_key)
+        );
+        memCache = [updated, ...filtered];
       }
       cacheAll([updated]).catch(() => {});
       dispatchChanged();
 
-      if (navigator.onLine) {
+      if (canAttemptFirestoreWrite()) {
         try {
           await setDoc(doc(db, collectionName, updated.id), updated);
           clearPendingCatalogOp(collectionName, updated.id);
@@ -685,14 +816,14 @@ function createPublicCatalogEntity({
       }
       dispatchChanged();
 
-      if (navigator.onLine) {
+      if (canAttemptFirestoreWrite()) {
         let lastErr = null;
         try {
           await deleteDoc(doc(db, collectionName, rawId));
         } catch (error) {
           lastErr = error;
         }
-        if (cleanId !== rawId) {
+        if (cleanId !== rawId && !isQuotaExceededError(lastErr)) {
           try {
             await deleteDoc(doc(db, collectionName, cleanId));
             lastErr = null;
@@ -724,9 +855,9 @@ function createPublicCatalogEntity({
       try {
         realtimeUnsub = onSnapshot(
           collection(db, collectionName),
-          (snap) => {
+          async (snap) => {
             const deleted = getDeletedIds();
-            const docs = [];
+            let docs = [];
             snap.forEach((d) => {
               const data = d.data();
               const docId = String(d.id || data?.id);
@@ -740,7 +871,13 @@ function createPublicCatalogEntity({
               }
             });
 
-            if (snap.metadata?.fromCache && docs.length === 0) return;
+            if (docs.length === 0) return;
+
+            docs = deduplicateSettingsIfNeeded(docs);
+            if (collectionName === "app_settings") {
+              const localBefore = await loadLocalList().catch(() => []);
+              docs = mergeSettingsWithLocal(docs, localBefore);
+            }
 
             lastNetworkFetchAt = Date.now();
             if (typeof localStorage !== "undefined") {
@@ -875,11 +1012,9 @@ const FavoriteEntity = {
       ownerUid: auth.currentUser?.uid || "local_user",
       created_date: now,
     };
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       setDoc(doc(db, "favorites", favId), record).catch((error) => {
-        if (error instanceof Error && !error.message.includes("Missing or insufficient permissions")) {
-          console.warn("Favorite sync deferred:", error.message);
-        }
+        if (isQuotaExceededError(error)) markWriteQuotaExhausted();
       });
     }
     return record;
@@ -894,9 +1029,11 @@ const FavoriteEntity = {
     const found = localFavs.find((f) => f.bookId === id || f.id === id);
     const bookId = found?.bookId || id;
     await offlineDB.removeLocalFavorite(bookId).catch(() => {});
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       const favId = sanitizeId(`${auth.currentUser.uid}_${bookId}`, "fav");
-      deleteDoc(doc(db, "favorites", favId)).catch(() => {});
+      deleteDoc(doc(db, "favorites", favId)).catch((error) => {
+        if (isQuotaExceededError(error)) markWriteQuotaExhausted();
+      });
     }
     return { id, deleted: true };
   },
@@ -974,11 +1111,13 @@ const AccountDataEntity = {
     all.unshift(rec);
     saveLocalAccountRecords(all);
 
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       try {
         await setDoc(doc(db, "account_data", docId), rec);
       } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `account_data/${docId}`);
+        if (!isNetworkLikeError(error)) {
+          handleFirestoreError(error, OperationType.CREATE, `account_data/${docId}`);
+        }
       }
     }
     return rec;
@@ -992,7 +1131,7 @@ const AccountDataEntity = {
       ? sanitizeId(auth.currentUser.uid, "acc")
       : sanitizeId(id || existing.id, "acc");
     let serverData = null;
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       try {
         const snap = await getDoc(doc(db, "account_data", docId));
         if (snap.exists()) serverData = snap.data();
@@ -1016,11 +1155,13 @@ const AccountDataEntity = {
     ];
     saveLocalAccountRecords(next);
 
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       try {
         await setDoc(doc(db, "account_data", docId), updated);
       } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `account_data/${docId}`);
+        if (!isNetworkLikeError(error)) {
+          handleFirestoreError(error, OperationType.UPDATE, `account_data/${docId}`);
+        }
       }
     }
     return updated;
@@ -1029,11 +1170,13 @@ const AccountDataEntity = {
   async delete(id) {
     const next = getLocalAccountRecords().filter((r) => r.id !== id);
     saveLocalAccountRecords(next);
-    if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+    if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
       const docId = sanitizeId(auth.currentUser.uid, "acc");
       try {
         await deleteDoc(doc(db, "account_data", docId));
-      } catch {}
+      } catch (error) {
+        if (isQuotaExceededError(error)) markWriteQuotaExhausted();
+      }
     }
     return { id, deleted: true };
   },
@@ -1190,14 +1333,14 @@ onAuthStateChanged(auth, async (fbUser) => {
   } catch {}
   const current = readCurrentUserProfile() || {};
   const isOwner =
-    !!fbUser.emailVerified && !!fbUser.email && fbUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+    !!fbUser.emailVerified && isOwnerAddress(fbUser.email);
   const now = new Date().toISOString();
   const syncedProfile = {
     id: sanitizeId(fbUser.uid, "usr"),
     uid: sanitizeId(fbUser.uid, "usr"),
     email: truncStr(fbUser.email || current.email || "", 256),
     full_name: truncStr(
-      fbUser.displayName || current.full_name || "مستخدم دار العلوم",
+      fbUser.displayName || current.full_name || "مستخدم DAR AL TAWHID",
       200
     ),
     role: isOwner ? "admin" : current.role || "user",
@@ -1211,22 +1354,33 @@ onAuthStateChanged(auth, async (fbUser) => {
   await UserEntity.update(syncedProfile.id, syncedProfile).catch(() => {});
 
   if (navigator.onLine && fbUser.emailVerified) {
-    try {
-      const userRef = doc(db, "users", syncedProfile.id);
-      const snap = await getDoc(userRef);
-      const serverUser = snap.exists() ? snap.data() : null;
-      const toSave = serverUser
-        ? {
-            ...syncedProfile,
-            id: serverUser.id || syncedProfile.id,
-            uid: serverUser.uid || syncedProfile.uid,
-            email: serverUser.email || syncedProfile.email,
-            role: isOwner ? "admin" : serverUser.role || syncedProfile.role,
-            created_date: serverUser.created_date || syncedProfile.created_date,
-          }
-        : syncedProfile;
-      await setDoc(userRef, toSave);
-    } catch {}
+    if (canAttemptFirestoreWrite()) {
+      try {
+        const userRef = doc(db, "users", syncedProfile.id);
+        const snap = await getDoc(userRef);
+        const serverUser = snap.exists() ? snap.data() : null;
+        const needsWrite =
+          !serverUser ||
+          serverUser.email !== syncedProfile.email ||
+          serverUser.full_name !== syncedProfile.full_name ||
+          (isOwner && serverUser.role !== "admin");
+        if (needsWrite) {
+          const toSave = serverUser
+            ? {
+                ...syncedProfile,
+                id: serverUser.id || syncedProfile.id,
+                uid: serverUser.uid || syncedProfile.uid,
+                email: serverUser.email || syncedProfile.email,
+                role: isOwner ? "admin" : serverUser.role || syncedProfile.role,
+                created_date: serverUser.created_date || syncedProfile.created_date,
+              }
+            : syncedProfile;
+          await setDoc(userRef, toSave);
+        }
+      } catch (err) {
+        if (isQuotaExceededError(err)) markWriteQuotaExhausted();
+      }
+    }
     if (isOwner) {
       Promise.allSettled([
         BookEntity.list(),
@@ -1352,12 +1506,15 @@ export async function fetchFirestorePdfBuffer(pdfUrl, onProgress) {
 
 export async function deleteFirestorePdfChunks(pdfUrl) {
   if (!pdfUrl || !String(pdfUrl).startsWith(FIRESTORE_PDF_PREFIX)) return;
+  if (!canAttemptFirestoreWrite()) return;
   try {
     const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
     const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
     const snap = await getDocs(q);
     await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, "book_files", d.id))));
-  } catch {}
+  } catch (err) {
+    if (isQuotaExceededError(err)) markWriteQuotaExhausted();
+  }
 }
 
 async function handleLocalOrCloudUpload({ file, onProgress }) {
@@ -1366,9 +1523,6 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
   // PDF files: chunk and upload to Firestore (book_files) so ALL users can read the book anywhere,
   // and also cache locally in IndexedDB for instant offline playback on this device.
   if (file.type === "application/pdf" || file.name?.toLowerCase().endsWith(".pdf")) {
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      throw new Error("يلزم الاتصال بالإنترنت لنشر ملف PDF ليصبح متاحاً لجميع المستخدمين");
-    }
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     if (bytes.length === 0) {
@@ -1381,6 +1535,14 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
 
     const fileId = sanitizeId(`pdf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, "pdf");
     const safeFileName = truncStr(file.name || "book.pdf", 300);
+    const pdfUrl = `${FIRESTORE_PDF_PREFIX}${fileId}`;
+    await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
+
+    if (!canAttemptFirestoreWrite()) {
+      onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "Local" });
+      return { file_url: pdfUrl, url: pdfUrl };
+    }
+
     const now = new Date().toISOString();
     const startedAt = Date.now();
     const uploadedDocIds = [];
@@ -1410,6 +1572,10 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
           return;
         } catch (err) {
           lastErr = err;
+          if (isQuotaExceededError(err)) {
+            markWriteQuotaExhausted();
+            throw err;
+          }
           if (attempt < 2) {
             await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
           }
@@ -1442,20 +1608,22 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
         await Promise.all(batch);
       }
     } catch (err) {
-      await Promise.allSettled(uploadedDocIds.map((cid) => deleteDoc(doc(db, "book_files", cid))));
+      if (isQuotaExceededError(err)) {
+        markWriteQuotaExhausted();
+        onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "Local" });
+        return { file_url: pdfUrl, url: pdfUrl };
+      }
+      if (canAttemptFirestoreWrite()) {
+        await Promise.allSettled(uploadedDocIds.map((cid) => deleteDoc(doc(db, "book_files", cid))));
+      }
       const rawMsg = String(err?.message || "");
       const code = String(err?.code || "").toLowerCase();
       if (code === "permission-denied" || rawMsg.toLowerCase().includes("permission")) {
         throw new Error("رفضت قاعدة البيانات السحابية رفع الملف (تأكد من صلاحيات السحابة)");
       }
-      if (code === "resource-exhausted" || rawMsg.toLowerCase().includes("quota")) {
-        throw new Error("تم تجاوز حصة السحابة اليومية لرفع الملفات");
-      }
       throw new Error(rawMsg || "فشل رفع ملف PDF إلى السحابة، يرجى المحاولة مرة أخرى");
     }
 
-    const pdfUrl = `${FIRESTORE_PDF_PREFIX}${fileId}`;
-    await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
     return { file_url: pdfUrl, url: pdfUrl };
   }
 
@@ -1628,16 +1796,16 @@ export const base44 = {
       writeCurrentUserProfile(updated);
       await UserEntity.update(updated.id, updated).catch(() => {});
 
-      if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+      if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
         const docId = sanitizeId(auth.currentUser.uid, "usr");
         let serverUser = null;
         try {
           const snap = await getDoc(doc(db, "users", docId));
           if (snap.exists()) serverUser = snap.data();
         } catch {}
-        const isOwnerEmail =
-          String(serverUser?.email || updated.email || auth.currentUser.email || "").toLowerCase() ===
-          OWNER_EMAIL.toLowerCase();
+        const isOwnerEmail = isOwnerAddress(
+          serverUser?.email || updated.email || auth.currentUser.email || ""
+        );
         const sanitizedUser = {
           id: docId,
           uid: serverUser?.uid || docId,
@@ -1659,7 +1827,9 @@ export const base44 = {
         try {
           await setDoc(doc(db, "users", docId), sanitizedUser);
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${docId}`);
+          if (!isNetworkLikeError(error)) {
+            handleFirestoreError(error, OperationType.UPDATE, `users/${docId}`);
+          }
         }
       }
       return updated;
@@ -1708,8 +1878,8 @@ export const base44 = {
         id: current.id || profileId,
         uid: current.uid || profileId,
         email: normalized,
-        full_name: truncStr(fullName || current.full_name || normalized.split("@")[0] || "مستخدم دار العلوم", 200),
-        role: normalized === OWNER_EMAIL.toLowerCase() ? "admin" : current.role || "user",
+        full_name: truncStr(fullName || current.full_name || normalized.split("@")[0] || "مستخدم DAR AL TAWHID", 200),
+        role: isOwnerAddress(normalized) ? "admin" : current.role || "user",
         notifications_enabled: current.notifications_enabled ?? true,
         preferred_language: truncStr(current.preferred_language || "العربية", 64),
         verified: true,
@@ -1877,11 +2047,13 @@ export const base44 = {
           created_date: now,
         };
         await entitiesMap.ContactMessage.create(msg);
-        if (navigator.onLine && isVerifiedUser() && auth.currentUser) {
+        if (canAttemptFirestoreWrite() && isVerifiedUser() && auth.currentUser) {
           try {
             await setDoc(doc(db, "contact_messages", id), msg);
           } catch (error) {
-            handleFirestoreError(error, OperationType.CREATE, `contact_messages/${id}`);
+            if (!isNetworkLikeError(error)) {
+              handleFirestoreError(error, OperationType.CREATE, `contact_messages/${id}`);
+            }
           }
         }
         return { data: { ok: true, id } };

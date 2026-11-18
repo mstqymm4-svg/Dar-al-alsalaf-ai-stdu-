@@ -31,7 +31,8 @@ export function isCapacitorNativeRuntime() {
   return false;
 }
 
-const envBase = (/** @type {any} */ (import.meta).env?.VITE_API_BASE_URL || "").trim();
+const rawEnvBase = (/** @type {any} */ (import.meta).env?.VITE_API_BASE_URL || "").trim();
+const envBase = rawEnvBase === "/" ? "" : rawEnvBase;
 const resolvedBase = envBase || (isCapacitorNativeRuntime() ? DEFAULT_REMOTE_API : "");
 
 export const API_BASE = resolvedBase.replace(/\/+$/, "");

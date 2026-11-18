@@ -44,9 +44,9 @@ const ipRequests = new Map<string, number[]>();
 
 // Constants
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
-const RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds
+const RESEND_COOLDOWN_MS = 15 * 1000; // 15 seconds
 const MAX_ATTEMPTS = 5;
-const MAX_IP_REQUESTS_PER_WINDOW = 10;
+const MAX_IP_REQUESTS_PER_WINDOW = 50;
 const IP_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 // Clean up expired records every 5 minutes
@@ -95,11 +95,24 @@ export function checkIpRateLimit(ip: string): boolean {
   return true;
 }
 
-// Configure single Gmail SMTP transporter using ONLY process.env.SMTP_USER and process.env.SMTP_PASS
+const OFFICIAL_EMAIL = 'daraltawhid25@gmail.com';
+const LEGACY_EMAILS = new Set(['daraluloom258@gmail.com']);
+
+function normalizeSmtpEmail(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || LEGACY_EMAILS.has(trimmed.toLowerCase())) {
+    return OFFICIAL_EMAIL;
+  }
+  return trimmed;
+}
+
+// Configure single Gmail SMTP transporter using daraltawhid25@gmail.com and process.env.SMTP_PASS
 function getSmtpConfig() {
   loadEnv();
-  const smtpUser = (process.env.SMTP_USER || '').trim();
+  const smtpUser = normalizeSmtpEmail(process.env.SMTP_USER);
   const smtpPass = (process.env.SMTP_PASS || '').replace(/\s+/g, '').trim();
+  process.env.SMTP_USER = smtpUser;
+  process.env.CONTACT_EMAIL = normalizeSmtpEmail(process.env.CONTACT_EMAIL);
   return { smtpUser, smtpPass };
 }
 
@@ -145,92 +158,37 @@ export function logSmtpStatusOnStart() {
   }
 }
 
-// Generate styled English HTML email template with premium modern design
+// Clean English HTML email template designed for high deliverability to Primary Inbox
 function createEmailTemplate(otp: string): string {
-  const digits = (otp || '').split('');
-  const digitCells = digits
-    .map(
-      (d) =>
-        `<td style="width:48px;height:60px;background:#f0fdf4;border:2px solid #059669;border-radius:14px;font-size:32px;font-weight:800;color:#065f46;text-align:center;font-family:'Segoe UI',Roboto,Helvetica,Arial,monospace;line-height:60px;box-shadow:0 3px 8px rgba(5,150,105,0.12);letter-spacing:1px;">${d}</td>`
-    )
-    .join('');
-
   return `<!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
-  <title>Dar Al Uloom — Verification Code</title>
+  <title>DAR AL TAWHID</title>
 </head>
-<body style="margin:0;padding:32px 14px;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;direction:ltr;text-align:left;">
-  
-  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 14px 40px rgba(0,0,0,0.08);border:1px solid #e5e7eb;">
-    
-    <!-- Top Header Banner -->
-    <div style="background:linear-gradient(135deg,#064e3b 0%,#047857 55%,#0d9488 100%);padding:38px 28px;text-align:center;">
-      <div style="display:inline-block;padding:5px 16px;background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.3);border-radius:999px;margin-bottom:14px;">
-        <span style="color:#d1fae5;font-size:12px;font-weight:700;letter-spacing:0.5px;">دار العلوم • DAR AL ULOOM</span>
+<body style="margin:0;padding:24px 12px;background-color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2937;direction:ltr;text-align:left;">
+  <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+    <div style="background:#065f46;padding:24px 20px;text-align:center;">
+      <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:0.5px;">DAR AL TAWHID</h1>
+      <p style="color:#d1fae5;margin:6px 0 0;font-size:13px;">Islamic Knowledge &amp; Digital Library</p>
+    </div>
+    <div style="padding:28px 24px;text-align:center;">
+      <p style="margin:0 0 16px;font-size:15px;color:#374151;line-height:1.6;">
+        Assalamu Alaikum,<br>
+        Welcome to <strong>DAR AL TAWHID</strong>. Here is your 6-digit code:
+      </p>
+      <div dir="ltr" style="font-size:34px;font-weight:800;letter-spacing:8px;color:#065f46;background:#f0fdf4;border:2px solid #059669;border-radius:12px;padding:16px 12px;margin:18px auto;max-width:260px;font-family:'Segoe UI',Roboto,Helvetica,Arial,monospace;">
+        ${otp}
       </div>
-      <h1 style="color:#ffffff;margin:0;font-size:32px;font-weight:900;letter-spacing:0.5px;">دار العلوم</h1>
-      <p style="color:#a7f3d0;margin:8px 0 0;font-size:14px;font-weight:600;">نور العلم والمعرفة</p>
-    </div>
-
-    <!-- Gold Accent Divider -->
-    <div style="height:4px;background:linear-gradient(90deg,#d97706,#f59e0b,#fbbf24,#f59e0b,#d97706);"></div>
-
-    <!-- Main Content Card -->
-    <div style="padding:36px 30px;text-align:center;">
-      
-      <h2 style="margin:0 0 14px;color:#064e3b;font-size:22px;font-weight:800;letter-spacing:-0.2px;">رمز تسجيل الدخول والتحقق — دار العلوم</h2>
-      
-      <p style="margin:0 0 24px;font-size:15px;color:#4b5563;line-height:1.7;">
-        مرحباً بك في <strong>دار العلوم</strong>،<br>
-        استخدم رمز التحقق المكوّن من 6 أرقام أدناه لتسجيل الدخول وتأكيد حسابك:
-      </p>
-
-      <!-- 6-Digit Verification Code Table -->
-      <table align="center" border="0" cellpadding="0" cellspacing="8" dir="ltr" style="margin:20px auto 28px auto;">
-        <tr>
-          ${digitCells}
-        </tr>
-      </table>
-
-      <!-- Security & Expiration Info Box -->
-      <div style="background-color:#f0fdf4;border-radius:16px;padding:18px 20px;border:1px solid #bbf7d0;text-align:left;margin-top:20px;">
-        <div style="display:flex;align-items:flex-start;margin-bottom:10px;">
-          <p style="margin:0;font-size:13px;color:#166534;line-height:1.6;">
-            ⏱ <strong>Expires in:</strong> This code is valid for <strong>10 minutes</strong> only from the time requested.
-          </p>
-        </div>
-        <div>
-          <p style="margin:0;font-size:13px;color:#991b1b;line-height:1.6;">
-            🔒 <strong>Security Notice:</strong> Never share this code with anyone. Dar Al Uloom will never ask you for this code.
-          </p>
-        </div>
-      </div>
-
-      <p style="margin:28px 0 0;font-size:13px;color:#9ca3af;line-height:1.6;">
-        If you did not request this verification code, you can safely ignore this email.
-      </p>
-
-    </div>
-
-    <!-- Email Footer -->
-    <div style="background-color:#fafafa;padding:22px 28px;text-align:center;border-top:1px solid #f1f5f9;">
-      <p style="margin:0 0 6px;font-size:14px;font-weight:700;color:#064e3b;">
-        Dar Al Uloom
-      </p>
-      <p style="margin:0 0 4px;font-size:12px;color:#6b7280;">
-        Islamic Knowledge &amp; Research Platform
-      </p>
-      <p style="margin:0;font-size:11px;color:#9ca3af;">
-        &copy; 2026 Dar Al Uloom. All rights reserved.
+      <p style="margin:16px 0 0;font-size:13px;color:#6b7280;line-height:1.6;">
+        This code is valid for <strong>10 minutes</strong>.
       </p>
     </div>
-
+    <div style="background-color:#f9fafb;padding:16px 20px;text-align:center;border-top:1px solid #f3f4f6;font-size:12px;color:#6b7280;">
+      <strong>DAR AL TAWHID</strong> &bull; daraltawhid25@gmail.com
+    </div>
   </div>
-
 </body>
 </html>`;
 }
@@ -264,7 +222,7 @@ export async function sendOtp(email: string, clientIp: string) {
     };
   }
 
-  // 3. Resend Cooldown Check (60 seconds)
+  // 3. Resend Cooldown Check (15 seconds)
   const existingRecord = otpStore.get(normalizedEmail);
   const now = Date.now();
   if (existingRecord) {
@@ -310,29 +268,29 @@ export async function sendOtp(email: string, clientIp: string) {
 
   try {
     await transporter.sendMail({
-      from: `"دار العلوم" <${process.env.SMTP_USER}>`,
+      from: `"DAR AL TAWHID" <${smtpUser}>`,
       to: normalizedEmail,
-      subject: `دار العلوم — رمز تسجيل الدخول والتحقق: ${otpCode}`,
+      subject: `DAR AL TAWHID - Code: ${otpCode}`,
       text: [
-        'مرحباً بك في دار العلوم،',
+        'Assalamu Alaikum,',
         '',
-        `رمز تسجيل الدخول والتحقق الخاص بك في تطبيق دار العلوم هو: ${otpCode}`,
+        `Welcome to DAR AL TAWHID. Here is your 6-digit code: ${otpCode}`,
         '',
-        'صلاحية هذا الرمز 10 دقائق فقط.',
-        'تنبيه أمني: لا تشارك هذا الرمز مع أي شخص.',
+        'This code is valid for 10 minutes.',
         '',
-        '© 2026 دار العلوم. جميع الحقوق محفوظة.',
+        'DAR AL TAWHID',
+        'daraltawhid25@gmail.com',
       ].join('\n'),
       html: createEmailTemplate(otpCode),
     });
 
-    console.log(`[OTP Service] Email successfully sent from ${process.env.SMTP_USER} to ${normalizedEmail}`);
+    console.log(`[OTP Service] Email successfully sent from ${smtpUser} to ${normalizedEmail}`);
     return {
       status: 200,
       data: {
         success: true,
-        sender: process.env.SMTP_USER,
-        message: `تم إرسال رمز التحقق بنجاح من ${process.env.SMTP_USER}`,
+        sender: smtpUser,
+        message: `تم إرسال رمز التحقق بنجاح من ${smtpUser}`,
       },
     };
   } catch (err: any) {
@@ -341,7 +299,7 @@ export async function sendOtp(email: string, clientIp: string) {
       status: 500,
       data: {
         success: false,
-        error: `تعذر إرسال رمز التحقق من ${process.env.SMTP_USER}. تأكد من صحة SMTP_USER و SMTP_PASS.`,
+        error: `تعذر إرسال رمز التحقق من ${smtpUser}. تأكد من صحة SMTP_USER و SMTP_PASS.`,
         details: err?.message,
       },
     };
@@ -449,7 +407,7 @@ export async function verifyOtp(email: string, otp: string) {
 }
 
 /**
- * Sends user contact form submissions directly to Dar Al Uloom official email
+ * Sends user contact form submissions directly to DAR AL TAWHID official email
  */
 export interface ContactMessagePayload {
   name: string;
@@ -461,7 +419,7 @@ export interface ContactMessagePayload {
 export async function sendContactEmail(payload: ContactMessagePayload) {
   const { name, email, message, subject } = payload;
   const normalizedEmail = (email || '').toLowerCase().trim();
-  const senderName = (name || 'مستخدم دار العلوم').trim();
+  const senderName = (name || 'مستخدم DAR AL TAWHID').trim();
   const bodyText = (message || '').trim();
 
   if (!bodyText || !normalizedEmail) {
@@ -482,22 +440,22 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
     };
   }
 
-  const officialRecipient = (process.env.CONTACT_EMAIL || smtpUser).trim();
+  const officialRecipient = normalizeSmtpEmail(process.env.CONTACT_EMAIL || smtpUser);
 
   try {
-    const mailSubject = subject || `[دار العلوم — رسالة تواصل جديدة]: ${senderName}`;
+    const mailSubject = subject || `[DAR AL TAWHID — رسالة تواصل جديدة]: ${senderName}`;
 
     await transporter.sendMail({
-      from: `"دار العلوم" <${process.env.SMTP_USER}>`,
+      from: `"DAR AL TAWHID" <${smtpUser}>`,
       replyTo: normalizedEmail,
       to: officialRecipient,
       subject: mailSubject,
-      text: `رسالة تواصل جديدة من تطبيق دار العلوم:\n\nالاسم: ${senderName}\nالبريد: ${normalizedEmail}\n\nنص الرسالة:\n${bodyText}\n\n---\nتطبيق دار العلوم`,
+      text: `رسالة تواصل جديدة من تطبيق DAR AL TAWHID:\n\nالاسم: ${senderName}\nالبريد: ${normalizedEmail}\n\nنص الرسالة:\n${bodyText}\n\n---\nتطبيق DAR AL TAWHID`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; direction: rtl; text-align: right; background-color: #f9fafb; padding: 24px;">
           <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e5e7eb; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
             <div style="background: linear-gradient(135deg, #064e3b, #047857); padding: 24px; color: #ffffff; text-align: center;">
-              <h2 style="margin: 0; font-size: 20px; font-weight: 800;">رسالة تواصل جديدة — دار العلوم</h2>
+              <h2 style="margin: 0; font-size: 20px; font-weight: 800;">رسالة تواصل جديدة — DAR AL TAWHID</h2>
               <p style="margin: 6px 0 0; font-size: 13px; opacity: 0.9;">وصلت رسالة جديدة من أحد مستخدمي التطبيق عبر صفحة تواصل معنا</p>
             </div>
             <div style="padding: 24px;">
@@ -520,11 +478,11 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
                 <p style="margin: 0; font-size: 15px; color: #1f2937; line-height: 1.8; white-space: pre-wrap;">${bodyText}</p>
               </div>
               <div style="margin-top: 24px; text-align: center;">
-                <a href="mailto:${normalizedEmail}?subject=رد:%20دار%20العلوم" style="display: inline-block; background: #047857; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: bold;">الرد مباشرة على المرسل</a>
+                <a href="mailto:${normalizedEmail}?subject=Re:%20DAR%20AL%20TAWHID" style="display: inline-block; background: #047857; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: bold;">الرد مباشرة على المرسل</a>
               </div>
             </div>
             <div style="background: #f9fafb; padding: 14px 24px; text-align: center; border-top: 1px solid #f3f4f6; font-size: 12px; color: #9ca3af;">
-              تطبيق دار العلوم — منصة المعرفة والبحث الإسلامي
+              تطبيق DAR AL TAWHID — منصة المعرفة والبحث الإسلامي
             </div>
           </div>
         </div>
@@ -536,7 +494,7 @@ export async function sendContactEmail(payload: ContactMessagePayload) {
       status: 200,
       data: {
         success: true,
-        message: 'تم إرسال رسالتك بنجاح إلى إدارة تطبيق دار العلوم ✓',
+        message: 'تم إرسال رسالتك بنجاح إلى إدارة تطبيق DAR AL TAWHID ✓',
       },
     };
   } catch (err: any) {

@@ -125,7 +125,7 @@ export default function LogoLoader({
           <span className="dalx-brand-dot" />
 
           <span className="dalx-brand-mini-text">
-            DAR AL ULOOM
+            DAR AL TAWHID
           </span>
 
         </div>
@@ -166,7 +166,7 @@ export default function LogoLoader({
 
             <img
               src={LOGO_URL}
-              alt="Dar Al Uloom"
+              alt="DAR AL TAWHID"
               className="dalx-logo"
               draggable="false"
             />
@@ -187,7 +187,7 @@ export default function LogoLoader({
           </div>
 
           <h1 className="dalx-title">
-            DAR AL ULOOM
+            DAR AL TAWHID
           </h1>
 
           <p className="dalx-description">

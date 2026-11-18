@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
@@ -8,7 +8,13 @@ const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
  * - Horizontal drag: scrub with a seek preview (committed on release)
  * - Vertical drag: left half adjusts screen brightness, right half adjusts volume
  */
-export function usePlayerGestures({ player, duration, getCurrentTime }) {
+export function usePlayerGestures({
+  player,
+  duration,
+  getCurrentTime,
+  onVolumeSync,
+  onSeekCommit,
+}) {
   const [seekPreview, setSeekPreview] = useState(null); // { time, delta }
   const [adjust, setAdjust] = useState(null); // { type: 'volume'|'brightness', value }
   const [ripple, setRipple] = useState(null); // { side, key }
@@ -17,7 +23,15 @@ export function usePlayerGestures({ player, duration, getCurrentTime }) {
   const touch = useRef(null);
   const lastTap = useRef({ t: 0, side: "" });
   const clearTimer = useRef(null);
+  const rippleTimer = useRef(null);
   const brightRef = useRef(1);
+
+  useEffect(() => {
+    return () => {
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+      if (rippleTimer.current) clearTimeout(rippleTimer.current);
+    };
+  }, []);
 
   const clearFeedback = useCallback(() => {
     if (clearTimer.current) clearTimeout(clearTimer.current);
@@ -27,61 +41,74 @@ export function usePlayerGestures({ player, duration, getCurrentTime }) {
     }, 600);
   }, []);
 
-  const onTouchStart = useCallback((e) => {
-    if (e.touches.length !== 1) return;
-    if (clearTimer.current) {
-      clearTimeout(clearTimer.current);
-      clearTimer.current = null;
-    }
-    let vol = 100;
-    try { vol = player?.getVolume?.() ?? 100; } catch {}
-    touch.current = {
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-      time: getCurrentTime() || 0,
-      volume: vol,
-      bright: brightRef.current,
-      mode: null,
-      target: null,
-      w: e.currentTarget.clientWidth || window.innerWidth,
-      h: e.currentTarget.clientHeight || window.innerHeight,
-    };
-  }, [player, getCurrentTime]);
-
-  const onTouchMove = useCallback((e) => {
-    const st = touch.current;
-    if (!st || e.touches.length !== 1) return;
-    const dx = e.touches[0].clientX - st.x;
-    const dy = e.touches[0].clientY - st.y;
-
-    if (!st.mode) {
-      if (Math.abs(dx) > 34 && Math.abs(dx) > Math.abs(dy)) st.mode = "seek";
-      else if (Math.abs(dy) > 34) st.mode = st.x < st.w / 2 ? "brightness" : "volume";
-    }
-    if (!st.mode) return;
-
-    if (st.mode === "seek") {
-      const ratio = clamp(dx / (st.w * 0.9), -1, 1);
-      const span = duration || 0;
-      st.target = clamp(st.time + ratio * span, 0, span || st.time);
-      setSeekPreview({ time: st.target, delta: st.target - st.time });
-      setAdjust(null);
-    } else if (st.mode === "brightness") {
-      const v = clamp(st.bright - dy / (st.h * 0.7), 0.25, 1);
-      brightRef.current = v;
-      setBrightness(v);
-      setAdjust({ type: "brightness", value: Math.round(v * 100) });
-      setSeekPreview(null);
-    } else {
-      const v = clamp(st.volume - (dy / (st.h * 0.6)) * 100, 0, 100);
+  const onTouchStart = useCallback(
+    (e) => {
+      if (e.touches.length !== 1) return;
+      if (clearTimer.current) {
+        clearTimeout(clearTimer.current);
+        clearTimer.current = null;
+      }
+      let vol = 100;
       try {
-        player?.setVolume?.(v);
-        player?.unMute?.();
+        vol = player?.getVolume?.() ?? 100;
       } catch {}
-      setAdjust({ type: "volume", value: Math.round(v) });
-      setSeekPreview(null);
-    }
-  }, [player, duration]);
+      touch.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        time: getCurrentTime() || 0,
+        volume: vol,
+        bright: brightRef.current,
+        mode: null,
+        target: null,
+        w: e.currentTarget.clientWidth || window.innerWidth,
+        h: e.currentTarget.clientHeight || window.innerHeight,
+      };
+    },
+    [player, getCurrentTime]
+  );
+
+  const onTouchMove = useCallback(
+    (e) => {
+      const st = touch.current;
+      if (!st || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - st.x;
+      const dy = e.touches[0].clientY - st.y;
+
+      if (!st.mode) {
+        if (Math.abs(dx) > 34 && Math.abs(dx) > Math.abs(dy)) st.mode = "seek";
+        else if (Math.abs(dy) > 34) st.mode = st.x < st.w / 2 ? "brightness" : "volume";
+      }
+      if (!st.mode) return;
+
+      if (st.mode === "seek") {
+        const ratio = clamp(dx / (st.w * 0.9), -1, 1);
+        const span = duration || 0;
+        st.target = clamp(st.time + ratio * span, 0, span || st.time);
+        setSeekPreview({ time: st.target, delta: st.target - st.time });
+        setAdjust(null);
+      } else if (st.mode === "brightness") {
+        const v = clamp(st.bright - dy / (st.h * 0.7), 0.25, 1);
+        brightRef.current = v;
+        setBrightness(v);
+        setAdjust({ type: "brightness", value: Math.round(v * 100) });
+        setSeekPreview(null);
+      } else {
+        const v = Math.round(clamp(st.volume - (dy / (st.h * 0.6)) * 100, 0, 100));
+        try {
+          player?.setVolume?.(v);
+          if (v === 0) {
+            player?.mute?.();
+          } else {
+            player?.unMute?.();
+          }
+        } catch {}
+        onVolumeSync?.(v, v === 0);
+        setAdjust({ type: "volume", value: v });
+        setSeekPreview(null);
+      }
+    },
+    [player, duration, onVolumeSync]
+  );
 
   const onTouchEnd = useCallback(() => {
     const st = touch.current;
@@ -89,7 +116,10 @@ export function usePlayerGestures({ player, duration, getCurrentTime }) {
     if (!st) return;
 
     if (st.mode === "seek" && st.target != null) {
-      try { player?.seekTo(st.target, true); } catch {}
+      try {
+        player?.seekTo(st.target, true);
+      } catch {}
+      onSeekCommit?.(st.target);
       clearFeedback();
       return;
     }
@@ -103,14 +133,27 @@ export function usePlayerGestures({ player, duration, getCurrentTime }) {
     const side = st.x < st.w / 2 ? "left" : "right";
     if (now - lastTap.current.t < 300 && lastTap.current.side === side) {
       lastTap.current = { t: 0, side: "" };
-      const target = clamp(getCurrentTime() + (side === "left" ? -10 : 10), 0, duration || 1e9);
-      try { player?.seekTo(target, true); } catch {}
+      const maxDur = duration > 0 ? duration : 1e9;
+      const target = clamp(getCurrentTime() + (side === "left" ? -10 : 10), 0, maxDur);
+      try {
+        player?.seekTo(target, true);
+      } catch {}
+      onSeekCommit?.(target);
       setRipple({ side, key: now });
-      setTimeout(() => setRipple(null), 550);
+      if (rippleTimer.current) clearTimeout(rippleTimer.current);
+      rippleTimer.current = setTimeout(() => setRipple(null), 550);
     } else {
       lastTap.current = { t: now, side };
     }
-  }, [player, duration, getCurrentTime, clearFeedback]);
+  }, [player, duration, getCurrentTime, clearFeedback, onSeekCommit]);
 
-  return { onTouchStart, onTouchMove, onTouchEnd, seekPreview, adjust, ripple, brightness };
+  return {
+    onTouchStart,
+    onTouchMove,
+    onTouchEnd,
+    seekPreview,
+    adjust,
+    ripple,
+    brightness,
+  };
 }

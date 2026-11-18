@@ -103,7 +103,7 @@ export default function EmailVerification({
 
       toast.success(t.resendSuccess || "تم إرسال رمز التحقق بنجاح");
       setStep("otp");
-      setCountdown(60);
+      setCountdown(15);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
     } catch {
@@ -146,7 +146,7 @@ export default function EmailVerification({
       }
 
       toast.success(t.resendSuccess || "تم إرسال رمز تحقق جديد بنجاح ✓");
-      setCountdown(60);
+      setCountdown(15);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
       if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();

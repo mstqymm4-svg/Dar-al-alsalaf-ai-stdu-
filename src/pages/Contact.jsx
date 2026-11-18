@@ -18,7 +18,7 @@ export default function Contact() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
 
-  const contactEmail = getSetting("contact_email") || "daraluloom258@gmail.com";
+  const contactEmail = getSetting("contact_email") || "daraltawhid25@gmail.com";
   const whatsappUrl = getSetting("whatsapp_url") || "";
   const contactPhone = getSetting("contact_phone") || "";
   const contactAddress = getSetting("contact_address") || "";
@@ -45,14 +45,14 @@ export default function Contact() {
           name: name.trim(),
           email: email.trim(),
           message: message.trim(),
-          subject: `[دار العلوم — تواصل]: ${name.trim()}`,
+          subject: `[DAR AL TAWHID — تواصل]: ${name.trim()}`,
         }),
       });
 
       const data = await response.json().catch(() => ({}));
 
       if (response.ok && data.success) {
-        toast.success(t.contactSent || "تم إرسال رسالتك بنجاح إلى بريد دار العلوم ✓");
+        toast.success(t.contactSent || "تم إرسال رسالتك بنجاح إلى بريد DAR AL TAWHID ✓");
         setName("");
         setEmail("");
         setMessage("");

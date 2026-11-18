@@ -265,7 +265,7 @@ function ChannelsTab() {
               <Input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="قناة دار العلوم"
+                placeholder="قناة DAR AL TAWHID"
                 className="h-9 text-sm"
               />
             </div>

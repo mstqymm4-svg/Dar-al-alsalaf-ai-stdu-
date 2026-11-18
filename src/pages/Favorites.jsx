@@ -9,7 +9,7 @@ import ShortsPlayerModal from "@/components/ShortsPlayerModal";
 import { SkeletonGrid } from "../components/Skeleton";
 import { Input } from "@/components/ui/input";
 import { useT } from "@/lib/i18n";
-import { getBooks, getVideos, getFavoriteIds, toggleFavorite } from "@/lib/offlineSync";
+import { getBooks, getVideos, getVideoChannels, getFavoriteIds, toggleFavorite } from "@/lib/offlineSync";
 import {
   getAccountEmail,
   getVideoFavIds,
@@ -26,6 +26,7 @@ export default function Favorites() {
   const [books, setBooks] = useState([]);
   const [favoriteIds, setFavoriteIds] = useState([]);
   const [videos, setVideos] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [videoFavIds, setVideoFavIds] = useState([]);
   const [tab, setTab] = useState("books");
   const [search, setSearch] = useState("");
@@ -36,12 +37,25 @@ export default function Favorites() {
   const [playingVideo, setPlayingVideo] = useState(null);
   const [playingShort, setPlayingShort] = useState(null);
 
+  const channelsById = useMemo(() => {
+    const map = {};
+    for (const ch of channels) {
+      if (ch?.id) map[ch.id] = ch;
+    }
+    return map;
+  }, [channels]);
+
   const loadFavorites = async () => {
     const u = await base44.auth.me().catch(() => null);
     setUser(u);
     const em = getAccountEmail(u) || "guest@local";
     setVideoFavIds(getVideoFavIds(em));
-    setVideos((await getVideos()) || []);
+    const [vids, chs] = await Promise.all([
+      getVideos().catch(() => []),
+      getVideoChannels().catch(() => []),
+    ]);
+    setVideos(vids || []);
+    setChannels(chs || []);
 
     const ids = await getFavoriteIds(em);
     setFavoriteIds(ids);
@@ -58,7 +72,7 @@ export default function Favorites() {
     loadFavorites();
   }, []);
 
-  useContentRefresh(["books", "videos"], loadFavorites);
+  useContentRefresh(["books", "videos", "channels"], loadFavorites);
 
   const handleToggleFavorite = async (bookId) => {
     const em = getAccountEmail(user) || "guest@local";
@@ -285,6 +299,7 @@ export default function Favorites() {
               <VideoCard
                 key={v.id}
                 video={v}
+                channel={channelsById[v.channel_id]}
                 isFavorite={true}
                 onToggleFavorite={handleToggleVideoFav}
                 onPlay={() => handlePlayVideo(v)}
@@ -332,15 +347,16 @@ export default function Favorites() {
         )}
 
         {/* Shorts Player Modal */}
-        <ShortsPlayerModal
-          initialVideo={playingShort}
-          shortsList={allShorts}
-          isOpen={Boolean(playingShort)}
-          onClose={() => setPlayingShort(null)}
-          onToggleFavorite={handleToggleVideoFav}
-          favorites={videoFavIds}
-          user={user}
-        />
+        {playingShort && (
+          <ShortsPlayerModal
+            initialVideo={playingShort}
+            shortsList={allShorts.length > 0 ? allShorts : [playingShort]}
+            channelsById={channelsById}
+            isOpen={Boolean(playingShort)}
+            onClose={() => setPlayingShort(null)}
+            user={user}
+          />
+        )}
       </div>
     </PullToRefresh>
   );

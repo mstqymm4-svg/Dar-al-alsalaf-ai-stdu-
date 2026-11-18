@@ -27,7 +27,7 @@ export default function PageTransitionLoader({ inline = false, exiting = false }
       </div>
 
       <div className="dau-text">
-        <p className="dau-title">Dar Al Uloom</p>
+        <p className="dau-title">DAR AL TAWHID</p>
         <p className="dau-tagline">Knowledge • Learning • Excellence</p>
         <p className="dau-status">Loading next page</p>
       </div>

@@ -11,54 +11,54 @@ import { entities } from "@/lib/dataSource";
 import { toast } from "sonner";
 import { TRANSLATIONS } from "@/lib/i18n";
 
-// ─── Default settings ─────────────────────────────────────────────────────────
+// ─── Default settings (initialized from the user's saved AppSettings export) ─
 export const DEFAULT_SETTINGS = {
-  app_name:          "المكتبة الدينية",
-  app_subtitle:      "نور العلم والمعرفة",
-  logo_url:          "https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/6482533e8_IMG_2785.png",
+  app_name:          "DAR AL TAWHID",
+  app_subtitle:      ".",
+  logo_url:          "https://base44.app/api/apps/69c8e483a69a0d215eee4ef7/files/mp/public/69c8e483a69a0d215eee4ef7/d46293c8d_C06AC024-1230-4B65-91B9-B30DDE077171.png",
   // Colors (HSL strings)
-  color_bg:          "",
-  color_fg:          "",
-  color_primary:     "",
-  color_secondary:   "",
-  color_accent:      "",
-  color_card:        "",
-  color_border:       "",
-  color_button:       "",
+  color_bg:          "210 40% 98%",
+  color_fg:          "222 47% 11%",
+  color_primary:     "194 70% 27%",
+  color_secondary:   "192 91% 36%",
+  color_accent:      "186 94% 82%",
+  color_card:        "0 0% 100%",
+  color_border:      "214 32% 91%",
+  color_button:      "194 70% 27%",
   // Dark mode colors (HSL strings)
-  color_dark_bg:      "",
-  color_dark_fg:      "",
-  color_dark_primary: "",
-  color_dark_secondary: "",
-  color_dark_accent:  "",
-  color_dark_card:    "",
-  color_dark_border:  "",
-  color_dark_button:  "",
+  color_dark_bg:      "160 20% 7%",
+  color_dark_fg:      "40 20% 95%",
+  color_dark_primary: "158 94% 33%",
+  color_dark_secondary: "160 15% 15%",
+  color_dark_accent:  "43 80% 55%",
+  color_dark_card:    "160 20% 10%",
+  color_dark_border:  "160 15% 18%",
+  color_dark_button:  "158 45% 40%",
   // Fonts per role
-  font_body:         "",
-  font_heading:      "",
-  font_title:        "",
-  font_nav:          "",
-  font_button:       "",
+  font_body:         "IBM Plex Sans Arabic",
+  font_heading:      "IBM Plex Sans Arabic",
+  font_title:        "Gulzar",
+  font_nav:          "Cairo",
+  font_button:       "IBM Plex Sans Arabic",
   // Hero background
-  hero_bg_type:      "gradient_anim",
-  hero_bg_url:       "",
+  hero_bg_type:      "islamic_pattern",
+  hero_bg_url:       "https://images.unsplash.com/photo-1542816417-0983c9c9ad53?w=1600&auto=format&fit=crop",
   hero_bg_opacity:   "100",
-  hero_bg_blur:      "0",
-  hero_bg_brightness:"100",
-  hero_bg_contrast:  "100",
-  hero_bg_saturation:"100",
+  hero_bg_blur:      "30",
+  hero_bg_brightness:"150",
+  hero_bg_contrast:  "200",
+  hero_bg_saturation:"200",
   hero_overlay_color:"#000000",
   hero_overlay_alpha:"30",
-  hero_anim_speed:   "5",
+  hero_anim_speed:   "6",
   hero_zoom:         "false",
   hero_parallax:     "false",
   hero_title:        "",
   hero_subtitle:     "",
   hero_btn_text:     "",
   hero_btn_link:     "/books",
-  hero_grad_from:    "#134e2a",
-  hero_grad_to:      "#1a6b3c",
+  hero_grad_from:    "#00494a",
+  hero_grad_to:      "#00e0f0",
   hero_slideshow_urls:"[]",
   hero_slide_transition:"fade",
   hero_slide_duration:"4",
@@ -70,35 +70,35 @@ export const DEFAULT_SETTINGS = {
   hero_video_speed:  "1",
   hero_lottie_url:   "",
   hero_custom_html:  "",
-  hero_bg_preset:    "",
+  hero_bg_preset:    "islamic_blue",
   // Fonts
   font_size:         "16",
-  line_height:       "1.6",
+  line_height:       "1.4",
   letter_spacing:    "0",
   custom_fonts:      "[]",
   // Cards
   card_radius:       "16",
   card_padding:      "16",
   card_gap:          "16",
-  card_style:        "modern",
+  card_style:        "luxury",
   card_shadow:       "md",
-  card_hover:        "lift",
+  card_hover:        "tilt",
   // UI
   ui_radius:         "12",
   // Nav
-  nav_items:         "",
+  nav_items:         "[{\"id\":\"home\",\"path\":\"/\",\"icon\":\"Home\",\"labelKey\":\"navHome\",\"label\":\"الرئيسية\",\"visible\":true},{\"id\":\"books\",\"path\":\"/books\",\"icon\":\"BookOpen\",\"labelKey\":\"navBooks\",\"label\":\"المكتبة\",\"visible\":true},{\"id\":\"videos\",\"path\":\"/videos\",\"icon\":\"Video\",\"labelKey\":\"navVideos\",\"label\":\"الفيديوهات\",\"visible\":true},{\"id\":\"favorites\",\"path\":\"/favorites\",\"icon\":\"Heart\",\"labelKey\":\"navFav\",\"label\":\"المفضلة\",\"visible\":true},{\"id\":\"settings\",\"path\":\"/settings\",\"icon\":\"Settings\",\"labelKey\":\"navSettings\",\"label\":\"الإعدادات\",\"visible\":true},{\"id\":\"about\",\"path\":\"/about\",\"icon\":\"Info\",\"labelKey\":\"aboutTitle\",\"label\":\"من نحن\",\"visible\":false},{\"id\":\"contact\",\"path\":\"/contact\",\"icon\":\"MessageCircle\",\"labelKey\":\"contactTitle\",\"label\":\"تواصل معنا\",\"visible\":false}]",
   // Misc
   youtube_url:       "",
   youtube_label:     "قناتنا على يوتيوب",
   youtube_sub:       "تابعونا على قناتنا لمزيد من المحتوى الإسلامي",
   app_lang:          "ar",
   dark_mode:         "false",
-  theme_mode:        "light",  // light | dark | auto
-  show_dev_nav:      "true",
-  categories:        "",
+  theme_mode:        "auto",  // light | dark | auto
+  show_dev_nav:      "false",
+  categories:        "[\"القرآن وعلومه\",\"الحديث الشريف\",\"الفقه الإسلامي\",\"السيرة النبوية\",\"العقيدة\",\"التزكية والرقائق\",\"التاريخ الإسلامي\",\"أخرى\",\"أردو\"]",
   offline_mode:      "true",
   // Contact page
-  contact_email:       "",
+  contact_email:       "daraltawhid25@gmail.com",
   contact_phone:       "",
   contact_address:     "",
   contact_intro:       "",
@@ -108,23 +108,77 @@ export const DEFAULT_SETTINGS = {
   contact_instagram_url:"",
   // Background layers & presets
   custom_bg_presets:   "[]",
-  hero_extra_layers:   "[]",
+  hero_extra_layers:   "[\"islamic_pattern\"]",
   hero_custom_layers:  "[]",
   // Translation settings
-  translation_model:          "",
-  translation_preserve_terms: "",
+  translation_model:          "automatic",
+  translation_preserve_terms: "true",
   // Video section visibility
   videos_enabled:      "true",
   videos_show_info:    "true",
 };
 
-// End-user local preference keys that should not overwrite global admin settings on other devices,
-// while still persisting per-user display preferences on this device.
-const USER_LOCAL_PREF_KEYS = new Set(["theme_mode", "dark_mode", "app_lang"]);
+// End-user local preference keys that stay per-device (language selection).
+// Theme, colors, hero banner, and branding set in the Developer Panel ARE synced and persisted.
+const USER_LOCAL_PREF_KEYS = new Set(["app_lang"]);
 
 // ─── localStorage helpers ─────────────────────────────────────────────────────
 const LS_PREFIX = "devs_";
 const DIRTY_KEYS_LS = "devs__dirty_keys";
+const SAVED_KEYS_LS = "devs__saved_keys";
+const SETTINGS_SCHEMA_VER_KEY = "devs__schema_v6";
+
+function normalizeLegacyAppName(val) {
+  if (val === undefined || val === null) return val;
+  const trimmed = String(val).trim();
+  const upper = trimmed.toUpperCase();
+  if (
+    upper === "DAR AL ULOOM" ||
+    upper === "DAR AL-ULOOM" ||
+    upper === "DAR AL-TAWHID" ||
+    upper === "DAR AL TAWHID" ||
+    trimmed === "دار العلوم"
+  ) {
+    return "DAR AL TAWHID";
+  }
+  return String(val);
+}
+
+// One-time cleanup of stale generic defaults that previously overwrote the user's exported settings
+try {
+  if (typeof localStorage !== "undefined" && localStorage.getItem(SETTINGS_SCHEMA_VER_KEY) !== "1") {
+    Object.keys(DEFAULT_SETTINGS).forEach((k) => {
+      if (k !== "app_lang") {
+        localStorage.removeItem(LS_PREFIX + k);
+      }
+    });
+    localStorage.removeItem(SAVED_KEYS_LS);
+    localStorage.removeItem("dau_app_settings_v1");
+    localStorage.removeItem("dau_app_settings_initialized");
+    localStorage.removeItem("dev_app_name");
+    localStorage.removeItem("dev_app_subtitle");
+    localStorage.removeItem("dev_logo_url");
+    localStorage.setItem(SETTINGS_SCHEMA_VER_KEY, "1");
+  }
+} catch {}
+
+function readSavedKeysSet() {
+  try {
+    const raw = localStorage.getItem(SAVED_KEYS_LS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markKeyLocallySaved(key) {
+  try {
+    const set = readSavedKeysSet();
+    set.add(key);
+    localStorage.setItem(SAVED_KEYS_LS, JSON.stringify(Array.from(set)));
+  } catch {}
+}
 
 function readDirtyMap() {
   try {
@@ -162,7 +216,7 @@ function clearDirtyKey(key, savedValue) {
 
 const ls = {
   get: (k)    => { try { return localStorage.getItem(LS_PREFIX + k); } catch(e) { return null; } },
-  set: (k, v) => { try { localStorage.setItem(LS_PREFIX + k, v); }    catch(e) {} },
+  set: (k, v) => { try { localStorage.setItem(LS_PREFIX + k, String(v ?? "")); } catch(e) {} },
   getAll: ()  => {
     const result = {};
     Object.keys(DEFAULT_SETTINGS).forEach(k => {
@@ -174,13 +228,26 @@ const ls = {
         const rawKey = localStorage.key(i);
         if (rawKey && rawKey.startsWith(LS_PREFIX)) {
           const k = rawKey.slice(LS_PREFIX.length);
-          if (k && k !== "_migrated" && k !== "_dirty_keys" && !(k in result)) {
+          if (
+            k &&
+            k !== "_migrated" &&
+            k !== "_dirty_keys" &&
+            k !== "_saved_keys" &&
+            k !== "_schema_v3" &&
+            k !== "_schema_v4" &&
+            k !== "_schema_v5" &&
+            k !== "_schema_v6" &&
+            !(k in result)
+          ) {
             const v = localStorage.getItem(rawKey);
             if (v !== null) result[k] = v;
           }
         }
       }
     } catch {}
+    if ("app_name" in result) {
+      result.app_name = normalizeLegacyAppName(result.app_name);
+    }
     return result;
   },
   setAll: (obj) => { Object.entries(obj).forEach(([k,v]) => ls.set(k, v)); },
@@ -191,7 +258,15 @@ async function dbGetAll() {
   try {
     const rows = await entities.AppSettings.list('-updated_date', 1000);
     const map = {};
-    rows.forEach(r => { if (r.setting_key) map[r.setting_key] = r.setting_value || ""; });
+    // rows are sorted newest-first (-updated_date): only take the first (newest) entry per setting_key
+    rows.forEach((r) => {
+      if (r.setting_key && !(r.setting_key in map)) {
+        map[r.setting_key] =
+          r.setting_key === "app_name"
+            ? normalizeLegacyAppName(r.setting_value ?? "")
+            : (r.setting_value ?? "");
+      }
+    });
     return map;
   } catch(e) { return null; }
 }
@@ -351,18 +426,10 @@ export function applySettingsToDom(settings) {
   // Sync legacy i18n keys used by useT()
   try {
     if (settings.app_name !== undefined) {
-      if (settings.app_name && settings.app_name !== DEFAULT_SETTINGS.app_name) {
-        localStorage.setItem("dev_app_name", settings.app_name);
-      } else {
-        localStorage.removeItem("dev_app_name");
-      }
+      localStorage.setItem("dev_app_name", String(settings.app_name ?? ""));
     }
     if (settings.app_subtitle !== undefined) {
-      if (settings.app_subtitle && settings.app_subtitle !== DEFAULT_SETTINGS.app_subtitle && settings.app_subtitle.trim() !== ".") {
-        localStorage.setItem("dev_app_subtitle", settings.app_subtitle);
-      } else {
-        localStorage.removeItem("dev_app_subtitle");
-      }
+      localStorage.setItem("dev_app_subtitle", String(settings.app_subtitle ?? ""));
     }
     if (settings.app_lang) {
       const prevLang = localStorage.getItem("dev_app_lang");
@@ -421,6 +488,7 @@ function flushSave(key) {
   clearTimeout(_saveTimers[key]);
   const previous = _prevValues[key] ?? ls.get(key) ?? "";
   ls.set(key, value);
+  markKeyLocallySaved(key);
   emitStatus("saving");
 
   const run = (async () => {
@@ -499,7 +567,10 @@ if (typeof window !== "undefined") {
 
 /** Get a setting value */
 export function getSetting(key) {
-  return _cache[key] ?? DEFAULT_SETTINGS[key] ?? "";
+  if (key in _cache && _cache[key] !== undefined && _cache[key] !== null) {
+    return _cache[key];
+  }
+  return DEFAULT_SETTINGS[key] ?? "";
 }
 
 /** Update a setting: applies instantly + persists locally & saves to DB */
@@ -521,12 +592,10 @@ export function setSetting(key, value) {
     return;
   }
 
-  if ((_cache[key] ?? "") === strVal && !(key in _pendingSaves)) {
-    return;
-  }
   _prevValues[key] = _cache[key] ?? "";
   _cache[key] = strVal;
   ls.set(key, strVal);
+  markKeyLocallySaved(key);
 
   // End-user local display preferences stay on-device and do not write to global AppSettings
   if (USER_LOCAL_PREF_KEYS.has(key)) {
@@ -552,10 +621,10 @@ export function setSettings(obj) {
   let hasAnyChange = false;
   Object.entries(obj || {}).forEach(([k, v]) => {
     const strVal = String(v ?? "");
-    if ((_cache[k] ?? "") === strVal && !(k in _pendingSaves)) return;
     _prevValues[k] = _cache[k] ?? "";
     _cache[k] = strVal;
     ls.set(k, strVal);
+    markKeyLocallySaved(k);
     hasAnyChange = true;
     if (k === "app_lang") {
       try {
@@ -580,15 +649,15 @@ export function setSettings(obj) {
   });
 }
 
-/** Load settings on app start — DB is authoritative for synced config, dirty local edits always win until flushed */
+/** Load settings on app start — DB is authoritative for synced config, local developer edits always win */
 export async function loadSettings(userEmail) {
   _userEmail = userEmail || "";
-  // Clean any local-only keys that may have been marked dirty in older sessions
   USER_LOCAL_PREF_KEYS.forEach((k) => clearDirtyKey(k));
 
   // 1. Apply localStorage immediately (fast path before DB resolves)
   const cached = ls.getAll();
   const dirty = readDirtyMap();
+  const savedKeys = readSavedKeysSet();
   let legacyLang = "";
   try { legacyLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
   if (legacyLang) cached.app_lang = legacyLang;
@@ -597,7 +666,7 @@ export async function loadSettings(userEmail) {
   applySettingsToDom(_cache);
   dispatchChange();
 
-  // 2. Load from DB and merge without clobbering un-synced local edits
+  // 2. Load from DB and merge without clobbering locally saved or dirty edits
   const dbData = await dbGetAll();
   if (dbData && Object.keys(dbData).length > 0) {
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
@@ -613,6 +682,14 @@ export async function loadSettings(userEmail) {
         merged[k] = String(localVal);
       }
     });
+
+    // Preserve keys explicitly saved on this device so seed data never reverts Developer Panel changes
+    savedKeys.forEach((k) => {
+      if (k in latestLocal) {
+        merged[k] = String(latestLocal[k] ?? "");
+      }
+    });
+
     // Overlay persisted dirty edits + in-flight RAM edits so newer local changes are never overwritten
     Object.entries(readDirtyMap()).forEach(([k, v]) => {
       merged[k] = String(v);
@@ -642,6 +719,7 @@ async function refreshSettingsFromRemote() {
     if (!dbData || Object.keys(dbData).length === 0) return;
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
     const latestLocal = ls.getAll();
+    const savedKeys = readSavedKeysSet();
     let latestLang = "";
     try { latestLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
     if (latestLang) latestLocal.app_lang = latestLang;
@@ -650,6 +728,11 @@ async function refreshSettingsFromRemote() {
       const localVal = latestLocal[k];
       if (localVal !== undefined && localVal !== null && localVal !== "") {
         merged[k] = String(localVal);
+      }
+    });
+    savedKeys.forEach((k) => {
+      if (k in latestLocal) {
+        merged[k] = String(latestLocal[k] ?? "");
       }
     });
     Object.entries(readDirtyMap()).forEach(([k, v]) => {

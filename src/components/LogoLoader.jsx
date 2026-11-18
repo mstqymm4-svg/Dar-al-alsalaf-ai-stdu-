@@ -40,7 +40,7 @@ export default function LogoLoader({ isLoading = true }) {
 
             <img
               src={LOGO_URL}
-              alt="دار العلوم"
+              alt="DAR AL TAWHID"
               className="dar-logo"
               draggable="false"
             />
@@ -48,7 +48,7 @@ export default function LogoLoader({ isLoading = true }) {
 
           <div className="dar-brand">
             <div className="dar-title">
-              دار العلوم
+              DAR AL TAWHID
             </div>
 
             <div className="dar-line" />
@@ -65,7 +65,7 @@ export default function LogoLoader({ isLoading = true }) {
         </div>
 
         <div className="dar-footer">
-          DAR AL ULOOM
+          DAR AL TAWHID
         </div>
       </div>
 

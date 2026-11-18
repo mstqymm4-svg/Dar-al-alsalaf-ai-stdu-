@@ -17,6 +17,11 @@ const CATEGORY_LABELS = {
   "دروس": { en: "Lessons", fr: "Cours", ur: "اسباق", hi: "सबक", tr: "Dersler" },
   "فتاوى": { en: "Fatwas", fr: "Fatwas", ur: "فتاویٰ", hi: "फतवे", tr: "Fetvalar" },
   "خطب": { en: "Sermons", fr: "Sermons", ur: "خطباتِ جمعہ", hi: "उपदेश", tr: "Hutbeler" },
+  "التفسير": { en: "Quranic Exegesis (Tafsir)", fr: "Exégèse (Tafsir)", ur: "تفسیر", hi: "तफ़सीर", tr: "Tefsir" },
+  "اللغة العربية": { en: "Arabic Language", fr: "Langue arabe", ur: "عربی زبان", hi: "अरबी भाषा", tr: "Arap Dili" },
+  "مقاطع قصيرة": { en: "Shorts", fr: "Shorts", ur: "شارٹس", hi: "शॉर्ट्स", tr: "Kısa Videolar" },
+  "بث مباشر": { en: "Live Stream", fr: "En direct", ur: "براہ راست", hi: "लाइव", tr: "Canlı Yayın" },
+  "عام": { en: "General", fr: "Général", ur: "عام", hi: "सामान्य", tr: "Genel" },
   "أخرى": { en: "Other", fr: "Autre", ur: "دیگر", hi: "अन्य", tr: "Diğer" },
 };
 

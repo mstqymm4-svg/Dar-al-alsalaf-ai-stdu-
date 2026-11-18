@@ -8,12 +8,12 @@ import { toast } from "sonner";
 import { getSetting, setSettings, setSetting, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export default function DevBranding() {
-  const [logoUrl, setLogoUrl]       = useState(() => getSetting("logo_url"));
-  const [appName, setAppName]       = useState(() => getSetting("app_name") || "المكتبة الدينية");
-  const [appSubtitle, setAppSubtitle] = useState(() => getSetting("app_subtitle") || "نور العلم والمعرفة");
-  const [youtubeUrl, setYoutubeUrl] = useState(() => getSetting("youtube_url"));
-  const [youtubeLabel, setYoutubeLabel] = useState(() => getSetting("youtube_label") || "قناتنا على يوتيوب");
-  const [youtubeSub, setYoutubeSub] = useState(() => getSetting("youtube_sub") || "تابعونا على قناتنا لمزيد من المحتوى الإسلامي");
+  const [logoUrl, setLogoUrl]       = useState(() => getSetting("logo_url") || "");
+  const [appName, setAppName]       = useState(() => getSetting("app_name") ?? "");
+  const [appSubtitle, setAppSubtitle] = useState(() => getSetting("app_subtitle") ?? "");
+  const [youtubeUrl, setYoutubeUrl] = useState(() => getSetting("youtube_url") || "");
+  const [youtubeLabel, setYoutubeLabel] = useState(() => getSetting("youtube_label") ?? "قناتنا على يوتيوب");
+  const [youtubeSub, setYoutubeSub] = useState(() => getSetting("youtube_sub") ?? "تابعونا على قناتنا لمزيد من المحتوى الإسلامي");
   const [uploading, setUploading]   = useState(false);
   const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
@@ -21,11 +21,11 @@ export default function DevBranding() {
   useEffect(() => {
     const unsub = subscribeToSettings((s) => {
       setLogoUrl(s.logo_url || "");
-      setAppName(s.app_name || "المكتبة الدينية");
-      setAppSubtitle(s.app_subtitle || "نور العلم والمعرفة");
+      setAppName(s.app_name ?? "");
+      setAppSubtitle(s.app_subtitle ?? "");
       setYoutubeUrl(s.youtube_url || "");
-      setYoutubeLabel(s.youtube_label || "قناتنا على يوتيوب");
-      setYoutubeSub(s.youtube_sub || "تابعونا على قناتنا لمزيد من المحتوى الإسلامي");
+      setYoutubeLabel(s.youtube_label ?? "قناتنا على يوتيوب");
+      setYoutubeSub(s.youtube_sub ?? "تابعونا على قناتنا لمزيد من المحتوى الإسلامي");
     });
     return unsub;
   }, []);

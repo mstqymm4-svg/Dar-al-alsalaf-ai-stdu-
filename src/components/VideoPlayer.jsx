@@ -29,11 +29,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const t = useT();
   const { isOnline } = useOnlineStatus();
   const containerRef = useRef(null);
+  const playerHostRef = useRef(null);
   const playerInstanceRef = useRef(null);
   const hideTimerRef = useRef(null);
+  const resumeGuardTimerRef = useRef(null);
   const barRef = useRef(null);
+
   const [player, setPlayer] = useState(null);
   const [playing, setPlaying] = useState(false);
+  const [buffering, setBuffering] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [bufferedPct, setBufferedPct] = useState(0);
@@ -46,10 +50,28 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [ready, setReady] = useState(false);
-  const [restoreTime, setRestoreTime] = useState(0);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState(false);
+
+  // Refs for synchronization without stale closures
   const loopRef = useRef(false);
+  const playingRef = useRef(false);
+  const mutedRef = useRef(false);
+  const volumeRef = useRef(100);
+  const userPausedRef = useRef(false);
+  const isScrubbingRef = useRef(false);
+  const lastSeekAtRef = useRef(0);
+  const lastPreviewSeekCallRef = useRef(0);
+  const showPlaylistRef = useRef(false);
+  const showSpeedMenuRef = useRef(false);
+  const showShortcutsModalRef = useRef(false);
+
+  playingRef.current = playing;
+  mutedRef.current = muted;
+  volumeRef.current = volume;
+  showPlaylistRef.current = showPlaylist;
+  showSpeedMenuRef.current = showSpeedMenu;
+  showShortcutsModalRef.current = showShortcutsModal;
 
   // Auto-advance countdown state
   const [autoAdvanceTimer, setAutoAdvanceTimer] = useState(null);
@@ -58,7 +80,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const videoId = extractYoutubeId(video?.youtube_url);
 
   // ── Playlist navigation ──
-  const plIdx = playlist.findIndex((v) => v.id === video.id);
+  const plIdx = playlist.findIndex((v) => v.id === video?.id);
   const nextItem = plIdx >= 0 && plIdx < playlist.length - 1 ? playlist[plIdx + 1] : null;
   const prevItem = plIdx > 0 ? playlist[plIdx - 1] : null;
   const nextItemRef = useRef(null);
@@ -66,12 +88,17 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   nextItemRef.current = nextItem;
   onSelectVideoRef.current = onSelectVideo;
 
-  // Restore last position
-  useEffect(() => {
-    if (!videoId) return;
-    const saved = localStorage.getItem(`video_pos_${videoId}`);
-    if (saved) setRestoreTime(Number(saved));
-  }, [videoId]);
+  const cancelAutoAdvance = useCallback(() => {
+    setAutoAdvanceTimer(null);
+    setAutoAdvanceSeconds(5);
+  }, []);
+
+  const playNextNow = useCallback(() => {
+    if (nextItemRef.current && onSelectVideoRef.current) {
+      onSelectVideoRef.current(nextItemRef.current);
+    }
+    cancelAutoAdvance();
+  }, [cancelAutoAdvance]);
 
   // Handle auto-advance countdown
   useEffect(() => {
@@ -89,68 +116,203 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     return () => clearInterval(interval);
   }, [autoAdvanceTimer, autoAdvanceSeconds]);
 
-  const cancelAutoAdvance = () => {
-    setAutoAdvanceTimer(null);
-    setAutoAdvanceSeconds(5);
-  };
-
-  const playNextNow = () => {
-    if (nextItemRef.current && onSelectVideoRef.current) {
-      onSelectVideoRef.current(nextItemRef.current);
-    }
-    cancelAutoAdvance();
-  };
-
-  // Initialize YouTube IFrame API player
+  // Initialize YouTube IFrame API player cleanly per videoId
   useEffect(() => {
+    // Reset player states immediately on videoId change so polling never reads stale instance
+    setPlayer(null);
+    setReady(false);
+    setPlaying(false);
+    setBuffering(false);
+    setCurrentTime(0);
+    setDuration(0);
+    setBufferedPct(0);
+    setRate(1);
+    playingRef.current = false;
+    userPausedRef.current = false;
+    isScrubbingRef.current = false;
+    cancelAutoAdvance();
+
     if (!videoId) return;
     let cancelled = false;
 
+    // Read saved resume position synchronously for this specific videoId
+    let savedStart = 0;
+    try {
+      const raw = Number(localStorage.getItem(`video_pos_${videoId}`) || 0);
+      if (Number.isFinite(raw) && raw > 3) {
+        savedStart = Math.floor(raw);
+      }
+    } catch {}
+
     const initPlayer = () => {
       const YT = /** @type {any} */ (window).YT;
-      if (cancelled || !YT?.Player) return;
-      playerInstanceRef.current = new YT.Player("yt-player-container", {
+      if (cancelled || !YT?.Player || !playerHostRef.current) return;
+
+      // Destroy any previous instance before mounting a fresh child node
+      if (playerInstanceRef.current) {
+        try {
+          playerInstanceRef.current.destroy();
+        } catch {}
+        playerInstanceRef.current = null;
+      }
+
+      playerHostRef.current.innerHTML = "";
+      const mountNode = document.createElement("div");
+      mountNode.className = "w-full h-full pointer-events-none";
+      playerHostRef.current.appendChild(mountNode);
+
+      playerInstanceRef.current = new YT.Player(mountNode, {
         videoId,
         playerVars: {
-          autoplay: 1, controls: 0, modestbranding: 1, rel: 0,
-          playsinline: 1, iv_load_policy: 3, fs: 0, disablekb: 1,
-          start: restoreTime || 0,
+          autoplay: 1,
+          controls: 0,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          iv_load_policy: 3,
+          fs: 0,
+          disablekb: 1,
+          enablejsapi: 1,
+          origin: window.location.origin,
+          start: savedStart > 0 ? savedStart : 0,
         },
         events: {
           onReady: (e) => {
             if (cancelled) return;
-            setPlayer(e.target);
-            setDuration(e.target.getDuration());
+            const target = e.target;
+            const dur = Number(target.getDuration?.() || 0);
+
+            // If savedStart was near or past the end of the video, rewind to 0 so it doesn't stop immediately
+            if (dur > 0 && savedStart >= dur - 5) {
+              savedStart = 0;
+              try {
+                localStorage.removeItem(`video_pos_${videoId}`);
+                target.seekTo(0, true);
+              } catch {}
+            } else if (savedStart > 0) {
+              setCurrentTime(savedStart);
+            }
+
+            setPlayer(target);
+            if (dur > 0) setDuration(dur);
             setReady(true);
+
             try {
-              setVolume(e.target.getVolume() || 100);
-              setMuted(e.target.isMuted() || false);
+              const initVol = target.getVolume?.();
+              const initMuted = target.isMuted?.();
+              if (typeof initVol === "number") {
+                setVolume(initVol);
+                volumeRef.current = initVol;
+              }
+              if (typeof initMuted === "boolean") {
+                setMuted(initMuted);
+                mutedRef.current = initMuted;
+              }
             } catch {}
-            e.target.playVideo();
+
+            try {
+              target.playVideo();
+            } catch {}
+
+            // Autoplay guard: if browser blocks unmuted autoplay, fallback to muted autoplay after 500ms
+            clearTimeout(resumeGuardTimerRef.current);
+            resumeGuardTimerRef.current = setTimeout(() => {
+              if (cancelled || userPausedRef.current) return;
+              try {
+                const st = target.getPlayerState?.();
+                // -1 = UNSTARTED, 5 = CUED, 2 = PAUSED
+                if (st === -1 || st === 5 || st === 2) {
+                  target.playVideo?.();
+                  setTimeout(() => {
+                    if (cancelled || userPausedRef.current) return;
+                    const st2 = target.getPlayerState?.();
+                    if (st2 === -1 || st2 === 5) {
+                      target.mute?.();
+                      setMuted(true);
+                      mutedRef.current = true;
+                      target.playVideo?.();
+                    }
+                  }, 350);
+                }
+              } catch {}
+            }, 450);
           },
           onStateChange: (e) => {
             if (cancelled) return;
-            const YTState = /** @type {any} */ (window).YT?.PlayerState;
-            const isNowPlaying = e.data === YTState?.PLAYING;
-            setPlaying(isNowPlaying);
-            if (isNowPlaying) {
-              setDuration(e.target.getDuration());
+            const YTState = /** @type {any} */ (window).YT?.PlayerState || {
+              ENDED: 0,
+              PLAYING: 1,
+              PAUSED: 2,
+              BUFFERING: 3,
+              CUED: 5,
+            };
+            const state = e.data;
+
+            if (state === YTState.PLAYING) {
+              userPausedRef.current = false;
+              playingRef.current = true;
+              setPlaying(true);
+              setBuffering(false);
+              const d = Number(e.target.getDuration?.() || 0);
+              if (d > 0) setDuration(d);
               cancelAutoAdvance();
-            } else if (e.data === YTState?.ENDED) {
+            } else if (state === YTState.BUFFERING) {
+              // Keep `playing` true during buffering so controls/overlay don't flash or interrupt playback
+              setBuffering(true);
+              cancelAutoAdvance();
+            } else if (state === YTState.PAUSED) {
+              setBuffering(false);
+              const msSinceSeek = Date.now() - lastSeekAtRef.current;
+              // If YouTube emitted a transient PAUSED right after a seek/scrub/rate-change while user did NOT pause,
+              // automatically resume playback so the video never stops unexpectedly
+              if (
+                !userPausedRef.current &&
+                ( isScrubbingRef.current || msSinceSeek < 1200 ) &&
+                document.visibilityState !== "hidden"
+              ) {
+                try {
+                  e.target.playVideo?.();
+                } catch {}
+                return;
+              }
+              playingRef.current = false;
+              setPlaying(false);
+            } else if (state === YTState.CUED) {
+              setBuffering(false);
+              if (!userPausedRef.current) {
+                try {
+                  e.target.playVideo?.();
+                } catch {}
+              }
+            } else if (state === YTState.ENDED) {
+              setBuffering(false);
+              try {
+                localStorage.removeItem(`video_pos_${videoId}`);
+              } catch {}
               if (loopRef.current) {
+                userPausedRef.current = false;
+                lastSeekAtRef.current = Date.now();
                 e.target.seekTo(0, true);
                 e.target.playVideo();
-              } else if (nextItemRef.current) {
-                // Trigger auto-advance countdown
-                setAutoAdvanceSeconds(5);
-                setAutoAdvanceTimer(true);
+              } else {
+                playingRef.current = false;
+                setPlaying(false);
+                if (nextItemRef.current) {
+                  setAutoAdvanceSeconds(5);
+                  setAutoAdvanceTimer(true);
+                }
               }
             }
+          },
+          onError: () => {
+            if (cancelled) return;
+            setBuffering(false);
           },
         },
       });
     };
 
+    let pollInterval = null;
     if (/** @type {any} */ (window).YT?.Player) {
       initPlayer();
     } else {
@@ -159,38 +321,56 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
         tag.src = "https://www.youtube.com/iframe_api";
         document.body.appendChild(tag);
       }
-      const interval = setInterval(() => {
-        if (/** @type {any} */ (window).YT?.Player) { clearInterval(interval); initPlayer(); }
+      pollInterval = setInterval(() => {
+        if (/** @type {any} */ (window).YT?.Player) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          initPlayer();
+        }
       }, 100);
-      return () => { cancelled = true; clearInterval(interval); };
     }
 
     return () => {
       cancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+      clearTimeout(resumeGuardTimerRef.current);
       if (playerInstanceRef.current) {
-        try { playerInstanceRef.current.destroy(); } catch(e) {}
+        try {
+          playerInstanceRef.current.destroy();
+        } catch {}
+        playerInstanceRef.current = null;
       }
     };
-  }, [videoId]);
+  }, [videoId, cancelAutoAdvance]);
 
-  // Time update polling + save position
+  // Time update polling + save position (skips updating currentTime while user is scrubbing)
   useEffect(() => {
-    if (!player) return;
+    if (!player || !ready) return;
     const interval = setInterval(() => {
       try {
-        const cur = player.getCurrentTime() || 0;
-        setCurrentTime(cur);
-        const d = player.getDuration();
-        if (d) setDuration(d);
+        const d = Number(player.getDuration?.() || 0);
+        if (d > 0) setDuration(d);
+
         const loaded = player.getVideoLoadedFraction?.();
-        if (typeof loaded === "number" && d) setBufferedPct(loaded * 100);
-        if (videoId && cur > 0) {
-          localStorage.setItem(`video_pos_${videoId}`, String(Math.floor(cur)));
+        if (typeof loaded === "number" && d > 0) {
+          setBufferedPct(Math.min(100, Math.max(0, loaded * 100)));
         }
-      } catch(e) {}
+
+        if (!isScrubbingRef.current) {
+          const cur = Number(player.getCurrentTime?.() || 0);
+          setCurrentTime(cur);
+          if (videoId && cur > 2) {
+            if (d > 0 && cur >= d - 4) {
+              localStorage.removeItem(`video_pos_${videoId}`);
+            } else {
+              localStorage.setItem(`video_pos_${videoId}`, String(Math.floor(cur)));
+            }
+          }
+        }
+      } catch {}
     }, 250);
     return () => clearInterval(interval);
-  }, [player, videoId]);
+  }, [player, ready, videoId]);
 
   // Fullscreen handling
   useEffect(() => {
@@ -199,37 +379,173 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
+  const showControlsTemp = useCallback(() => {
+    setShowControls(true);
+    clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (
+        playingRef.current &&
+        !isScrubbingRef.current &&
+        !showPlaylistRef.current &&
+        !showSpeedMenuRef.current &&
+        !showShortcutsModalRef.current
+      ) {
+        setShowControls(false);
+        setShowVolumeSlider(false);
+      }
+    }, 3500);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    if (!player) return;
+    let isCurrentlyPlaying = playingRef.current;
+    try {
+      const st = player.getPlayerState?.();
+      if (st === 1 || st === 3) isCurrentlyPlaying = true;
+      else if (st === 2 || st === 0 || st === 5) isCurrentlyPlaying = false;
+    } catch {}
+
+    if (isCurrentlyPlaying) {
+      userPausedRef.current = true;
+      playingRef.current = false;
+      setPlaying(false);
+      setBuffering(false);
+      try {
+        player.pauseVideo();
+      } catch {}
+    } else {
+      userPausedRef.current = false;
+      playingRef.current = true;
+      setPlaying(true);
+      try {
+        player.playVideo();
+      } catch {}
+    }
+    showControlsTemp();
+  }, [player, showControlsTemp]);
+
+  const handleRestart = useCallback(() => {
+    if (!player) return;
+    userPausedRef.current = false;
+    lastSeekAtRef.current = Date.now();
+    setCurrentTime(0);
+    try {
+      player.seekTo(0, true);
+      player.playVideo();
+    } catch {}
+  }, [player]);
+
+  const skip = useCallback(
+    (sec) => {
+      if (!player) return;
+      try {
+        const cur = Number(player.getCurrentTime?.() || currentTime || 0);
+        const maxDur = duration > 0 ? duration : cur + Math.abs(sec);
+        const target = Math.min(maxDur, Math.max(0, cur + sec));
+        lastSeekAtRef.current = Date.now();
+        setCurrentTime(target);
+        player.seekTo(target, true);
+        if (!userPausedRef.current) {
+          player.playVideo?.();
+        }
+      } catch {}
+    },
+    [player, currentTime, duration]
+  );
+
+  const selectSpeed = useCallback(
+    (s) => {
+      if (!player?.setPlaybackRate) return;
+      setRate(s);
+      lastSeekAtRef.current = Date.now();
+      try {
+        player.setPlaybackRate(s);
+      } catch {}
+      setShowSpeedMenu(false);
+    },
+    [player]
+  );
+
+  const toggleLoop = useCallback(() => {
+    setLoop((prev) => {
+      const next = !prev;
+      loopRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    if (!player) return;
+    try {
+      if (mutedRef.current) {
+        player.unMute();
+        mutedRef.current = false;
+        setMuted(false);
+        const v = Number(player.getVolume?.() || volumeRef.current || 100);
+        const nextVol = v === 0 ? 50 : v;
+        if (v === 0) player.setVolume?.(nextVol);
+        volumeRef.current = nextVol;
+        setVolume(nextVol);
+      } else {
+        player.mute();
+        mutedRef.current = true;
+        setMuted(true);
+      }
+    } catch {}
+  }, [player]);
+
+  const handleVolumeChange = useCallback(
+    (newVal) => {
+      if (!player) return;
+      const clamped = Math.max(0, Math.min(100, Number(newVal) || 0));
+      volumeRef.current = clamped;
+      setVolume(clamped);
+      try {
+        player.setVolume(clamped);
+        if (clamped === 0) {
+          player.mute();
+          mutedRef.current = true;
+          setMuted(true);
+        } else if (mutedRef.current) {
+          player.unMute();
+          mutedRef.current = false;
+          setMuted(false);
+        }
+      } catch {}
+    },
+    [player]
+  );
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) containerRef.current?.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  }, []);
+
   // Keyboard navigation
   useEffect(() => {
     const handler = (e) => {
       if (e.target?.tagName === "INPUT" || e.target?.tagName === "TEXTAREA") return;
       if (e.key === "Escape") {
-        if (showShortcutsModal) setShowShortcutsModal(false);
-        else if (showSpeedMenu) setShowSpeedMenu(false);
-        else if (showPlaylist) setShowPlaylist(false);
+        if (showShortcutsModalRef.current) setShowShortcutsModal(false);
+        else if (showSpeedMenuRef.current) setShowSpeedMenu(false);
+        else if (showPlaylistRef.current) setShowPlaylist(false);
         else if (document.fullscreenElement) document.exitFullscreen();
         else onClose?.();
       } else if (e.key === " " && player) {
         e.preventDefault();
-        if (playing) player.pauseVideo();
-        else player.playVideo();
+        togglePlay();
       } else if (e.key === "ArrowLeft" && player) {
         e.preventDefault();
-        player.seekTo(Math.max(0, (player.getCurrentTime?.() || 0) - 5), true);
+        skip(-5);
       } else if (e.key === "ArrowRight" && player) {
         e.preventDefault();
-        player.seekTo((player.getCurrentTime?.() || 0) + 5, true);
+        skip(5);
       } else if (e.key === "ArrowUp" && player) {
         e.preventDefault();
-        if (muted) { player.unMute(); setMuted(false); }
-        const newVol = Math.min(100, (player.getVolume?.() || 100) + 10);
-        player.setVolume?.(newVol);
-        setVolume(newVol);
+        handleVolumeChange(Math.min(100, (mutedRef.current ? 0 : volumeRef.current) + 10));
       } else if (e.key === "ArrowDown" && player) {
         e.preventDefault();
-        const newVol = Math.max(0, (player.getVolume?.() || 100) - 10);
-        player.setVolume?.(newVol);
-        setVolume(newVol);
+        handleVolumeChange(Math.max(0, (mutedRef.current ? 0 : volumeRef.current) - 10));
       } else if (e.key === "m" || e.key === "M") {
         toggleMute();
       } else if (e.key === "f" || e.key === "F") {
@@ -242,104 +558,125 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [player, playing, onClose, muted, showShortcutsModal, showSpeedMenu, showPlaylist]);
+  }, [
+    player,
+    onClose,
+    togglePlay,
+    skip,
+    handleVolumeChange,
+    toggleMute,
+    toggleFullscreen,
+    toggleLoop,
+  ]);
 
   // Touch gestures
   const getCurrentTime = useCallback(() => {
-    try { return player?.getCurrentTime?.() || 0; } catch { return 0; }
-  }, [player]);
+    try {
+      return player?.getCurrentTime?.() || currentTime || 0;
+    } catch {
+      return currentTime || 0;
+    }
+  }, [player, currentTime]);
+
+  const handleGestureVolumeSync = useCallback((vol, isNowMuted) => {
+    volumeRef.current = vol;
+    mutedRef.current = isNowMuted;
+    setVolume(vol);
+    setMuted(isNowMuted);
+  }, []);
+
+  const handleGestureSeekCommit = useCallback(
+    (targetTime) => {
+      lastSeekAtRef.current = Date.now();
+      setCurrentTime(targetTime);
+      if (!userPausedRef.current) {
+        try {
+          player?.playVideo?.();
+        } catch {}
+      }
+    },
+    [player]
+  );
+
   const { onTouchStart, onTouchMove, onTouchEnd, seekPreview, adjust, ripple, brightness } =
-    usePlayerGestures({ player, duration, getCurrentTime });
+    usePlayerGestures({
+      player,
+      duration,
+      getCurrentTime,
+      onVolumeSync: handleGestureVolumeSync,
+      onSeekCommit: handleGestureSeekCommit,
+    });
 
-  const togglePlay = () => {
-    if (!player) return;
-    if (playing) player.pauseVideo();
-    else player.playVideo();
-  };
-
-  const handleRestart = () => {
-    if (!player) return;
-    player.seekTo(0, true);
-    player.playVideo();
-  };
-
-  const skip = (sec) => {
-    if (!player) return;
-    const cur = (player.getCurrentTime?.() || 0) + sec;
-    player.seekTo(Math.max(0, cur), true);
-  };
-
-  const selectSpeed = (s) => {
-    if (!player?.setPlaybackRate) return;
-    setRate(s);
-    player.setPlaybackRate(s);
-    setShowSpeedMenu(false);
-  };
-
-  const toggleLoop = () => {
-    const v = !loop;
-    setLoop(v);
-    loopRef.current = v;
-  };
-
-  // Draggable progress bar
-  const seekFromClientX = (clientX) => {
-    if (!player || !duration || !barRef.current) return;
+  // Draggable progress bar — uses allowSeekAhead=false while dragging and allowSeekAhead=true on release
+  const computeTimeFromClientX = (clientX) => {
+    if (!duration || !barRef.current) return null;
     const rect = barRef.current.getBoundingClientRect();
+    if (!rect.width) return null;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    const time = ratio * duration;
-    player.seekTo(time, true);
+    return ratio * duration;
+  };
+
+  const handleBarPointerDown = (e) => {
+    if (!player || !duration) return;
+    isScrubbingRef.current = true;
+    lastSeekAtRef.current = Date.now();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    const time = computeTimeFromClientX(e.clientX);
+    if (time !== null) {
+      setCurrentTime(time);
+      try {
+        player.seekTo(time, false);
+      } catch {}
+    }
+  };
+
+  const handleBarPointerMove = (e) => {
+    if (!isScrubbingRef.current || !player || !duration) return;
+    const time = computeTimeFromClientX(e.clientX);
+    if (time !== null) {
+      setCurrentTime(time);
+      const now = Date.now();
+      if (now - lastPreviewSeekCallRef.current > 120) {
+        lastPreviewSeekCallRef.current = now;
+        lastSeekAtRef.current = now;
+        try {
+          player.seekTo(time, false);
+        } catch {}
+      }
+    }
+  };
+
+  const handleBarPointerUp = (e) => {
+    if (!isScrubbingRef.current) return;
+    isScrubbingRef.current = false;
+    lastSeekAtRef.current = Date.now();
+    try {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    if (!player || !duration) return;
+    const time = computeTimeFromClientX(e.clientX) ?? currentTime;
     setCurrentTime(time);
-  };
-
-  const toggleMute = () => {
-    if (!player) return;
-    if (muted) {
-      player.unMute();
-      setMuted(false);
-      const v = player.getVolume() || 100;
-      setVolume(v === 0 ? 50 : v);
-    } else {
-      player.mute();
-      setMuted(true);
-    }
-  };
-
-  const handleVolumeChange = (newVal) => {
-    if (!player) return;
-    setVolume(newVal);
-    player.setVolume(newVal);
-    if (newVal === 0) {
-      player.mute();
-      setMuted(true);
-    } else if (muted) {
-      player.unMute();
-      setMuted(false);
-    }
-  };
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) containerRef.current?.requestFullscreen?.();
-    else document.exitFullscreen?.();
+    try {
+      player.seekTo(time, true);
+      if (!userPausedRef.current) {
+        player.playVideo?.();
+      }
+    } catch {}
   };
 
   const handleShare = async () => {
     if (navigator.share) {
-      try { await navigator.share({ title: video.title, url: video.youtube_url }); } catch(e) {}
+      try {
+        await navigator.share({ title: video.title, url: video.youtube_url });
+      } catch {}
     } else {
-      try { await navigator.clipboard.writeText(video.youtube_url); toast.success(t.linkCopied); } catch(e) {}
+      try {
+        await navigator.clipboard.writeText(video.youtube_url);
+        toast.success(t.linkCopied);
+      } catch {}
     }
-  };
-
-  const showControlsTemp = () => {
-    setShowControls(true);
-    clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => {
-      if (playing && !showPlaylist && !showSpeedMenu && !showShortcutsModal) {
-        setShowControls(false);
-        setShowVolumeSlider(false);
-      }
-    }, 3500);
   };
 
   // Hide bottom nav while video player is open; restore on close
@@ -349,6 +686,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     return () => {
       if (nav) nav.style.transform = "translateY(0)";
       clearTimeout(hideTimerRef.current);
+      clearTimeout(resumeGuardTimerRef.current);
     };
   }, []);
 
@@ -361,13 +699,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95" dir="rtl">
         <div className="text-center text-white p-8">
           <p className="text-lg font-bold mb-2">{t.invalidVideoUrl}</p>
-          <button onClick={onClose} className="text-primary hover:underline">{t.close}</button>
+          <button onClick={onClose} className="text-primary hover:underline">
+            {t.close}
+          </button>
         </div>
       </div>
     );
   }
 
-  const progressPct = duration ? (currentTime / duration) * 100 : 0;
+  const progressPct = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
   return (
     <div
@@ -390,16 +730,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           />
         )}
 
-        {/* YouTube iframe container */}
+        {/* YouTube iframe host container */}
         <div
+          ref={playerHostRef}
           className="w-full h-full relative z-[2] transition-filter duration-200"
           style={{ filter: `brightness(${brightness})` }}
-        >
-          <div id="yt-player-container" className="w-full h-full pointer-events-none" />
-        </div>
+        />
 
-        {!ready && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
+        {(!ready || buffering) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10 pointer-events-none">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
@@ -439,15 +778,30 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           >
             {seekPreview && (
               <>
-                {seekPreview.delta < 0 ? <Rewind className="w-4 h-4" /> : <FastForward className="w-4 h-4" />}
+                {seekPreview.delta < 0 ? (
+                  <Rewind className="w-4 h-4" />
+                ) : (
+                  <FastForward className="w-4 h-4" />
+                )}
                 {formatTime(seekPreview.time)}
                 <span className="text-white/60 text-xs">
-                  ({seekPreview.delta >= 0 ? "+" : ""}{Math.round(seekPreview.delta)}s)
+                  ({seekPreview.delta >= 0 ? "+" : ""}
+                  {Math.round(seekPreview.delta)}s)
                 </span>
               </>
             )}
-            {adjust?.type === "volume" && (<><Volume2 className="w-4 h-4" />{adjust.value}%</>)}
-            {adjust?.type === "brightness" && (<><Sun className="w-4 h-4" />{adjust.value}%</>)}
+            {adjust?.type === "volume" && (
+              <>
+                <Volume2 className="w-4 h-4" />
+                {adjust.value}%
+              </>
+            )}
+            {adjust?.type === "brightness" && (
+              <>
+                <Sun className="w-4 h-4" />
+                {adjust.value}%
+              </>
+            )}
           </div>
         )}
 
@@ -456,7 +810,10 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           show={showPlaylist}
           videos={playlist}
           currentIndex={plIdx}
-          onSelect={(v) => { setShowPlaylist(false); onSelectVideo?.(v); }}
+          onSelect={(v) => {
+            setShowPlaylist(false);
+            onSelectVideo?.(v);
+          }}
           onClose={() => setShowPlaylist(false)}
         />
 
@@ -482,7 +839,10 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                     <HelpCircle className="w-4 h-4 text-primary" />
                     <span>{t.shortcutsTitle}</span>
                   </h3>
-                  <button onClick={() => setShowShortcutsModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <button
+                    onClick={() => setShowShortcutsModal(false)}
+                    className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center"
+                  >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
@@ -555,7 +915,9 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-4 pt-4 pb-12 flex items-start justify-between gap-4 pointer-events-none z-20"
             >
               <div className="flex-1 min-w-0 text-white pointer-events-auto">
-                <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm leading-tight">{video.title}</h2>
+                <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm leading-tight">
+                  {video.title}
+                </h2>
                 {video.channel_name && (
                   <p className="text-[12px] text-white/70 mt-0.5 truncate flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary" />
@@ -590,14 +952,17 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           )}
         </AnimatePresence>
 
-        {/* Center play button when paused */}
+        {/* Center play button when paused (never shown while buffering) */}
         <AnimatePresence>
-          {ready && !playing && (
+          {ready && !playing && !buffering && (
             <motion.button
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
-              onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                togglePlay();
+              }}
               className="absolute inset-0 flex items-center justify-center z-15"
             >
               <div className="w-20 h-20 rounded-full bg-primary/90 backdrop-blur-md ring-4 ring-white/20 flex items-center justify-center shadow-2xl hover:scale-105 active:scale-95 transition-transform">
@@ -617,7 +982,10 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-4 pt-16 pb-4 pointer-events-none z-20"
             >
               {/* Progress bar */}
-              <div className="flex items-center gap-3 mb-2.5 pointer-events-auto">
+              <div
+                className="flex items-center gap-3 mb-2.5 pointer-events-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <span className="text-[11px] text-white font-mono w-12 text-center shrink-0 select-none">
                   {formatTime(currentTime)}
                 </span>
@@ -625,12 +993,20 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                   ref={barRef}
                   dir="ltr"
                   className="relative flex-1 h-7 flex items-center cursor-pointer touch-none group"
-                  onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); seekFromClientX(e.clientX); }}
-                  onPointerMove={(e) => { if (e.buttons === 1) seekFromClientX(e.clientX); }}
+                  onPointerDown={handleBarPointerDown}
+                  onPointerMove={handleBarPointerMove}
+                  onPointerUp={handleBarPointerUp}
+                  onPointerCancel={handleBarPointerUp}
                 >
                   <div className="relative w-full h-1.5 rounded-full bg-white/20 transition-all group-hover:h-2.5">
-                    <div className="absolute inset-y-0 left-0 rounded-full bg-white/30" style={{ width: `${bufferedPct}%` }} />
-                    <div className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-accent" style={{ width: `${progressPct}%` }} />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full bg-white/30"
+                      style={{ width: `${bufferedPct}%` }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-accent"
+                      style={{ width: `${progressPct}%` }}
+                    />
                     <div
                       className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.6)] transition-transform group-hover:scale-125"
                       style={{ left: `${progressPct}%` }}
@@ -643,26 +1019,44 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               </div>
 
               {/* Primary control buttons row */}
-              <div className="flex items-center justify-center gap-3.5 pointer-events-auto mb-2" onClick={(e) => e.stopPropagation()}>
-                <PlayerButton onClick={() => prevItem && onSelectVideo?.(prevItem)} disabled={!prevItem} title={t.prevVideo}>
+              <div
+                className="flex items-center justify-center gap-3.5 pointer-events-auto mb-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <PlayerButton
+                  onClick={() => prevItem && onSelectVideo?.(prevItem)}
+                  disabled={!prevItem}
+                  title={t.prevVideo}
+                >
                   <SkipBack className="w-5 h-5" />
                 </PlayerButton>
                 <PlayerButton onClick={() => skip(-10)} title="-10s">
                   <Rewind className="w-5 h-5" />
                 </PlayerButton>
                 <PlayerButton onClick={togglePlay} primary size="lg" title={t.play}>
-                  {playing ? <Pause className="w-7 h-7" /> : <Play className="w-7 h-7 fill-white ml-0.5" />}
+                  {playing ? (
+                    <Pause className="w-7 h-7" />
+                  ) : (
+                    <Play className="w-7 h-7 fill-white ml-0.5" />
+                  )}
                 </PlayerButton>
                 <PlayerButton onClick={() => skip(10)} title="+10s">
                   <FastForward className="w-5 h-5" />
                 </PlayerButton>
-                <PlayerButton onClick={() => nextItem && onSelectVideo?.(nextItem)} disabled={!nextItem} title={t.nextVideo}>
+                <PlayerButton
+                  onClick={() => nextItem && onSelectVideo?.(nextItem)}
+                  disabled={!nextItem}
+                  title={t.nextVideo}
+                >
                   <SkipForward className="w-5 h-5" />
                 </PlayerButton>
               </div>
 
               {/* Secondary Controls Bar */}
-              <div className="flex items-center justify-center gap-1.5 pointer-events-auto relative" onClick={(e) => e.stopPropagation()}>
+              <div
+                className="flex items-center justify-center gap-1.5 pointer-events-auto relative"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/[0.08] backdrop-blur-xl ring-1 ring-white/15 shadow-xl">
                   {/* Restart */}
                   <PlayerButton onClick={handleRestart} size="sm" title={t.restartPlayback}>
@@ -711,7 +1105,12 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
 
                   {/* Playlist drawer toggle */}
                   {playlist.length > 0 && (
-                    <PlayerButton onClick={() => setShowPlaylist((s) => !s)} size="sm" active={showPlaylist} title={t.playlist}>
+                    <PlayerButton
+                      onClick={() => setShowPlaylist((s) => !s)}
+                      size="sm"
+                      active={showPlaylist}
+                      title={t.playlist}
+                    >
                       <ListVideo className="w-4 h-4" />
                     </PlayerButton>
                   )}
@@ -723,7 +1122,11 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                     onMouseLeave={() => setShowVolumeSlider(false)}
                   >
                     <PlayerButton onClick={toggleMute} size="sm" title={t.shortcutMute}>
-                      {muted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+                      {muted || volume === 0 ? (
+                        <VolumeX className="w-4 h-4" />
+                      ) : (
+                        <Volume2 className="w-4 h-4" />
+                      )}
                     </PlayerButton>
 
                     {showVolumeSlider && (
@@ -745,7 +1148,11 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
 
                   {/* Fullscreen */}
                   <PlayerButton onClick={toggleFullscreen} size="sm" title={t.tbFullscreen}>
-                    {fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                    {fullscreen ? (
+                      <Minimize className="w-4 h-4" />
+                    ) : (
+                      <Maximize className="w-4 h-4" />
+                    )}
                   </PlayerButton>
                 </div>
               </div>

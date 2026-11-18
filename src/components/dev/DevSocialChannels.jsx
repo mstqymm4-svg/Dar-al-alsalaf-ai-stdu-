@@ -144,7 +144,7 @@ export default function DevSocialChannels() {
             <div>
               <Label className="text-xs">اسم القناة</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="دار العلوم واتساب" className="h-9 text-sm" />
+                placeholder="DAR AL TAWHID واتساب" className="h-9 text-sm" />
             </div>
             <div>
               <Label className="text-xs">نوع القناة</Label>

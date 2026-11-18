@@ -135,7 +135,7 @@ export default function VerifyEmail() {
 
       toast.success(t.resendSuccess);
       setStep("otp");
-      setCountdown(60); // 60 seconds cooldown
+      setCountdown(15); // 60 seconds cooldown
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
     } catch {
@@ -174,7 +174,7 @@ export default function VerifyEmail() {
       }
 
       toast.success(t.resendSuccess);
-      setCountdown(60);
+      setCountdown(15);
       setOtp(["", "", "", "", "", ""]);
       setRemainingAttempts(5);
       if (otpInputsRef.current[0]) otpInputsRef.current[0].focus();

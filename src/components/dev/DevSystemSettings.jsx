@@ -151,7 +151,7 @@ export default function DevSystemSettings() {
         <h3 className="font-bold text-sm mb-3">معلومات النظام</h3>
         {[
           ["الإصدار", "Enterprise v2.0"],
-          ["المنصة", "دار العلوم"],
+          ["المنصة", "DAR AL TAWHID"],
           ["البيئة", "Production"],
           ["الإطار", "React 18 + Tailwind CSS"],
         ].map(([label, val]) => (

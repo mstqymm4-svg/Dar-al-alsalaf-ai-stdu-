@@ -239,6 +239,7 @@ export default function Videos() {
     const chName = ch?.name || sv.channel_name || "";
     const thumb = sv.thumbnail || getThumbnail(sv.youtube_url);
     const isLetterboxedHq = thumb && thumb.includes("hqdefault");
+    const isFav = favorites.includes(sv.id);
 
     return (
       <div
@@ -271,11 +272,24 @@ export default function Videos() {
           </div>
         </div>
 
-        {/* Top Fire Drop Icon ONLY (no Gemini Sparkles icon, no "شورتس" word) */}
-        <div className="absolute top-2.5 right-2.5">
-          <span className="w-7 h-7 rounded-lg bg-purple-600/90 backdrop-blur-sm text-white shadow-md flex items-center justify-center border border-white/15">
+        {/* Top Bar: Fire Icon + Favorite Heart */}
+        <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between">
+          <span className="w-7 h-7 rounded-lg bg-purple-600/90 text-white shadow-md flex items-center justify-center border border-white/15">
             <Flame className="w-3.5 h-3.5 fill-current" />
           </span>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleFavorite(sv.id);
+            }}
+            title={isFav ? (t.removeFav || "إزالة من المفضلة") : (t.addFav || "إضافة للمفضلة")}
+            aria-label={isFav ? (t.removeFav || "إزالة من المفضلة") : (t.addFav || "إضافة للمفضلة")}
+            className="w-7 h-7 rounded-full bg-black/55 hover:bg-black/80 text-white flex items-center justify-center border border-white/20 shadow-md transition-transform active:scale-90"
+          >
+            <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-red-500 text-red-500" : "text-white"}`} />
+          </button>
         </div>
 
         {/* Bottom Info */}
@@ -579,7 +593,7 @@ export default function Videos() {
               {[
                 { id: "all", label: t.all || "الكل" },
                 { id: "normal", label: t.videoLectures || "محاضرات ودروس" },
-                { id: "short", label: "مقاطع قصيرة", isShorts: true },
+                { id: "short", label: t.videoShorts || "مقاطع قصيرة", isShorts: true },
                 { id: "live", label: t.videoLive || "بث مباشر" },
               ].map((tab) => (
                 <button
@@ -657,7 +671,7 @@ export default function Videos() {
                 <span className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center text-purple-600">
                   <Flame className="w-4 h-4 fill-current" />
                 </span>
-                <span>مقاطع قصيرة</span>
+                <span>{t.videoShorts || "مقاطع قصيرة"}</span>
               </h2>
               <button
                 onClick={() => setVideoTypeFilter("short")}
@@ -681,7 +695,7 @@ export default function Videos() {
                 <span className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center text-purple-600">
                   <Flame className="w-4 h-4 fill-current" />
                 </span>
-                <span>مقاطع قصيرة</span>
+                <span>{t.videoShorts || "مقاطع قصيرة"}</span>
               </h2>
             </div>
 
@@ -692,10 +706,10 @@ export default function Videos() {
                 </div>
                 <div>
                   <h3 className="font-bold text-base text-foreground">
-                    لا توجد مقاطع قصيرة مطابقة
+                    {t.noMatchingShorts || "لا توجد مقاطع قصيرة مطابقة"}
                   </h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    جرب اختيار قناة أخرى أو عرض جميع الفيديوهات.
+                    {t.noMatchingShortsSub || "جرب اختيار قناة أخرى أو عرض جميع الفيديوهات."}
                   </p>
                 </div>
                 <Button
@@ -745,7 +759,7 @@ export default function Videos() {
                   </h3>
                   <p className="text-xs text-muted-foreground mt-1">
                     {filteredShorts.length > 0
-                      ? "يمكنك مشاهدة المقاطع القصيرة في قسم مقاطع قصيرة أعلاه."
+                      ? (t.shortsAvailableAbove || "يمكنك مشاهدة المقاطع القصيرة في قسم مقاطع قصيرة أعلاه.")
                       : (t.noMatchingVideosSub || "جرب البحث بكلمات أخرى أو اختر قناة أو تصنيفاً مختلفاً.")}
                   </p>
                 </div>

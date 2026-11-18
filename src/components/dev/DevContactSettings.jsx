@@ -15,7 +15,7 @@ import {
 } from "@/lib/settingsStore";
 
 const FIELDS = [
-  { key: "contact_email", label: "البريد الإلكتروني للتواصل", placeholder: "support@example.com" },
+  { key: "contact_email", label: "البريد الإلكتروني للتواصل", placeholder: "daraltawhid25@gmail.com" },
   { key: "contact_phone", label: "رقم الهاتف", placeholder: "+966..." },
   { key: "contact_address", label: "العنوان", placeholder: "المدينة، الدولة" },
   { key: "whatsapp_url", label: "رابط واتساب", placeholder: "https://wa.me/..." },

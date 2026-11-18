@@ -136,28 +136,28 @@ export default function VideoCard({
             <Play className="w-3.5 h-3.5 fill-current" /> {t.play || "تشغيل"}
           </Button>
 
-          {video.video_type !== "short" && !video.youtube_url?.includes("/shorts/") && (
-            <>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 rounded-xl border border-border/60 hover:border-red-400 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-                title={isFavorite ? (t.removeFav || "إزالة من المفضلة") : (t.addFav || "إضافة للمفضلة")}
-                onClick={() => onToggleFavorite(video.id)}
-              >
-                <Heart className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : ""}`} />
-              </Button>
+          {onToggleFavorite && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 rounded-xl border border-border/60 hover:border-red-400 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
+              title={isFavorite ? (t.removeFav || "إزالة من المفضلة") : (t.addFav || "إضافة للمفضلة")}
+              onClick={() => onToggleFavorite(video.id)}
+            >
+              <Heart className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : ""}`} />
+            </Button>
+          )}
 
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-8 w-8 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title={t.shareLink || "مشاركة الرابط"}
-                onClick={() => onShare(video)}
-              >
-                <Share2 className="w-3.5 h-3.5" />
-              </Button>
-            </>
+          {onShare && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title={t.shareLink || "مشاركة الرابط"}
+              onClick={() => onShare(video)}
+            >
+              <Share2 className="w-3.5 h-3.5" />
+            </Button>
           )}
         </div>
       </div>

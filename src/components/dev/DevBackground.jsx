@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +10,7 @@ import {
   Plus, X, Check, Maximize2, Monitor,
   Settings, Eye, RotateCcw
 } from "lucide-react";
-import { getSetting, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
+import { getSetting, setSettings, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 import { uploads } from "@/lib/uploadFacade";
 import HeroBanner from "@/components/HeroBanner";
 
@@ -109,6 +109,43 @@ export default function DevBackground() {
 
   const fileRef     = useRef();
   const slideRef    = useRef();
+
+  useEffect(() => {
+    const unsub = subscribeToSettings(() => {
+      setSt({
+        bgType:        read("hero_bg_type"),
+        title:         getSetting("hero_title") ?? "",
+        subtitle:      getSetting("hero_subtitle") ?? "",
+        btnText:       getSetting("hero_btn_text") ?? "",
+        btnLink:       read("hero_btn_link") || "/books",
+        opacity:       Number(read("hero_bg_opacity")),
+        blur:          Number(read("hero_bg_blur")),
+        brightness:    Number(read("hero_bg_brightness")),
+        contrast:      Number(read("hero_bg_contrast") || 100),
+        saturation:    Number(read("hero_bg_saturation") || 100),
+        overlayColor:  read("hero_overlay_color") || "#000000",
+        overlayAlpha:  Number(read("hero_overlay_alpha")),
+        animSpeed:     Number(read("hero_anim_speed")),
+        zoom:          read("hero_zoom") === "true",
+        parallax:      read("hero_parallax") === "true",
+        bgUrl:         read("hero_bg_url"),
+        slideUrls:     (() => { try { return JSON.parse(read("hero_slideshow_urls") || "[]"); } catch { return []; } })(),
+        slideTrans:    read("hero_slide_transition") || "fade",
+        slideDur:      Number(read("hero_slide_duration") || 4),
+        autoplay:      read("hero_video_autoplay") !== "false",
+        loop:          read("hero_video_loop") !== "false",
+        mute:          read("hero_video_mute") !== "false",
+        videoBright:   Number(read("hero_video_brightness") || 100),
+        videoMobile:   read("hero_video_mobile") !== "false",
+        videoSpeed:    Number(read("hero_video_speed") || 1),
+        gradFrom:      read("hero_grad_from") || "#134e2a",
+        gradTo:        read("hero_grad_to") || "#1a6b3c",
+        customHtml:    read("hero_custom_html"),
+        extraLayers:   (() => { try { return JSON.parse(read("hero_extra_layers") || "[]"); } catch { return []; } })(),
+      });
+    });
+    return unsub;
+  }, []);
 
   // Persist to settingsStore on every change
   const persist = useCallback((next) => {

@@ -225,9 +225,9 @@ export default function ProfileCard() {
           <div className="pb-1 min-w-0 w-full sm:w-auto sm:text-end">
             <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
               <p className="font-bold text-base text-foreground break-words">
-                {(fullName && fullName !== "مستخدم دار العلوم" && (t.langCode === "ar" || fullName !== "محمد هارون نور"))
+                {(fullName && fullName !== "مستخدم دار العلوم" && fullName !== "مستخدم DAR AL TAWHID" && (t.langCode === "ar" || fullName !== "محمد هارون نور"))
                   ? fullName
-                  : (t.userDefaultName || "مستخدم دار العلوم")}
+                  : (t.userDefaultName || "مستخدم DAR AL TAWHID")}
               </p>
             </div>
             <p className="text-xs text-muted-foreground break-all mt-0.5" dir="ltr">

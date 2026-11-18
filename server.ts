@@ -73,7 +73,7 @@ async function startServer() {
   app.post('/verify-otp', handleVerifyOtp);
   app.post('/api/verify-otp', handleVerifyOtp);
 
-  // POST /send-contact-message and /api/send-contact-message: Deliver contact message directly to daraluloom258@gmail.com
+  // POST /send-contact-message and /api/send-contact-message: Deliver contact message directly to daraltawhid25@gmail.com
   const handleSendContactMessage = async (req: express.Request, res: express.Response) => {
     const { name, email, message, subject } = req.body;
     const result = await sendContactEmail({ name, email, message, subject });
@@ -121,7 +121,8 @@ async function startServer() {
     if (!url) return null;
     const trimmed = url.trim();
     const patterns = [
-      /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+      /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|live\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+      /[?&]v=([a-zA-Z0-9_-]{11})/i,
       /^([a-zA-Z0-9_-]{11})$/,
     ];
     for (const p of patterns) {
@@ -130,6 +131,102 @@ async function startServer() {
     }
     return null;
   };
+
+  // In-memory cache for resolved direct MP4 stream URLs (valid for 25 minutes)
+  const streamCache = new Map<string, { streamUrl: string; expiresAt: number }>();
+
+  app.get('/api/youtube-stream', async (req, res) => {
+    const rawId = ((req.query.id as string) || (req.query.url as string) || '').trim();
+    const videoId = extractYoutubeVideoId(rawId);
+    if (!videoId) {
+      return res.status(400).json({ success: false, error: 'Valid YouTube videoId required' });
+    }
+
+    const cached = streamCache.get(videoId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json({ success: true, videoId, streamUrl: cached.streamUrl, cached: true });
+    }
+
+    const clients = [
+      {
+        clientName: 'IOS',
+        clientVersion: '19.29.1',
+        deviceMake: 'Apple',
+        deviceModel: 'iPhone16,2',
+        osName: 'iPhone',
+        osVersion: '17.5.1.21F90',
+        userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+      },
+      {
+        clientName: 'ANDROID',
+        clientVersion: '19.29.37',
+        androidSdkVersion: 34,
+        osName: 'Android',
+        osVersion: '14',
+        userAgent: 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
+      },
+    ];
+
+    for (const client of clients) {
+      try {
+        const playerRes = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': client.userAgent,
+            'X-YouTube-Client-Name': client.clientName === 'IOS' ? '5' : '3',
+            'X-YouTube-Client-Version': client.clientVersion,
+          },
+          body: JSON.stringify({
+            videoId,
+            context: {
+              client: {
+                clientName: client.clientName,
+                clientVersion: client.clientVersion,
+                deviceMake: client.deviceMake,
+                deviceModel: client.deviceModel,
+                osName: client.osName,
+                osVersion: client.osVersion,
+                androidSdkVersion: client.androidSdkVersion,
+                hl: 'ar',
+                gl: 'SA',
+              },
+            },
+            contentCheckOk: true,
+            racyCheckOk: true,
+          }),
+        });
+
+        if (playerRes.ok) {
+          const data: any = await playerRes.json();
+          const formats: any[] = data?.streamingData?.formats || [];
+          // Pick combined video+audio MP4 format (itag 18 = 360p MP4, itag 22 = 720p MP4)
+          const mp4Formats = formats.filter(
+            (f) => f?.url && typeof f.mimeType === 'string' && f.mimeType.includes('video/mp4') && f.audioQuality
+          );
+          // Sort highest resolution first for crisp Shorts playback
+          mp4Formats.sort((a, b) => (b.height || 0) - (a.height || 0));
+          const best = mp4Formats[0] || formats.find((f) => f?.url);
+          if (best?.url) {
+            streamCache.set(videoId, {
+              streamUrl: best.url,
+              expiresAt: Date.now() + 25 * 60 * 1000,
+            });
+            return res.json({
+              success: true,
+              videoId,
+              streamUrl: best.url,
+              mimeType: best.mimeType || 'video/mp4',
+            });
+          }
+        }
+      } catch {
+        // Try next client
+      }
+    }
+
+    return res.json({ success: false, videoId });
+  });
 
   // API endpoint to proxy image download for automatic logo upload/storage
   app.get('/api/proxy-image', async (req, res) => {
@@ -881,9 +978,9 @@ async function startServer() {
   app.get('/dar-al-uloom.aab', handleAabDownload);
   app.head('/dar-al-uloom.aab', handleAabDownload);
 
-  // Vite middleware setup for development
+  // Vite middleware setup for development (non-blocking port bind)
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
+    const vitePromise = createViteServer({
       server: {
         middlewareMode: true,
         hmr: false,
@@ -891,7 +988,14 @@ async function startServer() {
       },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        return vite.middlewares(req, res, next);
+      } catch (err) {
+        return next(err);
+      }
+    });
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (_req, res) => {

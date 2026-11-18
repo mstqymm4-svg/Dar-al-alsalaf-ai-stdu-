@@ -69,22 +69,20 @@ export default function Layout() {
     ...(showDevNav ? [{ path: "/dev", icon: Code, label: "Dev" }] : []),
   ];
 
-  const cleanNameOverride = (appNameOverride || "").trim();
-  const cleanSubOverride = (appSubtitleOverride || "").trim();
+  const cleanNameOverride = (appNameOverride ?? "").trim();
+  const cleanSubOverride = (appSubtitleOverride ?? "").trim();
   const displayAppName =
-    t.langCode === "ar" &&
-    cleanNameOverride &&
-    cleanNameOverride !== "المكتبة الدينية" &&
-    cleanNameOverride.toUpperCase() !== "DAR AL ULOOM"
-      ? cleanNameOverride
-      : t.appName;
+    !cleanNameOverride || cleanNameOverride === "."
+      ? ""
+      : cleanNameOverride !== "المكتبة الدينية"
+        ? cleanNameOverride
+        : t.appName;
   const displayAppSubtitle =
-    t.langCode === "ar" &&
-    cleanSubOverride &&
-    cleanSubOverride !== "." &&
-    cleanSubOverride !== "نور العلم والمعرفة"
-      ? cleanSubOverride
-      : t.appSubtitle;
+    !cleanSubOverride || cleanSubOverride === "."
+      ? ""
+      : t.langCode === "ar" && cleanSubOverride !== "نور العلم والمعرفة"
+        ? cleanSubOverride
+        : t.appSubtitle;
 
   useEffect(() => {
     base44.auth.me().then((u) => {
@@ -116,10 +114,12 @@ export default function Layout() {
                 <img src={logoUrl} alt="logo" className="w-full h-full object-cover" /> :
                 <BookOpen className="w-5 h-5 text-primary-foreground" />}
               </div>
-              <div>
-                <h1 className="text-foreground text-xl font-bold leading-tight">{displayAppName}</h1>
-                <p className="text-[10px] text-muted-foreground -mt-0.5">{displayAppSubtitle}</p>
-              </div>
+              {(displayAppName || displayAppSubtitle) && (
+                <div>
+                  {displayAppName && <h1 className="text-foreground text-xl font-bold leading-tight">{displayAppName}</h1>}
+                  {displayAppSubtitle && <p className="text-[10px] text-muted-foreground -mt-0.5">{displayAppSubtitle}</p>}
+                </div>
+              )}
             </Link>
             <nav className="hidden md:flex items-center gap-1">
               {navItems.map((item) => {

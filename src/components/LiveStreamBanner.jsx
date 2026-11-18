@@ -72,7 +72,7 @@ export default function LiveStreamBanner({ channelId = null }) {
               </span>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-red-600 text-white text-xs font-black shadow-xs tracking-wide">
                 <Radio className="w-3.5 h-3.5 animate-pulse" />
-                {t.videoLive || "بث مباشر الآن"}
+                {t.liveNowBadge || t.videoLive || "بث مباشر الآن"}
               </span>
             </div>
 
@@ -112,7 +112,7 @@ export default function LiveStreamBanner({ channelId = null }) {
                 {stream.title}
               </a>
               <p className="text-xs text-muted-foreground line-clamp-1 mb-4">
-                {stream.channel_name} • {t.videoLive || "بث مباشر مستمر عبر يوتيوب"}
+                {stream.channel_name} • {t.liveStreamOnYoutube || t.videoLive || "بث مباشر مستمر عبر يوتيوب"}
               </p>
 
               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5">
@@ -123,7 +123,7 @@ export default function LiveStreamBanner({ channelId = null }) {
                   className="inline-flex items-center gap-2 px-5 py-2.5 rounded-[4px_20px_4px_20px] bg-red-600 text-white text-xs font-black shadow-md hover:bg-red-700 active:scale-95 transition-all"
                 >
                   <Play className="w-4 h-4 fill-white" />
-                  <span>{t.watchNow || "مشاهدة البث على يوتيوب"}</span>
+                  <span>{t.watchLiveOnYoutube || t.watchNow || "مشاهدة البث على يوتيوب"}</span>
                 </a>
               </div>
             </div>
