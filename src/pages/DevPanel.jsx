@@ -214,7 +214,7 @@ export default function DevPanel() {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = blobUrl;
-      link.download = "dar-al-uloom.aab";
+      link.download = "dar-al-tawhid.aab";
       link.style.display = "none";
       document.body.appendChild(link);
       link.click();
@@ -222,7 +222,7 @@ export default function DevPanel() {
         document.body.removeChild(link);
         URL.revokeObjectURL(blobUrl);
       }, 4000);
-      toast.success("بدأ تنزيل ملف dar-al-uloom.aab ✓");
+      toast.success("بدأ تنزيل ملف dar-al-tawhid.aab ✓");
     } catch (err) {
       toast.error((err?.message || "تعذر تنزيل الملف من داخل الإطار") + " — جرب نسخ الرابط المباشر");
     } finally {
@@ -499,7 +499,7 @@ export default function DevPanel() {
                 <div className="p-3.5 rounded-xl bg-muted/60 border border-border text-xs space-y-1.5">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">اسم الحزمة:</span>
-                    <span className="font-bold font-mono" dir="ltr">dar-al-uloom.aab</span>
+                    <span className="font-bold font-mono" dir="ltr">dar-al-tawhid.aab</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">الحجم:</span>
@@ -537,7 +537,7 @@ export default function DevPanel() {
 
                   <a
                     href={getDirectAabUrl()}
-                    download="dar-al-uloom.aab"
+                    download="dar-al-tawhid.aab"
                     className="w-full h-10 rounded-xl border border-border bg-card hover:bg-muted transition-colors flex items-center justify-center gap-2 text-xs font-bold"
                   >
                     <Download className="w-3.5 h-3.5 text-primary" />

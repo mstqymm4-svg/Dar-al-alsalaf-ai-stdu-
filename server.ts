@@ -880,7 +880,9 @@ async function startServer() {
   // Resolve latest signed AAB bundle on disk
   const resolveAabFile = (): { filePath: string; stat: fs.Stats } | null => {
     const candidates = [
+      path.join(__dirname, 'artifacts', 'dar-al-tawhid.aab'),
       path.join(__dirname, 'artifacts', 'dar-al-uloom.aab'),
+      path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'dar-al-tawhid.aab'),
       path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'dar-al-uloom.aab'),
       path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab'),
     ];
@@ -905,7 +907,7 @@ async function startServer() {
     if (!found) {
       return res.json({
         available: false,
-        fileName: 'dar-al-uloom.aab',
+        fileName: 'dar-al-tawhid.aab',
         sizeBytes: 0,
         sizeMB: '0',
         updatedAt: null,
@@ -913,7 +915,7 @@ async function startServer() {
     }
     return res.json({
       available: true,
-      fileName: 'dar-al-uloom.aab',
+      fileName: 'dar-al-tawhid.aab',
       sizeBytes: found.stat.size,
       sizeMB: (found.stat.size / (1024 * 1024)).toFixed(2),
       updatedAt: found.stat.mtime.toISOString(),
@@ -933,7 +935,7 @@ async function startServer() {
     const totalSize = stat.size;
 
     res.setHeader('Content-Type', 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'attachment; filename="dar-al-uloom.aab"');
+    res.setHeader('Content-Disposition', 'attachment; filename="dar-al-tawhid.aab"');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -975,6 +977,8 @@ async function startServer() {
 
   app.get('/api/download-aab', handleAabDownload);
   app.head('/api/download-aab', handleAabDownload);
+  app.get('/dar-al-tawhid.aab', handleAabDownload);
+  app.head('/dar-al-tawhid.aab', handleAabDownload);
   app.get('/dar-al-uloom.aab', handleAabDownload);
   app.head('/dar-al-uloom.aab', handleAabDownload);
 

@@ -64,7 +64,7 @@ jobs:
               -alias "$ALIAS_NAME" \
               -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass "$STORE_PASS" -keypass "$KEY_PASS" \
-              -dname "CN=Dar Al Uloom, OU=Mobile, O=Dar Al Uloom, L=Riyadh, S=Riyadh, C=SA"
+              -dname "CN=DAR AL TAWHID, OU=Mobile, O=DAR AL TAWHID, L=Riyadh, S=Riyadh, C=SA"
             cp "$RUNNER_TEMP/release.keystore" android/app/build/outputs/bundle/release/release.keystore
           fi
           jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
