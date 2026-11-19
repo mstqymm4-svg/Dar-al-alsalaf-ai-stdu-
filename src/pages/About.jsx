@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
 import {
   BookOpen, Globe, Smartphone, Sparkles,
   Users, Languages, ShieldCheck, Library, WifiOff, Star, Download } from
@@ -119,12 +120,12 @@ export default function About() {
             {t.contactIntro || "نسعد بتواصلكم معنا لأي استفسار أو اقتراح أو ملاحظة. تصل رسالتكم مباشرة إلى بريد تطبيق DAR AL TAWHID."}
           </p>
           <div className="pt-2">
-            <a
-              href="/contact"
+            <Link
+              to="/contact"
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-bold text-xs sm:text-sm shadow-sm hover:bg-primary/90 transition-colors"
             >
               {t.sendMessage || "إرسال رسالة الآن"}
-            </a>
+            </Link>
           </div>
         </div>
       </motion.div>

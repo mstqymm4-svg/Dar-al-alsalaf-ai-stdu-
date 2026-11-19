@@ -4,16 +4,22 @@ import {
   AlertCircle,
   ChevronUp,
 } from "lucide-react";
-import { loadPdfDocument, extractPageText, clearPageCache } from "@/lib/pdfLoader";
+import { loadPdfDocument, clearPageCache } from "@/lib/pdfLoader";
 import { useT } from "@/lib/i18n";
 import ViewerToolbar from "./ViewerToolbar";
 import {
   TocPanel,
-  SearchPanel,
   GoToPanel,
   ThemeComfortPanel,
 } from "./ViewerPanels";
 import VerticalPageStream, { READER_THEMES } from "./VerticalPageStream";
+import {
+  undoPageAnnotation,
+  redoPageAnnotation,
+  clearPageAnnotations,
+  getPageAnnotationCount,
+  canRedoPageAnnotation,
+} from "./PageAnnotationLayer";
 
 const BM_PREFIX = "dau_bm_";
 
@@ -41,14 +47,8 @@ export default function ProBookViewer({
     }
   });
 
-  const [viewMode, setViewMode] = useState(() => {
-    try {
-      const v = localStorage.getItem("dau_reader_view_mode");
-      return ["scroll", "single", "spread"].includes(v) ? v : "scroll";
-    } catch {
-      return "scroll";
-    }
-  });
+  // Always use smooth vertical scroll stream (View Mode toggle button removed per user request)
+  const viewMode = "scroll";
 
   const [fitMode, setFitMode] = useState(() => {
     try {
@@ -62,11 +62,18 @@ export default function ProBookViewer({
   const [brightness, setBrightness] = useState(() => {
     try {
       const v = Number(localStorage.getItem("dau_reader_brightness"));
-      return v >= 55 && v <= 110 ? v : 100;
+      return v >= 55 && v <= 100 ? v : 100;
     } catch {
       return 100;
     }
   });
+
+  // Precision Pen / Highlighter / Notes Tool State
+  const [penMode, setPenMode] = useState(false);
+  const [penTool, setPenTool] = useState("pen"); // "pen" | "highlighter" | "text" | "eraser"
+  const [penColor, setPenColor] = useState("#EF4444");
+  const [penSize, setPenSize] = useState(3.5);
+  const [annotRevision, setAnnotRevision] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -75,17 +82,9 @@ export default function ProBookViewer({
 
   // Panels
   const [showToc, setShowToc] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
   const [showGoTo, setShowGoTo] = useState(false);
   const [showComfort, setShowComfort] = useState(false);
   const [outline, setOutline] = useState([]);
-
-  // Search
-  const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [searchProgress, setSearchProgress] = useState(0);
-  const [results, setResults] = useState([]);
-  const [resultIdx, setResultIdx] = useState(0);
 
   // Go-to input
   const [goToValue, setGoToValue] = useState("");
@@ -133,7 +132,7 @@ export default function ProBookViewer({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const isRTL = language === "ar" || language === "ur";
+  const isRTL = true;
 
   // ── Load PDF document ──
   useEffect(() => {
@@ -153,7 +152,6 @@ export default function ProBookViewer({
         setTotalPages(doc.numPages);
         setLoading(false);
 
-        // Defer outline parsing so initial visible pages get 100% of PDF worker priority
         outlineTimer = setTimeout(() => {
           if (cancelled) return;
           doc
@@ -162,16 +160,16 @@ export default function ProBookViewer({
               if (cancelled) return [];
               let items = await normalizeOutline(out, doc);
               if (!items || items.length === 0 || items.every((x) => !x.pageNumber)) {
-                items = await generateSmartOutline(doc, doc.numPages, title, language);
+                items = generateSmartOutline(doc.numPages, language);
               }
               return items;
             })
             .then((items) => {
               if (!cancelled) setOutline(items || []);
             })
-            .catch(async () => {
+            .catch(() => {
               if (!cancelled) {
-                const fallback = await generateSmartOutline(doc, doc.numPages, title, language);
+                const fallback = generateSmartOutline(doc.numPages, language);
                 if (!cancelled) setOutline(fallback || []);
               }
             });
@@ -232,12 +230,6 @@ export default function ProBookViewer({
 
   useEffect(() => {
     try {
-      localStorage.setItem("dau_reader_view_mode", viewMode);
-    } catch {}
-  }, [viewMode]);
-
-  useEffect(() => {
-    try {
       localStorage.setItem("dau_reader_fit_mode", fitMode);
     } catch {}
   }, [fitMode]);
@@ -259,15 +251,13 @@ export default function ProBookViewer({
     [totalPages]
   );
 
-  const stepSize = viewMode === "spread" ? 2 : 1;
-
   const nextPage = useCallback(
-    () => goToPage((currentPageRef.current || 1) + stepSize),
-    [goToPage, stepSize]
+    () => goToPage((currentPageRef.current || 1) + 1),
+    [goToPage]
   );
   const prevPage = useCallback(
-    () => goToPage((currentPageRef.current || 1) - stepSize),
-    [goToPage, stepSize]
+    () => goToPage((currentPageRef.current || 1) - 1),
+    [goToPage]
   );
 
   const onStreamPageChange = useCallback((n) => setCurrentPage(n), []);
@@ -304,26 +294,38 @@ export default function ProBookViewer({
     } catch {}
   }, []);
 
-  const cycleViewMode = useCallback(() => {
-    setViewMode((vm) =>
-      vm === "scroll" ? "single" : vm === "single" ? "spread" : "scroll"
-    );
-  }, []);
+  // ── Annotation Undo / Redo / Clear helpers ──
+  const handleUndoAnnotation = useCallback(() => {
+    if (undoPageAnnotation(bookId, currentPageRef.current)) {
+      setAnnotRevision((r) => r + 1);
+    }
+  }, [bookId]);
+
+  const handleRedoAnnotation = useCallback(() => {
+    if (redoPageAnnotation(bookId, currentPageRef.current)) {
+      setAnnotRevision((r) => r + 1);
+    }
+  }, [bookId]);
+
+  const handleClearAnnotations = useCallback(() => {
+    if (clearPageAnnotations(bookId, currentPageRef.current)) {
+      setAnnotRevision((r) => r + 1);
+    }
+  }, [bookId]);
 
   // ── Keyboard navigation ──
   useEffect(() => {
     const onKey = (e) => {
-      if (showToc || showSearch || showGoTo || showComfort) return;
+      if (showToc || showGoTo || showComfort) return;
       if (e.target?.tagName === "INPUT" || e.target?.tagName === "TEXTAREA") return;
-      if (e.key === "ArrowDown" || e.key === "PageDown") nextPage();
-      else if (e.key === "ArrowUp" || e.key === "PageUp") prevPage();
-      else if (e.key === "ArrowRight") {
-        if (isRTL && viewMode !== "scroll") prevPage();
-        else nextPage();
-      } else if (e.key === "ArrowLeft") {
-        if (isRTL && viewMode !== "scroll") nextPage();
-        else prevPage();
-      } else if (e.key === "+" || e.key === "=") zoomIn();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        handleUndoAnnotation();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "PageDown" || e.key === "ArrowRight") nextPage();
+      else if (e.key === "ArrowUp" || e.key === "PageUp" || e.key === "ArrowLeft") prevPage();
+      else if (e.key === "+" || e.key === "=") zoomIn();
       else if (e.key === "-") zoomOut();
       else if (e.key === "0") resetZoom();
       else if (e.key === "b" || e.key === "B") toggleBookmark();
@@ -337,71 +339,11 @@ export default function ProBookViewer({
     zoomOut,
     resetZoom,
     toggleBookmark,
-    isRTL,
-    viewMode,
+    handleUndoAnnotation,
     showToc,
-    showSearch,
     showGoTo,
     showComfort,
   ]);
-
-  // ── Search across all pages with contextual snippets ──
-  const runSearch = useCallback(async () => {
-    const q = query.trim();
-    if (!q || !pdf) return;
-    setSearching(true);
-    setSearchProgress(0);
-    setResults([]);
-    setResultIdx(0);
-
-    const lower = q.toLowerCase();
-    const found = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      try {
-        const rawText = await extractPageText(pdf, i);
-        const idx = rawText.toLowerCase().indexOf(lower);
-        if (idx !== -1) {
-          const start = Math.max(0, idx - 32);
-          const end = Math.min(rawText.length, idx + q.length + 42);
-          const snippet =
-            (start > 0 ? "…" : "") +
-            rawText.slice(start, end).trim() +
-            (end < rawText.length ? "…" : "");
-          found.push({ page: i, snippet });
-        }
-      } catch {}
-      if (i % 5 === 0 || i === pdf.numPages) {
-        setSearchProgress(Math.round((i / pdf.numPages) * 100));
-        setResults([...found]);
-      }
-    }
-    setResults(found);
-    setResultIdx(0);
-    setSearching(false);
-    if (found.length > 0) goToPage(found[0].page);
-  }, [query, pdf, goToPage]);
-
-  const selectResult = useCallback(
-    (idx) => {
-      if (!results[idx]) return;
-      setResultIdx(idx);
-      const item = results[idx];
-      goToPage(typeof item === "object" ? item.page : item);
-    },
-    [results, goToPage]
-  );
-
-  const nextResult = useCallback(() => {
-    if (results.length === 0) return;
-    const ni = (resultIdx + 1) % results.length;
-    selectResult(ni);
-  }, [results, resultIdx, selectResult]);
-
-  const prevResult = useCallback(() => {
-    if (results.length === 0) return;
-    const pi = (resultIdx - 1 + results.length) % results.length;
-    selectResult(pi);
-  }, [results, resultIdx, selectResult]);
 
   const openGoTo = useCallback(() => {
     setGoToValue(String(currentPage));
@@ -412,6 +354,10 @@ export default function ProBookViewer({
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
   const isDarkTheme = theme === "dark" || theme === "dusk";
+
+  // Current page annotation metrics
+  const currentAnnotCount = getPageAnnotationCount(bookId, currentPage);
+  const currentCanRedo = canRedoPageAnnotation(bookId, currentPage);
 
   if (loading) {
     return (
@@ -461,15 +407,16 @@ export default function ProBookViewer({
         pointerDownRef.current = { x: e.clientX, y: e.clientY };
       }}
       onClick={(e) => {
+        if (penMode && penTool !== "pan") return;
         const targetEl = e.target instanceof Element ? e.target : null;
-        if (showToc || showSearch || showGoTo || showComfort) {
+        if (showToc || showGoTo || showComfort) {
           if (!targetEl?.closest("[data-viewer-ui]")) {
             setShowComfort(false);
+            setShowGoTo(false);
           }
           return;
         }
         if (targetEl?.closest("[data-viewer-ui]")) return;
-        // Ignore clicks that were actually scroll/drag gestures
         const dist = Math.hypot(
           e.clientX - pointerDownRef.current.x,
           e.clientY - pointerDownRef.current.y
@@ -487,9 +434,10 @@ export default function ProBookViewer({
         setShowToolbar((s) => !s);
       }}
     >
-      {/* Page Stream / Single / Spread Canvas */}
+      {/* Virtualized Page Stream with Precision Pen Layer */}
       <VerticalPageStream
         pdf={pdf}
+        bookId={bookId}
         totalPages={totalPages}
         currentPage={currentPage}
         zoom={zoom}
@@ -500,6 +448,12 @@ export default function ProBookViewer({
         brightness={brightness}
         isRTL={isRTL}
         bookmarks={bookmarks}
+        penMode={penMode}
+        penTool={penTool}
+        penColor={penColor}
+        penSize={penSize}
+        annotRevision={annotRevision}
+        onAnnotationChange={() => setAnnotRevision((r) => r + 1)}
         onCurrentPageChange={onStreamPageChange}
         onNextPage={nextPage}
         onPrevPage={prevPage}
@@ -531,28 +485,10 @@ export default function ProBookViewer({
         onRemoveBookmark={removeBookmark}
       />
 
-      <SearchPanel
-        show={showSearch}
-        darkMode={isDarkTheme}
-        query={query}
-        setQuery={setQuery}
-        onSearch={runSearch}
-        searching={searching}
-        searchProgress={searchProgress}
-        results={results}
-        resultIdx={resultIdx}
-        onSelectResult={selectResult}
-        onNextResult={nextResult}
-        onPrevResult={prevResult}
-        onClose={() => setShowSearch(false)}
-      />
-
       <ThemeComfortPanel
         show={showComfort}
         theme={theme}
         onSelectTheme={setTheme}
-        viewMode={viewMode}
-        onSelectViewMode={setViewMode}
         fitMode={fitMode}
         onSelectFitMode={setFitMode}
         brightness={brightness}
@@ -579,31 +515,63 @@ export default function ProBookViewer({
           totalPages={totalPages}
           zoom={zoom}
           theme={theme}
-          viewMode={viewMode}
           bookmarks={bookmarks}
+          penMode={penMode}
+          penTool={penTool}
+          penColor={penColor}
+          penSize={penSize}
+          annotationCount={currentAnnotCount}
+          canRedo={currentCanRedo}
+          onTogglePenMode={() => {
+            setShowComfort(false);
+            setShowToc(false);
+            setShowGoTo(false);
+            setPenMode((p) => !p);
+          }}
+          onSelectPenTool={setPenTool}
+          onSelectPenColor={setPenColor}
+          onSelectPenSize={setPenSize}
+          onUndoAnnotation={handleUndoAnnotation}
+          onRedoAnnotation={handleRedoAnnotation}
+          onClearAnnotations={handleClearAnnotations}
           onNext={nextPage}
           onPrev={prevPage}
           onZoomIn={zoomIn}
           onZoomOut={zoomOut}
           onResetZoom={resetZoom}
-          onToggleComfort={() => setShowComfort((s) => !s)}
-          onCycleViewMode={cycleViewMode}
+          onToggleComfort={() => {
+            setShowToc(false);
+            setShowGoTo(false);
+            setShowComfort((s) => !s);
+          }}
           onToggleBookmark={toggleBookmark}
-          onToggleToc={() => setShowToc((s) => !s)}
-          onToggleSearch={() => setShowSearch((s) => !s)}
-          onToggleGoTo={openGoTo}
+          onToggleToc={() => {
+            setShowComfort(false);
+            setShowGoTo(false);
+            setShowToc((s) => !s);
+          }}
+          onToggleGoTo={() => {
+            setShowComfort(false);
+            setShowToc(false);
+            openGoTo();
+          }}
           onSeekProgress={(f) => goToPage(Math.max(1, Math.round(f * totalPages)))}
           onToggleFullscreen={toggleFullscreen}
           onHide={() => {
             setShowComfort(false);
+            setPenMode(false);
             setShowToolbar(false);
           }}
         />
       ) : (
         <button
+          type="button"
           data-viewer-ui
-          onClick={() => setShowToolbar(true)}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-lg bg-stone-900/80 text-stone-100 shadow-lg flex items-center gap-1.5 text-xs font-mono tabular-nums hover:bg-stone-900 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowToolbar(true);
+          }}
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-lg bg-stone-900/85 text-stone-100 shadow-lg flex items-center gap-1.5 text-xs font-mono tabular-nums hover:bg-stone-900 transition-colors"
           title={t.tbShow}
         >
           <ChevronUp className="w-3.5 h-3.5" />
@@ -647,43 +615,10 @@ async function normalizeOutline(outline, pdf) {
   return walk(outline);
 }
 
-// Smart automatic generation of Table of Contents (الفهرس التلقائي)
-async function generateSmartOutline(pdf, numPages, bookTitle, lang = "ar") {
+// Instant Table of Contents generation without saturating PDF worker
+function generateSmartOutline(numPages, lang = "ar") {
   if (!numPages || numPages <= 0) return [];
 
-  const foundItems = [];
-  const maxScan = Math.min(12, numPages);
-
-  // Attempt fast scan of early pages for section/chapter headings
-  try {
-    for (let p = 1; p <= maxScan; p++) {
-      const text = await extractPageText(pdf, p).catch(() => "");
-      if (!text) continue;
-
-      const lines = text.split(/[\r\n]+/).map((s) => s.trim()).filter(Boolean);
-      for (const line of lines) {
-        if (line.length < 4 || line.length > 70) continue;
-        if (/^(المقدمة|التمهيد|تصدير|الباب|الفصل|المبحث|المطلب|كتاب\s|فصل\sفي|خاتمة|الفهرس|مقدمة\sالتحقيق)/i.test(line)) {
-          if (!foundItems.some((item) => item.pageNumber === p)) {
-            foundItems.push({
-              title: line,
-              pageNumber: p,
-              items: [],
-              isAuto: true,
-            });
-            break;
-          }
-        }
-      }
-    }
-  } catch {}
-
-  // If scanner found 2 or more distinct chapters, return them
-  if (foundItems.length >= 2) {
-    return foundItems;
-  }
-
-  // Localized section templates
   const isArabic = lang === "ar";
   const isUrdu = lang === "ur";
   const isTurkish = lang === "tr";
@@ -762,7 +697,6 @@ async function generateSmartOutline(pdf, numPages, bookTitle, lang = "ar") {
     ];
   }
 
-  // Larger book (> 25 pages): divide into 7 clear logical sections
   const p1 = 1;
   const p2 = Math.max(2, Math.round(numPages * 0.12));
   const p3 = Math.max(p2 + 1, Math.round(numPages * 0.3));

@@ -27,12 +27,17 @@ export default function PullToRefresh({ onRefresh, children }) {
   const onTouchMove = useCallback(
     (e) => {
       if (!pulling.current || refreshing) return;
-      const diff = e.touches[0].clientY - startY.current;
-      if (diff <= 0) {
-        setPullDistance(0);
+      if (window.scrollY > 0) {
+        pulling.current = false;
+        setPullDistance((prev) => (prev !== 0 ? 0 : prev));
         return;
       }
-      const resisted = Math.min(diff * 0.4, MAX_PULL);
+      const diff = e.touches[0].clientY - startY.current;
+      if (diff <= 24) {
+        setPullDistance((prev) => (prev !== 0 ? 0 : prev));
+        return;
+      }
+      const resisted = Math.min((diff - 24) * 0.4, MAX_PULL);
       setPullDistance(resisted);
     },
     [refreshing]

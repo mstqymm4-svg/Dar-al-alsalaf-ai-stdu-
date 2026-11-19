@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Bookmark, ChevronLeft, ChevronRight } from "lucide-react";
 import PdfPageRenderer from "./PdfPageRenderer";
-import { motion, AnimatePresence } from "framer-motion";
+import PageAnnotationLayer from "./PageAnnotationLayer";
 import { useT } from "@/lib/i18n";
 
 const DEFAULT_RATIO = 0.707; // Standard portrait aspect ratio (width / height)
-const RENDER_BUFFER = 2; // Pre-render currentPage ± 2 pages
-const GAP = 16; // 1rem gap between pages
+const RENDER_BUFFER = 1; // Pre-render currentPage ± 1 page for fast, low-memory scrolling
+const DOM_WINDOW_BUFFER = 2; // Mount only currentPage ± 2 DOM nodes in scroll stream (virtualized)
+const GAP = 16; // 1rem vertical gap between pages (my-2 = 8px top + 8px bottom)
 
 const clampZoom = (z) => Math.max(0.5, Math.min(3, +Number(z).toFixed(2)));
 
@@ -15,34 +16,35 @@ export const READER_THEMES = {
     id: "light",
     canvasBg: "bg-[#F5F2EB]",
     pageBg: "bg-white",
-    pageShadow: "shadow-[0_4px_24px_rgba(28,25,23,0.12)] ring-1 ring-stone-300/80",
+    pageShadow: "shadow-[0_4px_20px_rgba(28,25,23,0.10)] ring-1 ring-stone-300/80",
     badgeBg: "bg-stone-900/80 text-stone-100",
   },
   sepia: {
     id: "sepia",
     canvasBg: "bg-[#EFE5D3]",
     pageBg: "bg-[#EFE5D3]",
-    pageShadow: "shadow-[0_6px_26px_rgba(68,51,28,0.15)] ring-1 ring-[#D8CAAE]",
+    pageShadow: "shadow-[0_4px_20px_rgba(68,51,28,0.14)] ring-1 ring-[#D8CAAE]",
     badgeBg: "bg-[#3D2E1E]/85 text-[#F7EFE2]",
   },
   dusk: {
     id: "dusk",
     canvasBg: "bg-[#181C22]",
     pageBg: "bg-[#181C22]",
-    pageShadow: "shadow-[0_8px_32px_rgba(0,0,0,0.55)] ring-1 ring-slate-700/60",
+    pageShadow: "shadow-[0_6px_24px_rgba(0,0,0,0.45)] ring-1 ring-slate-700/60",
     badgeBg: "bg-slate-800/90 text-slate-200",
   },
   dark: {
     id: "dark",
     canvasBg: "bg-[#0B0D11]",
     pageBg: "bg-[#121418]",
-    pageShadow: "shadow-[0_8px_35px_rgba(0,0,0,0.75)] ring-1 ring-neutral-800",
+    pageShadow: "shadow-[0_6px_26px_rgba(0,0,0,0.65)] ring-1 ring-neutral-800",
     badgeBg: "bg-neutral-800/90 text-neutral-200",
   },
 };
 
 export default function VerticalPageStream({
   pdf,
+  bookId,
   totalPages,
   currentPage,
   zoom,
@@ -53,6 +55,12 @@ export default function VerticalPageStream({
   brightness = 100,
   isRTL = true,
   bookmarks = [],
+  penMode = false,
+  penTool = "pen",
+  penColor = "#EF4444",
+  penSize = 3.5,
+  annotRevision = 0,
+  onAnnotationChange,
   onCurrentPageChange,
   onNextPage,
   onPrevPage,
@@ -81,6 +89,9 @@ export default function VerticalPageStream({
   const [pinchZoom, setPinchZoom] = useState(null);
   const pinchZoomRef = useRef(null);
   pinchZoomRef.current = pinchZoom;
+  const isDrawingActive = penMode && penTool !== "pan";
+  const penModeRef = useRef(isDrawingActive);
+  penModeRef.current = isDrawingActive;
 
   const isProgrammaticScrollRef = useRef(false);
   const scrollTimeoutRef = useRef(null);
@@ -94,7 +105,8 @@ export default function VerticalPageStream({
   useEffect(() => {
     if (!pdf) return;
     let cancelled = false;
-    pdf.getPage(1)
+    pdf
+      .getPage(1)
       .then((page) => {
         if (cancelled) return;
         const vp = page.getViewport({ scale: 1 });
@@ -104,7 +116,9 @@ export default function VerticalPageStream({
         }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [pdf]);
 
   // ── Measure container dimensions with ResizeObserver ──
@@ -202,7 +216,6 @@ export default function VerticalPageStream({
     if (prevZ !== zoom) {
       prevZoomRef.current = zoom;
       const el = scrollRef.current;
-      // If ending a pinch, anchor was already maintained frame-by-frame
       if (el && prevZ > 0 && touchRef.current.mode !== "pinch") {
         const wasPinchCommit = Date.now() - lastMultiTouchTimeRef.current < 150;
         if (!wasPinchCommit) {
@@ -212,8 +225,14 @@ export default function VerticalPageStream({
           isProgrammaticScrollRef.current = true;
           requestAnimationFrame(() => {
             if (!scrollRef.current) return;
-            scrollRef.current.scrollLeft = Math.max(0, cx * ratio - scrollRef.current.clientWidth / 2);
-            scrollRef.current.scrollTop = Math.max(0, cy * ratio - scrollRef.current.clientHeight / 2);
+            scrollRef.current.scrollLeft = Math.max(
+              0,
+              cx * ratio - scrollRef.current.clientWidth / 2
+            );
+            scrollRef.current.scrollTop = Math.max(
+              0,
+              cy * ratio - scrollRef.current.clientHeight / 2
+            );
           });
           clearTimeout(scrollTimeoutRef.current);
           scrollTimeoutRef.current = setTimeout(() => {
@@ -261,7 +280,7 @@ export default function VerticalPageStream({
         st.midY = (a.clientY + b.clientY) / 2 - rect.top;
         st.startContentX = el.scrollLeft + st.midX;
         st.startContentY = el.scrollTop + st.midY;
-      } else if (e.touches.length === 1) {
+      } else if (e.touches.length === 1 && !penModeRef.current) {
         st.mode = "single";
         st.hadMultiTouch = false;
         st.startX = e.touches[0].clientX;
@@ -292,7 +311,6 @@ export default function VerticalPageStream({
           st.mode = "idle";
           finishPinch();
         } else if (e.touches.length === 1) {
-          // One finger still down after releasing pinch — commit zoom and lock swipe
           lastMultiTouchTimeRef.current = Date.now();
           st.mode = "idle";
           finishPinch();
@@ -300,7 +318,11 @@ export default function VerticalPageStream({
         return;
       }
 
-      // Horizontal swipe in single/spread mode (strictly ONLY when unzoomed and not post-pinch)
+      if (penModeRef.current) {
+        st.mode = "idle";
+        return;
+      }
+
       const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 500;
       if (
         st.mode === "single" &&
@@ -349,18 +371,19 @@ export default function VerticalPageStream({
         return;
       }
       isProgrammaticScrollRef.current = true;
-      const targetY = (Math.max(1, Math.min(totalPages, n)) - 1) * totalItemHeight;
-      scrollRef.current.scrollTo({ top: targetY, behavior: "smooth" });
+      const clampedPage = Math.max(1, Math.min(totalPages, Number(n) || 1));
+      lastReportedPageRef.current = clampedPage;
+      const targetY = (clampedPage - 1) * totalItemHeight;
+      scrollRef.current.scrollTop = targetY;
       clearTimeout(scrollTimeoutRef.current);
       scrollTimeoutRef.current = setTimeout(() => {
         isProgrammaticScrollRef.current = false;
-      }, 500);
+      }, 150);
     };
   }, [scrollToPageRef, viewMode, totalPages, totalItemHeight]);
 
   // ── Continuous scroll tracking with RAF ──
   const handleScroll = useCallback(() => {
-    // During programmatic scroll, active pinch, or right after pinching, do NOT change page
     const recentlyPinched = Date.now() - lastMultiTouchTimeRef.current < 500;
     if (
       isProgrammaticScrollRef.current ||
@@ -369,7 +392,8 @@ export default function VerticalPageStream({
       pinchZoom !== null ||
       touchRef.current.mode === "pinch" ||
       recentlyPinched
-    ) return;
+    )
+      return;
     if (rafScrollRef.current) cancelAnimationFrame(rafScrollRef.current);
 
     rafScrollRef.current = requestAnimationFrame(() => {
@@ -387,7 +411,9 @@ export default function VerticalPageStream({
   }, [viewMode, totalPages, totalItemHeight, onCurrentPageChange, pinchZoom]);
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
-  const brightnessFilter = brightness !== 100 ? `brightness(${Number(brightness) / 100})` : "none";
+  // Dimmer overlay alpha instead of expensive container-wide CSS filter
+  const dimmerOpacity =
+    brightness < 100 ? Math.min(0.55, Math.max(0, (100 - brightness) / 100)) : 0;
 
   // ── Mode 1: Single Page or Two-Page Spread ──
   if (viewMode === "single" || viewMode === "spread") {
@@ -402,6 +428,7 @@ export default function VerticalPageStream({
     const pagesToShow = secondaryPage ? [primaryPage, secondaryPage] : [primaryPage];
 
     const handleZoneClick = (zone) => {
+      if (penMode) return;
       if (Date.now() - lastMultiTouchTimeRef.current < 500) return;
       if (zone === "next") {
         isRTL ? onPrevPage?.() : onNextPage?.();
@@ -415,97 +442,126 @@ export default function VerticalPageStream({
     return (
       <div
         ref={scrollRef}
-        className={`flex-1 transition-colors duration-200 select-none relative ${themeConfig.canvasBg} ${
-          isZoomed ? "overflow-auto overscroll-contain flex p-3 sm:p-4" : "overflow-hidden flex flex-col items-center justify-center"
+        className={`flex-1 select-none relative ${themeConfig.canvasBg} ${
+          isZoomed
+            ? "overflow-auto overscroll-contain flex p-3 sm:p-4"
+            : "overflow-hidden flex flex-col items-center justify-center"
         }`}
-        style={{ touchAction: isZoomed ? "pan-x pan-y" : "manipulation", filter: brightnessFilter }}
+        style={{
+          touchAction: isDrawingActive
+            ? "none"
+            : isZoomed
+            ? "pan-x pan-y"
+            : "manipulation",
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        {/* Animated Page Container (m-auto safely centers when small without clipping top/left when zoomed) */}
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={`${primaryPage}_${isSpread}`}
-            initial={{ opacity: 0.85, scale: 0.99 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0.85, scale: 0.99 }}
-            transition={{ duration: 0.15 }}
-            dir={isRTL ? "rtl" : "ltr"}
-            className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto shrink-0"
-          >
-            {pagesToShow.map((p) => {
-              const isBookmarked = bookmarks.includes(p);
-              return (
+        {dimmerOpacity > 0 && (
+          <div
+            className="pointer-events-none fixed inset-0 z-[15] bg-black"
+            style={{ opacity: dimmerOpacity }}
+          />
+        )}
+
+        {/* Instant Page Container */}
+        <div
+          key={`${primaryPage}_${isSpread}`}
+          dir={isRTL ? "rtl" : "ltr"}
+          className="flex items-center justify-center p-2 sm:p-4 gap-3 relative z-[2] m-auto shrink-0"
+        >
+          {pagesToShow.map((p) => {
+            const isBookmarked = bookmarks.includes(p);
+            return (
+              <div
+                key={p}
+                data-page={p}
+                className={`relative rounded-sm shrink-0 overflow-hidden ${themeConfig.pageBg} ${themeConfig.pageShadow}`}
+                style={{
+                  width: pageWidth,
+                  height: pageHeight,
+                }}
+              >
+                {isBookmarked && (
+                  <div className="absolute top-0 left-4 z-20 text-amber-500 drop-shadow pointer-events-none">
+                    <Bookmark className="w-6 h-6 fill-amber-500" />
+                  </div>
+                )}
                 <div
-                  key={p}
-                  data-page={p}
-                  className={`relative rounded-sm shrink-0 overflow-hidden transition-shadow ${themeConfig.pageBg} ${themeConfig.pageShadow}`}
+                  className="relative"
                   style={{
-                    width: pageWidth,
-                    height: pageHeight,
+                    width: committedDim.width,
+                    height: committedDim.height,
+                    transform: `scale(${effZoom / zoom})`,
+                    transformOrigin: "top left",
                   }}
                 >
-                  {isBookmarked && (
-                    <div className="absolute top-0 left-4 z-20 text-amber-500 drop-shadow pointer-events-none">
-                      <Bookmark className="w-6 h-6 fill-amber-500" />
-                    </div>
+                  {pdf && (
+                    <PdfPageRenderer
+                      pdf={pdf}
+                      pageNumber={p}
+                      zoom={zoom}
+                      theme={theme}
+                      targetWidth={committedDim.width}
+                      targetHeight={committedDim.height}
+                    />
                   )}
-                  <div
-                    style={{
-                      width: committedDim.width,
-                      height: committedDim.height,
-                      transform: `scale(${effZoom / zoom})`,
-                      transformOrigin: "top left",
-                    }}
-                  >
-                    {pdf && (
-                      <PdfPageRenderer
-                        pdf={pdf}
-                        pageNumber={p}
-                        zoom={zoom}
-                        theme={theme}
-                        targetWidth={committedDim.width}
-                        targetHeight={committedDim.height}
-                      />
-                    )}
-                  </div>
-                  <div
-                    className={`absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded text-[11px] font-mono tabular-nums pointer-events-none z-10 ${themeConfig.badgeBg}`}
-                  >
-                    {p} / {totalPages}
-                  </div>
+                  <PageAnnotationLayer
+                    bookId={bookId}
+                    pageNumber={p}
+                    width={committedDim.width}
+                    height={committedDim.height}
+                    active={penMode}
+                    tool={penTool}
+                    color={penColor}
+                    size={penSize}
+                    theme={theme}
+                    revision={annotRevision}
+                    onAnnotationChange={onAnnotationChange}
+                  />
                 </div>
-              );
-            })}
-          </motion.div>
-        </AnimatePresence>
+                <div
+                  className={`absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded text-[11px] font-mono tabular-nums pointer-events-none z-10 ${themeConfig.badgeBg}`}
+                >
+                  {p} / {totalPages}
+                </div>
+              </div>
+            );
+          })}
+        </div>
 
-        {/* Tap Zones for turning pages (Only active when NOT zoomed in) */}
-        {!isZoomed && (
+        {/* Tap Zones for turning pages (Only active when NOT zoomed in and NOT in Pen Mode) */}
+        {!isZoomed && !penMode && (
           <div className="absolute inset-0 z-[5] grid grid-cols-5 pointer-events-auto">
-            {/* Left Zone (20%) */}
             <div
-              onClick={(e) => { e.stopPropagation(); handleZoneClick("prev"); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleZoneClick("prev");
+              }}
               className="cursor-pointer group flex items-center justify-start ps-3"
-              title={isRTL ? (t.nextPage || "الصفحة التالية") : (t.prevPage || "الصفحة السابقة")}
+              title={isRTL ? t.nextPage || "الصفحة التالية" : t.prevPage || "الصفحة السابقة"}
             >
-              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
+              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
                 <ChevronLeft className="w-5 h-5" />
               </div>
             </div>
 
-            {/* Center Zone (60%) */}
             <div
-              onClick={(e) => { e.stopPropagation(); handleZoneClick("center"); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleZoneClick("center");
+              }}
               className="col-span-3 cursor-pointer"
             />
 
-            {/* Right Zone (20%) */}
             <div
-              onClick={(e) => { e.stopPropagation(); handleZoneClick("next"); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleZoneClick("next");
+              }}
               className="cursor-pointer group flex items-center justify-end pe-3"
-              title={isRTL ? (t.prevPage || "الصفحة السابقة") : (t.nextPage || "الصفحة التالية")}
+              title={isRTL ? t.prevPage || "الصفحة السابقة" : t.nextPage || "الصفحة التالية"}
             >
-              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg backdrop-blur">
+              <div className="w-10 h-10 rounded-full bg-black/35 hover:bg-black/60 text-white items-center justify-center hidden sm:flex opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
                 <ChevronRight className="w-5 h-5" />
               </div>
             </div>
@@ -515,18 +571,39 @@ export default function VerticalPageStream({
     );
   }
 
-  // ── Mode 2: Continuous Vertical Scroll Stream ──
+  // ── Mode 2: Virtualized Continuous Vertical Scroll Stream ──
+  // Only mount DOM nodes for pages within [currentPage - DOM_WINDOW_BUFFER, currentPage + DOM_WINDOW_BUFFER]
+  const startPage = Math.max(1, currentPage - DOM_WINDOW_BUFFER);
+  const endPage = Math.min(totalPages, currentPage + DOM_WINDOW_BUFFER);
+  const topSpacerHeight = Math.max(0, (startPage - 1) * totalItemHeight);
+  const bottomSpacerHeight = Math.max(0, (totalPages - endPage) * totalItemHeight);
+
+  const visiblePages = [];
+  for (let p = startPage; p <= endPage; p++) {
+    visiblePages.push(p);
+  }
+
   return (
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className={`flex-1 overflow-auto overscroll-contain transition-colors duration-200 select-none ${themeConfig.canvasBg}`}
-      style={{ touchAction: "pan-x pan-y", filter: brightnessFilter }}
+      className={`flex-1 overflow-auto overscroll-contain select-none relative ${themeConfig.canvasBg}`}
+      style={{ touchAction: isDrawingActive ? "none" : "pan-x pan-y" }}
       onContextMenu={(e) => e.preventDefault()}
     >
+      {dimmerOpacity > 0 && (
+        <div
+          className="pointer-events-none fixed inset-0 z-[15] bg-black"
+          style={{ opacity: dimmerOpacity }}
+        />
+      )}
+
       <div dir="ltr" className="flex flex-col items-center py-4 px-2 sm:px-6 min-w-max mx-auto">
-        {Array.from({ length: totalPages }, (_, idx) => {
-          const p = idx + 1;
+        {topSpacerHeight > 0 && (
+          <div style={{ height: topSpacerHeight, width: pageWidth }} className="shrink-0" />
+        )}
+
+        {visiblePages.map((p) => {
           const shouldRender = Math.abs(p - currentPage) <= RENDER_BUFFER;
           const isBookmarked = bookmarks.includes(p);
 
@@ -548,6 +625,7 @@ export default function VerticalPageStream({
 
               {shouldRender ? (
                 <div
+                  className="relative"
                   style={{
                     width: committedDim.width,
                     height: committedDim.height,
@@ -565,6 +643,19 @@ export default function VerticalPageStream({
                       targetHeight={committedDim.height}
                     />
                   )}
+                  <PageAnnotationLayer
+                    bookId={bookId}
+                    pageNumber={p}
+                    width={committedDim.width}
+                    height={committedDim.height}
+                    active={penMode}
+                    tool={penTool}
+                    color={penColor}
+                    size={penSize}
+                    theme={theme}
+                    revision={annotRevision}
+                    onAnnotationChange={onAnnotationChange}
+                  />
                 </div>
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-1.5 opacity-40 font-mono text-xs select-none">
@@ -581,6 +672,10 @@ export default function VerticalPageStream({
             </div>
           );
         })}
+
+        {bottomSpacerHeight > 0 && (
+          <div style={{ height: bottomSpacerHeight, width: pageWidth }} className="shrink-0" />
+        )}
       </div>
     </div>
   );

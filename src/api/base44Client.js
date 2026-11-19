@@ -471,7 +471,11 @@ function createPublicCatalogEntity({
 
   async function loadLocalList() {
     if (memCache && memCache.length > 0) {
-      return filterDeleted(memCache);
+      const deleted = getDeletedIds();
+      if (deleted.size === 0) return memCache;
+      return memCache.filter(
+        (item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id))
+      );
     }
     if (localLoadPromise) return localLoadPromise;
 

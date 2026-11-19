@@ -47,25 +47,6 @@ function setSyncing(isSyncing, extra = {}) {
   emit({ type: "status", status: syncStatus });
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-async function cacheNewImages(urls) {
-  let cached = 0;
-  for (const url of urls) {
-    if (!url || String(url).startsWith("data:")) continue;
-    const existing = await db.getCachedImage(url).catch(() => null);
-    if (existing) continue;
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        const blob = await res.blob();
-        await db.cacheImage(url, blob);
-        cached++;
-      }
-    } catch (e) { /* skip failed image */ }
-  }
-  return cached;
-}
-
 /**
  * Generic incremental reconcile for any entity type.
  * - Compares server items with cached by updated_date
@@ -78,7 +59,6 @@ async function reconcile({
   getCachedFn,
   deleteFn,
   filterFn = null,
-  imageField = null,
   countMetaKey = null,
 }) {
   const serverItems = await listFn();
@@ -112,14 +92,6 @@ async function reconcile({
   for (const item of toDelete) {
     await deleteFn(item.id);
     deletedCount++;
-  }
-
-  // Cache external images asynchronously in background so sync never blocks UI
-  if (imageField && toCache.length > 0) {
-    const urls = toCache.map((i) => i[imageField]).filter((u) => u && !String(u).startsWith("data:"));
-    if (urls.length > 0) {
-      setTimeout(() => { cacheNewImages(urls).catch(() => {}); }, 500);
-    }
   }
 
   if (countMetaKey) await db.setMeta(countMetaKey, visible.length);
@@ -272,9 +244,12 @@ export function startContentSyncEngine() {
   const handleOnline = () => syncAllContent().catch(() => {});
   window.addEventListener("online", handleOnline);
 
-  // Sync when tab regains focus
+  // Sync when tab regains focus (throttled to at most once every 3 minutes)
   const handleVisibility = () => {
-    if (!document.hidden && navigator.onLine) syncAllContent().catch(() => {});
+    const elapsed = Date.now() - (syncStatus.lastSync || 0);
+    if (!document.hidden && navigator.onLine && elapsed > 3 * 60 * 1000) {
+      syncAllContent().catch(() => {});
+    }
   };
   document.addEventListener("visibilitychange", handleVisibility);
 

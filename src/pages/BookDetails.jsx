@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
-import { Heart, Star, BookOpen, ArrowRight, FileText, User, BookMarked, Download, CheckCircle, WifiOff } from "lucide-react";
+import { Heart, Star, BookOpen, ArrowRight, FileText, User, BookMarked, Download, CheckCircle, WifiOff, Share2, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useT } from "@/lib/i18n";
-import { catLabel } from "@/lib/i18n-terms";
+import { catLabel, bookLangLabel } from "@/lib/i18n-terms";
 import { getBook, getFavoriteIds, toggleFavorite, downloadBookPdf, isPdfDownloaded } from "@/lib/offlineSync";
 import { getAccountEmail, addDownloadedBookId } from "@/lib/activeUser";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -152,17 +152,40 @@ export default function BookDetails() {
               </span>
               <h1 className="text-2xl md:text-3xl font-black text-foreground leading-tight">{book.title}</h1>
             </div>
-            <button
-              type="button"
-              onClick={handleToggleFavorite}
-              title={isFavorite ? t.removeFav : t.addFav}
-              aria-label={isFavorite ? t.removeFav : t.addFav}
-              className={`shrink-0 w-11 h-11 rounded-xl border flex items-center justify-center hover:bg-muted active:scale-95 transition-all ${
-                isFavorite ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30" : "border-border hover:border-primary/30"
-              }`}>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  const shareUrl = window.location.href;
+                  try {
+                    if (navigator.share) {
+                      await navigator.share({ title: book.title, url: shareUrl });
+                      return;
+                    }
+                  } catch {}
+                  try {
+                    await navigator.clipboard.writeText(shareUrl);
+                    toast.success(t.linkCopied || "تم نسخ الرابط");
+                  } catch {}
+                }}
+                title={t.share || "مشاركة"}
+                aria-label={t.share || "مشاركة"}
+                className="shrink-0 w-11 h-11 rounded-xl border border-border hover:border-primary/30 flex items-center justify-center hover:bg-muted active:scale-95 transition-all"
+              >
+                <Share2 className="w-5 h-5 text-muted-foreground" />
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                title={isFavorite ? t.removeFav : t.addFav}
+                aria-label={isFavorite ? t.removeFav : t.addFav}
+                className={`shrink-0 w-11 h-11 rounded-xl border flex items-center justify-center hover:bg-muted active:scale-95 transition-all ${
+                  isFavorite ? "border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/30" : "border-border hover:border-primary/30"
+                }`}>
 
-              <Heart className={`w-5 h-5 transition-all ${isFavorite ? "fill-red-500 text-red-500 scale-110" : "text-muted-foreground"}`} />
-            </button>
+                <Heart className={`w-5 h-5 transition-all ${isFavorite ? "fill-red-500 text-red-500 scale-110" : "text-muted-foreground"}`} />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 text-muted-foreground mb-6">
@@ -182,21 +205,20 @@ export default function BookDetails() {
           }
 
           <div className="grid grid-cols-2 gap-3 mb-6">
-            {book.pages_count &&
+            {book.pages_count > 0 &&
             <div className="p-4 rounded-xl bg-muted/50 border border-border hover:border-primary/20 transition-colors">
                 <FileText className="w-4 h-4 mb-1" />
                 <p className="text-lg font-bold text-[hsl(var(--primary))]">{book.pages_count}</p>
                 <p className="text-xs text-[hsl(var(--popover-foreground))]">{t.pages}</p>
               </div>
             }
-
-            
-
-
-
-
-
-            
+            {book.language &&
+            <div className="p-4 rounded-xl bg-muted/50 border border-border hover:border-primary/20 transition-colors">
+                <Globe className="w-4 h-4 mb-1" />
+                <p className="text-lg font-bold text-[hsl(var(--primary))]">{bookLangLabel(book.language, t.langCode)}</p>
+                <p className="text-xs text-[hsl(var(--popover-foreground))]">{t.bookLang || "لغة الكتاب"}</p>
+              </div>
+            }
           </div>
 
           {book.description &&

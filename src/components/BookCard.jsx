@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Heart, Star, BookOpen, BookMarked } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { catLabel } from "@/lib/i18n-terms";
+import { catLabel, bookLangLabel } from "@/lib/i18n-terms";
 import SmartImage from "./SmartImage";
 
 const categoryColors = {
@@ -20,18 +20,9 @@ export default function BookCard({ book, isFavorite, onToggleFavorite }) {
   const navigate = useNavigate();
   const gradient = categoryColors[book.category] || categoryColors["أخرى"];
 
-  const warmPdf = () => {
-    if (book.pdf_url) {
-      import("@/lib/pdfLoader")
-        .then(({ prefetchPdf }) => prefetchPdf(book.pdf_url, { bookId: book.id, title: book.title }))
-        .catch(() => {});
-    }
-  };
-
   const handleRead = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    warmPdf();
     navigate(`/read/${book.id}`);
   };
 
@@ -39,8 +30,6 @@ export default function BookCard({ book, isFavorite, onToggleFavorite }) {
     <div className="h-full">
       <Link
         to={`/book/${book.id}`}
-        onMouseEnter={warmPdf}
-        onTouchStart={warmPdf}
         className="group relative block h-full bg-card rounded-2xl border border-border overflow-hidden hover:shadow-xl hover:shadow-primary/10 hover:border-primary/30 transition-transform duration-200 hover:-translate-y-1">
         
         {/* Cover Image */}
@@ -91,9 +80,18 @@ export default function BookCard({ book, isFavorite, onToggleFavorite }) {
 
         {/* Content */}
         <div className="py-4 px-4">
-          <span className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold mb-2">
-            {catLabel(book.category, t.langCode)}
-          </span>
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            {book.category && (
+              <span className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">
+                {catLabel(book.category, t.langCode)}
+              </span>
+            )}
+            {book.language && (
+              <span className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                {bookLangLabel(book.language, t.langCode)}
+              </span>
+            )}
+          </div>
           <h3
             className="font-bold text-foreground text-sm leading-loose line-clamp-2 mb-1.5 pt-0.5 group-hover:text-primary transition-colors"
             style={{ fontFamily: "var(--font-title, var(--font-heading, inherit))" }}>
@@ -120,6 +118,7 @@ export default function BookCard({ book, isFavorite, onToggleFavorite }) {
           }
 
           <button
+            type="button"
             onClick={handleRead}
             className="w-full flex items-center justify-center gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground transition-all active:scale-95 shadow-sm hover:shadow-md hover:shadow-primary/20 text-xs font-bold py-2 mt-2 rounded-[4px_20px_4px_20px]">
             

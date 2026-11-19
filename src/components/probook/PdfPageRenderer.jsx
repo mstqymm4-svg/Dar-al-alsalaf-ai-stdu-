@@ -2,36 +2,10 @@ import React, { useRef, useState, useEffect, memo } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
-// In-memory LRU cache of rendered page images for instant re-display without worker lag
-const renderedImageCache = new Map();
-const MAX_IMAGE_CACHE = 32;
-
-function getCachedPageImage(key) {
-  return renderedImageCache.get(key) || null;
-}
-
-function setCachedPageImage(key, blobUrl) {
-  if (renderedImageCache.has(key)) {
-    const prev = renderedImageCache.get(key);
-    if (prev && prev !== blobUrl && prev.startsWith("blob:")) {
-      try { URL.revokeObjectURL(prev); } catch {}
-    }
-    renderedImageCache.delete(key);
-  } else if (renderedImageCache.size >= MAX_IMAGE_CACHE) {
-    const firstKey = renderedImageCache.keys().next().value;
-    const oldUrl = renderedImageCache.get(firstKey);
-    if (oldUrl && oldUrl.startsWith("blob:")) {
-      try { URL.revokeObjectURL(oldUrl); } catch {}
-    }
-    renderedImageCache.delete(firstKey);
-  }
-  renderedImageCache.set(key, blobUrl);
-}
-
 const getCanvasFilter = (th) => {
-  if (th === "dark") return "invert(0.92) hue-rotate(180deg) contrast(1.05)";
-  if (th === "dusk") return "invert(0.86) hue-rotate(180deg) sepia(0.12)";
-  if (th === "sepia") return "sepia(0.35) saturate(1.05) contrast(1.01)";
+  if (th === "dark") return "invert(0.92) hue-rotate(180deg)";
+  if (th === "dusk") return "invert(0.86) hue-rotate(180deg)";
+  if (th === "sepia") return "sepia(0.3)";
   return "none";
 };
 
@@ -43,11 +17,10 @@ const getCanvasBg = (th) => {
 };
 
 /**
- * Ultra-performant PDF Page Renderer:
- * - Instant display from in-memory cache when revisiting pages
- * - Direct hardware-accelerated canvas rasterization
- * - Non-blocking async toBlob snapshot caching (zero main-thread freeze)
- * - Clean per-canvas filter inversion for mobile Dark Mode without WebKit compositing bugs
+ * Direct single-canvas PDF Page Renderer:
+ * - Zero double-canvas allocation and zero main-thread canvas.toBlob() GPU readback freezes
+ * - Theme switching applies a lightweight CSS layer without re-running PDF.js rendering
+ * - Cancels in-flight PDF.js render tasks immediately on page turn or unmount
  */
 function PdfPageRenderer({
   pdf,
@@ -61,37 +34,23 @@ function PdfPageRenderer({
   const t = useT();
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
+  const lastRenderedKeyRef = useRef("");
   const [rendering, setRendering] = useState(true);
   const [hasRenderedOnce, setHasRenderedOnce] = useState(false);
-  const [cachedUrl, setCachedUrl] = useState(null);
   const [error, setError] = useState(false);
 
-  // Unique cache key per page, zoom and theme
-  const cacheKey = `${pdf?.fingerprint || "pdf"}_${pageNumber}_${Math.round(zoom * 10)}_${theme}`;
-
-  useEffect(() => {
-    // Check if we already have this page in memory
-    const existing = getCachedPageImage(cacheKey);
-    if (existing) {
-      setCachedUrl(existing);
-      setHasRenderedOnce(true);
-      setRendering(false);
-    }
-  }, [cacheKey]);
+  const docId = pdf?.fingerprints?.[0] || pdf?.fingerprint || "pdf";
+  const renderKey = `${docId}_${pageNumber}_${Math.round(targetWidth)}_${Math.round(targetHeight)}_${Math.round(zoom * 20)}`;
 
   useEffect(() => {
     if (!pdf || !pageNumber) return;
-    let cancelled = false;
-    setError(false);
-
-    // If already cached in memory, use cached image instantly and skip PDF worker render
-    const existing = getCachedPageImage(cacheKey);
-    if (existing) {
-      setCachedUrl(existing);
-      setHasRenderedOnce(true);
+    if (lastRenderedKeyRef.current === renderKey && hasRenderedOnce) {
       setRendering(false);
       return;
     }
+
+    let cancelled = false;
+    setError(false);
 
     const render = async () => {
       try {
@@ -111,17 +70,16 @@ function PdfPageRenderer({
           onAspectRatio(pageNumber, ratio);
         }
 
-        let cssScale = 1.2 * zoom;
+        let cssScale = 1.15 * zoom;
         if (targetWidth > 0) {
           cssScale = targetWidth / baseVp.width;
         } else if (targetHeight > 0) {
           cssScale = targetHeight / baseVp.height;
         }
 
-        // Adaptive DPR and max canvas buffer for fast mobile & desktop rendering
         const isSmallScreen = typeof window !== "undefined" && window.innerWidth < 768;
-        const dpr = Math.min(window.devicePixelRatio || 1, isSmallScreen ? 1.65 : 2.0);
-        const maxPixelDim = isSmallScreen ? 2200 : 3200;
+        const dpr = Math.min(window.devicePixelRatio || 1, isSmallScreen ? 1.35 : 1.75);
+        const maxPixelDim = isSmallScreen ? 1650 : 2400;
         const rawRenderScale = cssScale * dpr;
         const maxAllowedScale = Math.min(
           maxPixelDim / baseVp.width,
@@ -130,65 +88,34 @@ function PdfPageRenderer({
         const renderScale = Math.min(rawRenderScale, maxAllowedScale);
 
         const viewport = page.getViewport({ scale: renderScale });
-
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
 
-        const pxWidth = Math.floor(viewport.width);
-        const pxHeight = Math.floor(viewport.height);
+        const pxWidth = Math.max(1, Math.floor(viewport.width));
+        const pxHeight = Math.max(1, Math.floor(viewport.height));
 
-        // Render to an offscreen canvas first so visible canvas NEVER clears/flashes white on zoom
-        const offscreen = document.createElement("canvas");
-        offscreen.width = pxWidth;
-        offscreen.height = pxHeight;
-        const offCtx = offscreen.getContext("2d", { alpha: false });
-        if (!offCtx) return;
-
-        offCtx.imageSmoothingEnabled = true;
-        offCtx.imageSmoothingQuality = "high";
-
-        const task = page.render({ canvasContext: offCtx, viewport });
-        renderTaskRef.current = task;
-        await task.promise;
-
-        if (cancelled) return;
-
-        // Atomic swap into visible canvas
         if (canvas.width !== pxWidth || canvas.height !== pxHeight) {
           canvas.width = pxWidth;
           canvas.height = pxHeight;
         }
         canvas.style.width = "100%";
         canvas.style.height = "100%";
-        const ctx = canvas.getContext("2d", { alpha: false });
-        if (ctx) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.drawImage(offscreen, 0, 0);
-        }
 
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) return;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, pxWidth, pxHeight);
+
+        const task = page.render({ canvasContext: ctx, viewport });
+        renderTaskRef.current = task;
+        await task.promise;
+
+        if (cancelled) return;
+
+        lastRenderedKeyRef.current = renderKey;
         setRendering(false);
         setHasRenderedOnce(true);
-
-        // Save snapshot to memory cache off the main thread using async toBlob
-        if (typeof canvas.toBlob === "function") {
-          setTimeout(() => {
-            if (!cancelled && canvas) {
-              try {
-                canvas.toBlob(
-                  (blob) => {
-                    if (!cancelled && blob) {
-                      const url = URL.createObjectURL(blob);
-                      setCachedPageImage(cacheKey, url);
-                    }
-                  },
-                  "image/webp",
-                  0.82
-                );
-              } catch {}
-            }
-          }, 120);
-        }
       } catch (e) {
         if (e?.name !== "RenderingCancelledException" && !cancelled) {
           setError(true);
@@ -197,13 +124,10 @@ function PdfPageRenderer({
       }
     };
 
-    const rafId = requestAnimationFrame(() => {
-      render();
-    });
+    render();
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
       if (renderTaskRef.current) {
         try {
           renderTaskRef.current.cancel();
@@ -211,32 +135,22 @@ function PdfPageRenderer({
         renderTaskRef.current = null;
       }
     };
-  }, [pdf, pageNumber, zoom, targetWidth, targetHeight, cacheKey]);
+  }, [pdf, pageNumber, zoom, targetWidth, targetHeight, renderKey, hasRenderedOnce, onAspectRatio]);
 
   const canvasFilter = getCanvasFilter(theme);
   const containerBg = getCanvasBg(theme);
 
   return (
     <div className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${containerBg}`}>
-      {/* If cached image exists, display it instantly */}
-      {cachedUrl && (
-        <img
-          src={cachedUrl}
-          alt=""
-          style={{ filter: canvasFilter }}
-          className={`w-full h-full object-contain pointer-events-none ${containerBg}`}
-        />
-      )}
-
       <canvas
         ref={canvasRef}
         style={{ filter: canvasFilter }}
-        className={`w-full h-full block transition-opacity duration-150 ${containerBg} ${
-          hasRenderedOnce && !cachedUrl ? "opacity-100" : "opacity-0"
-        } ${cachedUrl ? "hidden" : ""}`}
+        className={`w-full h-full block ${containerBg} ${
+          hasRenderedOnce ? "opacity-100" : "opacity-0"
+        }`}
       />
 
-      {rendering && !hasRenderedOnce && !cachedUrl && !error && (
+      {rendering && !hasRenderedOnce && !error && (
         <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 ${containerBg} text-stone-400`}>
           <Loader2 className="w-5 h-5 text-primary animate-spin" />
           <span className="text-xs font-mono tabular-nums">

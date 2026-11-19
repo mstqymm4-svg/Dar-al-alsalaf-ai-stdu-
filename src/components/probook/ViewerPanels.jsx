@@ -1,440 +1,362 @@
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { useState, useMemo } from "react";
 import {
-  BookOpen,
   X,
-  Search,
-  Loader2,
-  Bookmark,
-  BookmarkCheck,
-  Trash2,
-  LayoutGrid,
   List,
-  ChevronRight,
-  ChevronLeft,
+  BookOpen,
   Sun,
-  Columns,
-  FileText,
-  ScrollText,
+  Moon,
+  Bookmark,
+  Trash2,
+  Grid,
+  BookmarkPlus,
   Maximize2,
   MoveHorizontal,
+  Sparkles,
+  FileText,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
+function OutlineNode({ item, currentPage, onSelect, depth = 0, pageLabel = "ص" }) {
+  const isCurrent = item.pageNumber && item.pageNumber === currentPage;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => item.pageNumber && onSelect(item.pageNumber)}
+        style={{ paddingInlineStart: `${12 + depth * 14}px` }}
+        className={`w-full text-start py-2.5 pe-3 rounded-xl text-xs transition-all flex items-center justify-between gap-2 ${
+          isCurrent
+            ? "bg-primary text-primary-foreground font-bold shadow-sm"
+            : item.pageNumber
+            ? "hover:bg-muted/80 text-foreground"
+            : "text-muted-foreground cursor-default"
+        }`}
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <FileText
+            className={`w-3.5 h-3.5 shrink-0 ${
+              isCurrent ? "text-primary-foreground" : "text-primary/70"
+            }`}
+          />
+          <span className="truncate leading-relaxed">{item.title}</span>
+        </div>
+        {item.pageNumber && (
+          <span
+            className={`text-[10px] font-mono tabular-nums shrink-0 px-2 py-0.5 rounded-md ${
+              isCurrent
+                ? "bg-black/20 text-primary-foreground"
+                : "bg-muted text-muted-foreground"
+            }`}
+          >
+            {pageLabel} {item.pageNumber}
+          </span>
+        )}
+      </button>
+      {item.items?.length > 0 && (
+        <div className="mt-0.5 space-y-0.5">
+          {item.items.map((child, idx) => (
+            <OutlineNode
+              key={idx}
+              item={child}
+              currentPage={currentPage}
+              onSelect={onSelect}
+              depth={depth + 1}
+              pageLabel={pageLabel}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
- * Multi-tab side drawer:
- * 1. Table of Contents (TOC)
- * 2. Bookmarks
- * 3. Page Grid
- * Fully translated and localized across all supported languages.
+ * Fast 3-Tab Navigator Drawer:
+ *  - Tab 1: Table of Contents (الفهرس)
+ *  - Tab 2: Saved Bookmarks (الإشارات المرجعية)
+ *  - Tab 3: Quick Page Grid (شبكة الصفحات) — capped/windowed for zero lag on huge books
  */
 export function TocPanel({
   show,
   isRTL,
   darkMode,
   outline = [],
-  totalPages = 0,
-  currentPage = 1,
+  totalPages,
+  currentPage,
   bookmarks = [],
-  initialTab = "toc",
   onClose,
   onPageClick,
   onToggleBookmark,
   onRemoveBookmark,
 }) {
   const t = useT();
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState("toc");
+  const isCurrentBookmarked = bookmarks.includes(currentPage);
 
-  const surfaceCls = darkMode
-    ? "bg-[#161920] text-stone-100 border-neutral-800"
-    : "bg-[#FBF9F5] text-stone-900 border-stone-200";
+  // Windowed page grid around currentPage if book has > 200 pages
+  const pageNumbers = useMemo(() => {
+    if (!totalPages || totalPages <= 0) return [];
+    if (totalPages <= 240) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const set = new Set([1, 2, 3, totalPages - 1, totalPages]);
+    const step = Math.max(1, Math.floor(totalPages / 120));
+    for (let p = 1; p <= totalPages; p += step) set.add(p);
+    for (
+      let p = Math.max(1, currentPage - 30);
+      p <= Math.min(totalPages, currentPage + 30);
+      p++
+    ) {
+      set.add(p);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [totalPages, currentPage]);
+
+  if (!show) return null;
 
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          data-viewer-ui
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 z-30 flex bg-black/55 backdrop-blur-[2px]"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ x: isRTL ? 320 : -320 }}
-            animate={{ x: 0 }}
-            exit={{ x: isRTL ? 320 : -320 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className={`w-80 sm:w-96 max-w-[88%] h-full flex flex-col border-e overflow-hidden shadow-2xl ${surfaceCls}`}
-            onClick={(e) => e.stopPropagation()}
+    <div
+      data-viewer-ui
+      onClick={onClose}
+      className="fixed inset-0 z-30 bg-black/45 flex"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        dir={t.dir || "rtl"}
+        className={`w-80 max-w-[86vw] h-full border-e flex flex-col shadow-2xl ${
+          isRTL ? "ms-0" : "me-0"
+        } ${
+          darkMode
+            ? "bg-neutral-900 border-neutral-800 text-stone-100"
+            : "bg-card border-border text-foreground"
+        }`}
+      >
+        {/* Header */}
+        <div className="p-3.5 border-b border-border/60 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-bold text-sm">
+            <BookOpen className="w-4 h-4 text-primary" />
+            <span>{t.idxTitle || "فهرس الكتاب والتنقل"}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
           >
-            {/* Header */}
-            <div
-              className={`px-4 py-3 border-b flex items-center justify-between shrink-0 ${
-                darkMode ? "border-neutral-800 bg-[#161920]" : "border-stone-200 bg-[#FBF9F5]"
-              }`}
-            >
-              <h3 className="text-sm font-bold flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-primary" />
-                <span>{t.tocAndBookmarks || t.idxTitle || "الفهرس والعلامات"}</span>
-              </h3>
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-            {/* Segmented Tabs */}
-            <div
-              className={`grid grid-cols-3 gap-1 p-2 border-b shrink-0 ${
-                darkMode ? "bg-neutral-900/60 border-neutral-800" : "bg-stone-100/80 border-stone-200"
-              }`}
-            >
-              <button
-                onClick={() => setActiveTab("toc")}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  activeTab === "toc"
-                    ? darkMode
-                      ? "bg-neutral-800 text-white shadow-sm"
-                      : "bg-white text-stone-900 shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>{t.tabToc || "الفهرس"}</span>
-              </button>
+        {/* 3-Tab Switcher */}
+        <div className="grid grid-cols-3 gap-1 p-2 border-b border-border/60 bg-muted/30 text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => setActiveTab("toc")}
+            className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+              activeTab === "toc"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "hover:bg-muted text-muted-foreground"
+            }`}
+          >
+            <List className="w-3.5 h-3.5" />
+            <span className="truncate">{t.tabToc || "الفهرس"}</span>
+          </button>
 
-              <button
-                onClick={() => setActiveTab("bookmarks")}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+          <button
+            type="button"
+            onClick={() => setActiveTab("bookmarks")}
+            className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+              activeTab === "bookmarks"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "hover:bg-muted text-muted-foreground"
+            }`}
+          >
+            <Bookmark className="w-3.5 h-3.5" />
+            <span className="truncate">{t.tabBookmarks || "العلامات"}</span>
+            {bookmarks.length > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
                   activeTab === "bookmarks"
-                    ? darkMode
-                      ? "bg-neutral-800 text-white shadow-sm"
-                      : "bg-white text-stone-900 shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "bg-black/20 text-white"
+                    : "bg-amber-500/20 text-amber-500"
                 }`}
               >
-                <Bookmark className="w-3.5 h-3.5" />
-                <span>
-                  {t.tabBookmarks || "العلامات"} ({bookmarks.length})
-                </span>
-              </button>
+                {bookmarks.length}
+              </span>
+            )}
+          </button>
 
-              <button
-                onClick={() => setActiveTab("pages")}
-                className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  activeTab === "pages"
-                    ? darkMode
-                      ? "bg-neutral-800 text-white shadow-sm"
-                      : "bg-white text-stone-900 shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>{t.tabPages || "الصفحات"}</span>
-              </button>
-            </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("pages")}
+            className={`py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+              activeTab === "pages"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "hover:bg-muted text-muted-foreground"
+            }`}
+          >
+            <Grid className="w-3.5 h-3.5" />
+            <span className="truncate">{t.tabPages || "الصفحات"}</span>
+          </button>
+        </div>
 
-            {/* Tab Content */}
-            <div className="flex-1 overflow-y-auto p-3">
-              {activeTab === "toc" && (
-                <>
-                  {outline.length === 0 ? (
-                    <div className="text-center py-8 px-4 space-y-3">
-                      <BookOpen className="w-10 h-10 mx-auto text-muted-foreground/40" />
-                      <p className="text-xs text-muted-foreground">
-                        {t.idxEmpty || "لا يتوفر فهرس مدمج في هذا الملف"}
-                      </p>
-                      <button
-                        onClick={() => setActiveTab("pages")}
-                        className="px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/15 transition-colors"
-                      >
-                        {t.browsePageGrid || "تصفح شبكة الصفحات"} ({totalPages})
-                      </button>
-                    </div>
-                  ) : (
-                    <OutlineTree
-                      items={outline}
-                      currentPage={currentPage}
-                      onPageClick={(p) => {
-                        onPageClick(p);
-                        onClose();
-                      }}
-                      darkMode={darkMode}
-                    />
-                  )}
-                </>
-              )}
-
-              {activeTab === "bookmarks" && (
-                <div className="space-y-3">
-                  <button
-                    onClick={onToggleBookmark}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border text-xs font-medium transition-colors ${
-                      bookmarks.includes(currentPage)
-                        ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                        : darkMode
-                        ? "border-neutral-800 hover:bg-neutral-800/70"
-                        : "border-stone-200 hover:bg-stone-100"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      {bookmarks.includes(currentPage) ? (
-                        <BookmarkCheck className="w-4 h-4 fill-amber-500 text-amber-500" />
-                      ) : (
-                        <Bookmark className="w-4 h-4" />
-                      )}
-                      <span>
-                        {bookmarks.includes(currentPage)
-                          ? `${t.removeBookmarkCurrent || "إزالة علامة الصفحة الحالية"} (${currentPage})`
-                          : `${t.addBookmarkCurrent || "حفظ الصفحة الحالية في العلامات"} (${currentPage})`}
-                      </span>
-                    </span>
-                  </button>
-
-                  {bookmarks.length === 0 ? (
-                    <div className="text-center py-10 px-4">
-                      <Bookmark className="w-9 h-9 mx-auto mb-2 text-muted-foreground/35" />
-                      <p className="text-xs text-muted-foreground">
-                        {t.noBookmarksYet || "لم تقم بحفظ أي علامات مرجعية في هذا الكتاب بعد."}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {bookmarks.map((pageNum) => (
-                        <div
-                          key={pageNum}
-                          className={`flex items-center justify-between px-3 py-2 rounded-lg border transition-colors ${
-                            pageNum === currentPage
-                              ? "border-primary/40 bg-primary/10"
-                              : darkMode
-                              ? "border-neutral-800 bg-neutral-900/50 hover:bg-neutral-800"
-                              : "border-stone-200/80 bg-white hover:bg-stone-100/70"
-                          }`}
-                        >
-                          <button
-                            onClick={() => {
-                              onPageClick(pageNum);
-                              onClose();
-                            }}
-                            className="flex-1 flex items-center gap-2.5 text-start text-xs font-medium"
-                          >
-                            <Bookmark className="w-3.5 h-3.5 fill-amber-500 text-amber-500 shrink-0" />
-                            <span>
-                              {t.pageNo || "الصفحة"} {pageNum}
-                            </span>
-                            <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
-                              ({Math.round((pageNum / Math.max(1, totalPages)) * 100)}%)
-                            </span>
-                          </button>
-                          <button
-                            onClick={() => onRemoveBookmark?.(pageNum)}
-                            className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                            title={t.deleteBookmark || "حذف العلامة"}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+        {/* Tab Body */}
+        <div className="flex-1 overflow-y-auto p-3">
+          {activeTab === "toc" && (
+            <div className="space-y-1">
+              {outline.length > 0 && outline.some((x) => x.isAuto) && (
+                <div className="mb-2.5 px-3 py-2 rounded-xl bg-primary/10 border border-primary/20 flex items-center gap-2 text-[11px] text-primary font-medium">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                  <span>{t.smartTocNotice || "فهرس ذكي مستخرج تلقائياً من محتوى الكتاب"}</span>
                 </div>
               )}
 
-              {activeTab === "pages" && (
-                <div>
-                  <p className="text-[11px] font-medium text-muted-foreground mb-2.5 px-1">
-                    {t.idxJumpPage || "اختر رقم الصفحة للانتقال المباشر:"}
+              {outline.length > 0 ? (
+                outline.map((item, idx) => (
+                  <OutlineNode
+                    key={idx}
+                    item={item}
+                    currentPage={currentPage}
+                    pageLabel={t.pageNo || "ص"}
+                    onSelect={(p) => {
+                      onPageClick(p);
+                      onClose();
+                    }}
+                  />
+                ))
+              ) : (
+                <div className="text-center py-8 px-3 space-y-3">
+                  <BookOpen className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                  <p className="text-xs text-muted-foreground">
+                    {t.noTocFound || "لا يوجد فهرس مدمج، يمكنك الانتقال السريع عبر شبكة الصفحات"}
                   </p>
-                  <div className="grid grid-cols-5 gap-1.5">
-                    {Array.from({ length: totalPages || 0 }, (_, i) => i + 1).map((p) => {
-                      const isCurrent = p === currentPage;
-                      const isBm = bookmarks.includes(p);
-                      return (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("pages")}
+                    className="px-3.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold"
+                  >
+                    {t.browsePageGrid || "فتح شبكة الصفحات"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "bookmarks" && (
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={onToggleBookmark}
+                className={`w-full py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                  isCurrentBookmarked
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-500"
+                    : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+                }`}
+              >
+                <BookmarkPlus className="w-4 h-4" />
+                <span>
+                  {isCurrentBookmarked
+                    ? `${t.removeBookmarkCurrent || "إزالة علامة الصفحة الحالية"} (${currentPage})`
+                    : `${t.addBookmarkCurrent || "حفظ الصفحة الحالية كعلامة"} (${currentPage})`}
+                </span>
+              </button>
+
+              {bookmarks.length === 0 ? (
+                <div className="text-center py-10 px-4 space-y-2">
+                  <Bookmark className="w-8 h-8 text-muted-foreground/30 mx-auto" />
+                  <p className="text-xs text-muted-foreground font-medium">
+                    {t.noBookmarksYet || "لا توجد إشارات مرجعية محفوظة بعد"}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {bookmarks.map((bmPage) => {
+                    const isCurrent = bmPage === currentPage;
+                    return (
+                      <div
+                        key={bmPage}
+                        className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border transition-all ${
+                          isCurrent
+                            ? "border-primary bg-primary/10"
+                            : "border-border/60 hover:bg-muted/60"
+                        }`}
+                      >
                         <button
-                          key={p}
+                          type="button"
                           onClick={() => {
-                            onPageClick(p);
+                            onPageClick(bmPage);
                             onClose();
                           }}
-                          className={`relative aspect-square rounded-lg text-xs font-mono tabular-nums font-medium transition-colors flex items-center justify-center ${
-                            isCurrent
-                              ? "bg-primary text-primary-foreground font-bold shadow-sm"
-                              : darkMode
-                              ? "bg-neutral-800/80 hover:bg-neutral-700 text-stone-200"
-                              : "bg-stone-200/60 hover:bg-stone-300/80 text-stone-800"
-                          }`}
+                          className="flex-1 flex items-center gap-2.5 text-start text-xs font-semibold"
                         >
-                          {p}
-                          {isBm && (
-                            <span className="absolute top-1 left-1 w-1.5 h-1.5 rounded-full bg-amber-500" />
-                          )}
+                          <Bookmark className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0" />
+                          <span>
+                            {t.idxPage || t.pageNo || "ص"} {bmPage}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-mono ms-auto">
+                            {totalPages ? `${Math.round((bmPage / totalPages) * 100)}%` : ""}
+                          </span>
                         </button>
-                      );
-                    })}
-                  </div>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveBookmark?.(bmPage)}
+                          title={t.deleteBookmark || t.delete || "حذف"}
+                          className="w-7 h-7 rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive flex items-center justify-center transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+          )}
+
+          {activeTab === "pages" && (
+            <div className="grid grid-cols-4 gap-1.5">
+              {pageNumbers.map((p) => {
+                const isCurrent = p === currentPage;
+                const isBm = bookmarks.includes(p);
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => {
+                      onPageClick(p);
+                      onClose();
+                    }}
+                    className={`relative py-2.5 rounded-lg text-xs font-mono tabular-nums transition-all ${
+                      isCurrent
+                        ? "bg-primary text-primary-foreground font-bold shadow"
+                        : isBm
+                        ? "bg-amber-500/15 text-amber-500 border border-amber-500/40 font-semibold"
+                        : "bg-muted/60 hover:bg-muted text-foreground"
+                    }`}
+                  >
+                    {p}
+                    {isBm && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 absolute top-1 right-1" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
 /**
- * Search panel with context snippets, progress bar, and Next/Prev navigation.
- */
-export function SearchPanel({
-  show,
-  darkMode,
-  query,
-  setQuery,
-  onSearch,
-  searching,
-  searchProgress = 0,
-  results = [],
-  resultIdx = 0,
-  onSelectResult,
-  onNextResult,
-  onPrevResult,
-  onClose,
-}) {
-  const t = useT();
-  const surfaceCls = darkMode
-    ? "bg-[#161920] text-stone-100 border-neutral-800"
-    : "bg-[#FBF9F5] text-stone-900 border-stone-200";
-
-  return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          data-viewer-ui
-          initial={{ opacity: 0, y: -16 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -16 }}
-          className={`absolute top-3 inset-x-3 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 w-auto sm:w-[420px] max-w-xl border rounded-2xl shadow-2xl p-3 sm:p-4 z-30 ${surfaceCls}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center gap-2">
-            <Input
-              type="text"
-              autoFocus
-              placeholder={t.idxSearchPlaceholder || "ابحث عن كلمة أو عبارة في الكتاب..."}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && onSearch()}
-              className="flex-1 text-sm h-9"
-            />
-            <Button
-              size="sm"
-              onClick={onSearch}
-              disabled={searching || !query.trim()}
-              className="shrink-0 h-9 px-3"
-            >
-              {searching ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Search className="w-4 h-4" />
-              )}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={onClose}
-              className="shrink-0 h-9 w-9"
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-
-          {searching && (
-            <div className="mt-2.5 space-y-1">
-              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>{t.searchingPages || "جاري البحث في صفحات الكتاب..."}</span>
-                <span className="font-mono tabular-nums">{searchProgress}%</span>
-              </div>
-              <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary transition-all duration-150"
-                  style={{ width: `${searchProgress}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {!searching && results.length > 0 && (
-            <div className="mt-2.5 space-y-2">
-              <div className="flex items-center justify-between text-xs px-1">
-                <span className="text-muted-foreground font-mono tabular-nums">
-                  {t.searchResultOf || "النتيجة"} {resultIdx + 1} {t.ofTotal || "من"}{" "}
-                  {results.length}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={onPrevResult}
-                    className="px-2 py-1 rounded hover:bg-muted text-xs font-medium flex items-center gap-1"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                    {t.searchPrev || "السابق"}
-                  </button>
-                  <button
-                    onClick={onNextResult}
-                    className="px-2 py-1 rounded hover:bg-muted text-xs font-medium text-primary flex items-center gap-1"
-                  >
-                    {t.searchNext || "التالي"}
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="max-h-48 overflow-y-auto space-y-1 border-t border-border/60 pt-2">
-                {results.map((res, idx) => {
-                  const pageNum = typeof res === "object" ? res.page : res;
-                  const snippet = typeof res === "object" ? res.snippet : "";
-                  const active = idx === resultIdx;
-                  return (
-                    <button
-                      key={`${pageNum}-${idx}`}
-                      onClick={() => onSelectResult?.(idx)}
-                      className={`w-full text-start px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-start justify-between gap-2 ${
-                        active
-                          ? "bg-primary/15 text-primary font-medium"
-                          : "hover:bg-muted/70"
-                      }`}
-                    >
-                      <span className="line-clamp-1 flex-1">
-                        {snippet || `${t.matchOnPage || "تطابق في الصفحة"} ${pageNum}`}
-                      </span>
-                      <span className="font-mono tabular-nums text-[11px] text-muted-foreground shrink-0">
-                        {t.pageNo || "ص"} {pageNum}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-/**
- * Reading Theme, View Mode, Fit Mode & Brightness Comfort Popover
+ * Lightweight Reading Comfort & Paper Theme Popover
+ * - Zero backdrop-blur GPU freeze
+ * - Removed View Mode selector per user request ("٢ احذف زر تبديل وضع العرض")
  */
 export function ThemeComfortPanel({
   show,
   theme,
   onSelectTheme,
-  viewMode,
-  onSelectViewMode,
   fitMode,
   onSelectFitMode,
   brightness,
@@ -442,277 +364,191 @@ export function ThemeComfortPanel({
   onClose,
 }) {
   const t = useT();
-  const darkMode = theme === "dark" || theme === "dusk";
-  const surfaceCls = darkMode
-    ? "bg-[#161920] text-stone-100 border-neutral-800"
-    : "bg-[#FBF9F5] text-stone-900 border-stone-200";
 
   const themes = [
     {
       id: "light",
-      label: t.themeLightLabel || "نهاري ورقي",
-      swatch: "bg-[#F4F1EA] border-stone-300 text-stone-900",
+      label: t.themeLightLabel || "نهاري",
+      bg: "bg-white text-stone-900 border-stone-300",
+      icon: Sun,
     },
     {
       id: "sepia",
-      label: t.themeSepiaLabel || "قرطاس تراثي",
-      swatch: "bg-[#EAE0CE] border-[#C9B79C] text-[#3D2E1E]",
+      label: t.themeSepiaLabel || t.themeSepia || "ورق دافئ",
+      bg: "bg-[#F4ECD8] text-[#3D2E1E] border-[#D8C8A8]",
+      icon: BookOpen,
     },
     {
       id: "dusk",
-      label: t.themeDuskLabel || "مسائي هادئ",
-      swatch: "bg-[#1C2026] border-slate-700 text-slate-100",
+      label: t.themeDuskLabel || "مسائي",
+      bg: "bg-[#1E222A] text-slate-200 border-slate-700",
+      icon: Moon,
     },
     {
       id: "dark",
       label: t.themeDarkLabel || "ليلي داكن",
-      swatch: "bg-[#0D0F12] border-neutral-700 text-neutral-100",
+      bg: "bg-[#0F1115] text-neutral-200 border-neutral-800",
+      icon: Moon,
     },
   ];
 
-  const viewModes = [
-    { id: "scroll", label: t.viewModeScroll || "تمرير عمودي", icon: ScrollText },
-    { id: "single", label: t.viewModeSingle || "صفحة مفردة", icon: FileText },
-    { id: "spread", label: t.viewModeSpread || "صفحتان", icon: Columns },
+  const fitModes = [
+    {
+      id: "width",
+      label: t.fitWidth || "ملائمة العرض",
+      icon: MoveHorizontal,
+    },
+    {
+      id: "page",
+      label: t.fitPage || "صفحة كاملة",
+      icon: Maximize2,
+    },
   ];
 
+  const isDark = theme === "dark" || theme === "dusk";
+
+  if (!show) return null;
+
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          data-viewer-ui
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 z-30 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-[2px]"
+    <div
+      data-viewer-ui
+      onClick={(e) => e.stopPropagation()}
+      dir={t.dir || "rtl"}
+      className={`absolute bottom-14 left-1/2 -translate-x-1/2 z-30 w-[330px] max-w-[92vw] border rounded-2xl shadow-2xl p-4 space-y-4 ${
+        isDark
+          ? "bg-neutral-900 border-neutral-800 text-stone-100"
+          : "bg-card border-border text-foreground"
+      }`}
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold flex items-center gap-1.5">
+          <Sun className="w-4 h-4 text-primary" />
+          {t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
+        </span>
+        <button
+          type="button"
           onClick={onClose}
+          className="w-6 h-6 rounded-lg hover:bg-muted flex items-center justify-center"
         >
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 40 }}
-            transition={{ type: "spring", stiffness: 320, damping: 32 }}
-            className={`w-full sm:w-[440px] max-w-lg rounded-t-3xl sm:rounded-2xl max-h-[85vh] overflow-y-auto p-4 sm:p-6 shadow-2xl space-y-4 border ${surfaceCls}`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-border/40">
-              <span className="text-sm font-bold">
-                {t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
-              </span>
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* 1. Theme Swatches */}
+      <div className="space-y-1.5">
+        <label className="text-[11px] text-muted-foreground font-medium">
+          {t.paperThemeLabel || "لون الورق والإضاءة"}
+        </label>
+        <div className="grid grid-cols-4 gap-2">
+          {themes.map((th) => {
+            const active = theme === th.id;
+            return (
               <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                key={th.id}
+                type="button"
+                onClick={() => onSelectTheme(th.id)}
+                className={`py-2 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center gap-1 ${
+                  th.bg
+                } ${active ? "ring-2 ring-primary scale-[1.02] font-bold" : "opacity-85 hover:opacity-100"}`}
               >
-                <X className="w-4 h-4" />
+                <th.icon className="w-3.5 h-3.5" />
+                <span className="text-[10px] leading-tight">{th.label}</span>
               </button>
-            </div>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* Theme Swatches */}
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block font-medium">
-              {t.paperThemeLabel || "سمة الورق والإضاءة"}
-            </span>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {themes.map((th) => (
-                <button
-                  key={th.id}
-                  onClick={() => onSelectTheme(th.id)}
-                  className={`px-2 py-2.5 rounded-xl border text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center text-center leading-tight min-h-[42px] ${
-                    th.swatch
-                  } ${
-                    theme === th.id
-                      ? "ring-2 ring-primary font-bold scale-[1.02] shadow-xs"
-                      : "opacity-80 hover:opacity-100"
-                  }`}
-                >
-                  <span className="break-words line-clamp-1">{th.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* 2. Page Fit Mode */}
+      <div className="space-y-1.5">
+        <label className="text-[11px] text-muted-foreground font-medium">
+          {t.fitModeLabel || "مقاس الصفحة"}
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {fitModes.map((fm) => {
+            const active = fitMode === fm.id;
+            return (
+              <button
+                key={fm.id}
+                type="button"
+                onClick={() => onSelectFitMode(fm.id)}
+                className={`py-2 px-3 rounded-xl border text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  active
+                    ? "border-primary bg-primary/15 text-primary font-bold"
+                    : "border-border/70 hover:bg-muted/60 text-muted-foreground"
+                }`}
+              >
+                <fm.icon className="w-3.5 h-3.5" />
+                <span>{fm.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* View Mode */}
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-muted-foreground block font-medium">
-              {t.viewModeLabel || "نمط عرض الصفحات"}
-            </span>
-            <div className="grid grid-cols-3 gap-2">
-              {viewModes.map((vm) => {
-                const Icon = vm.icon;
-                const active = viewMode === vm.id;
-                return (
-                  <button
-                    key={vm.id}
-                    onClick={() => onSelectViewMode(vm.id)}
-                    className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 py-2 px-1.5 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center leading-tight min-h-[50px] ${
-                      active
-                        ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
-                        : darkMode
-                        ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
-                        : "border-stone-200 hover:bg-stone-100 text-stone-700"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4 shrink-0 text-primary" />
-                    <span className="break-words line-clamp-2">{vm.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Fit Mode */}
-          {viewMode === "scroll" && (
-            <div className="space-y-1.5">
-              <span className="text-[11px] text-muted-foreground block font-medium">
-                {t.fitModeLabel || "ملائمة حجم الصفحة"}
-              </span>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => onSelectFitMode("width")}
-                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center min-h-[42px] ${
-                    fitMode === "width"
-                      ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
-                      : darkMode
-                      ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
-                      : "border-stone-200 hover:bg-stone-100 text-stone-700"
-                  }`}
-                >
-                  <MoveHorizontal className="w-3.5 h-3.5 shrink-0 text-primary" />
-                  <span className="truncate">{t.fitWidth || "ملائمة العرض"}</span>
-                </button>
-                <button
-                  onClick={() => onSelectFitMode("page")}
-                  className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl border text-[11px] sm:text-xs font-semibold transition-colors text-center min-h-[42px] ${
-                    fitMode === "page"
-                      ? "border-primary bg-primary/15 text-primary font-bold shadow-xs"
-                      : darkMode
-                      ? "border-neutral-800 hover:bg-neutral-800 text-stone-300"
-                      : "border-stone-200 hover:bg-stone-100 text-stone-700"
-                  }`}
-                >
-                  <Maximize2 className="w-3.5 h-3.5 shrink-0 text-primary" />
-                  <span className="truncate">{t.fitPage || "الصفحة كاملة"}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Brightness Slider */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Sun className="w-3.5 h-3.5" />
-                <span>{t.pageBrightness || "سطوع الصفحة"}</span>
-              </span>
-              <span className="font-mono tabular-nums">{brightness}%</span>
-            </div>
-            <input
-              type="range"
-              min="55"
-              max="110"
-              step="5"
-              value={brightness}
-              onChange={(e) => onChangeBrightness(Number(e.target.value))}
-              className="w-full accent-primary cursor-pointer"
-            />
-          </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+      {/* 3. Brightness Dimmer */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-muted-foreground font-medium">
+            {t.pageBrightness || "سطوع الصفحة"}
+          </span>
+          <span className="font-mono text-xs font-bold">{brightness}%</span>
+        </div>
+        <input
+          type="range"
+          min={55}
+          max={100}
+          step={5}
+          value={Math.min(100, brightness)}
+          onChange={(e) => onChangeBrightness(Number(e.target.value))}
+          className="w-full accent-primary cursor-pointer"
+        />
+      </div>
+    </div>
   );
 }
 
-/** Modal for jumping to a specific page. */
+/**
+ * Floating "Go to page" dialog.
+ */
 export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) {
   const t = useT();
+  if (!show) return null;
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          data-viewer-ui
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="absolute inset-0 z-30 flex items-center justify-center bg-black/50 backdrop-blur-[1px]"
-          onClick={onClose}
-        >
-          <motion.div
-            initial={{ scale: 0.92 }}
-            animate={{ scale: 1 }}
-            exit={{ scale: 0.92 }}
-            className="bg-card border border-border rounded-2xl p-4 w-72 max-w-[90%] space-y-3 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold">{t.goToPageTitle || "الانتقال إلى صفحة"}</span>
-              <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
-                1 – {totalPages}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                autoFocus
-                min="1"
-                max={totalPages}
-                placeholder={t.idxPageNumber || "رقم الصفحة"}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && onGo()}
-                className="flex-1 text-center font-mono tabular-nums"
-              />
-              <Button size="sm" onClick={onGo}>
-                {t.goBtn || t.idxGo || "انتقال"}
-              </Button>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}
-
-function OutlineTree({ items, currentPage, onPageClick, darkMode, depth = 0 }) {
-  return (
-    <div className="space-y-1">
-      {items.map((item, i) => {
-        const targetPage = Number(item.pageNumber) || 1;
-        const isCurrent = targetPage === currentPage;
-        return (
-          <div key={i}>
-            <button
-              type="button"
-              onClick={() => onPageClick(targetPage)}
-              className={`w-full text-start px-2.5 py-2 rounded-lg text-xs transition-colors flex items-center justify-between gap-2 ${
-                isCurrent
-                  ? "bg-primary/15 text-primary font-bold border border-primary/30"
-                  : darkMode
-                  ? "hover:bg-neutral-800 text-stone-200"
-                  : "hover:bg-stone-200/60 text-stone-800"
-              }`}
-              style={{ paddingInlineStart: `${depth * 14 + 10}px` }}
-            >
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCurrent ? "bg-primary" : "bg-muted-foreground/40"}`} />
-                <span className="line-clamp-1">{item.title}</span>
-              </div>
-              <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0 px-1.5 py-0.5 rounded bg-muted/40">
-                {targetPage}
-              </span>
-            </button>
-            {item.items?.length > 0 && (
-              <OutlineTree
-                items={item.items}
-                currentPage={currentPage}
-                onPageClick={onPageClick}
-                darkMode={darkMode}
-                depth={depth + 1}
-              />
-            )}
-          </div>
-        );
-      })}
+    <div
+      data-viewer-ui
+      onClick={(e) => e.stopPropagation()}
+      dir={t.dir || "rtl"}
+      className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30 bg-card border border-border rounded-2xl shadow-2xl p-3 flex items-center gap-2"
+    >
+      <span className="text-xs text-muted-foreground font-medium whitespace-nowrap">
+        {t.goToPageTitle || "انتقال إلى صفحة:"}
+      </span>
+      <input
+        autoFocus
+        type="number"
+        min={1}
+        max={totalPages}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && onGo()}
+        placeholder={`1 - ${totalPages}`}
+        className="w-20 bg-muted/60 rounded-lg px-2.5 py-1.5 text-xs text-center font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+      />
+      <button
+        type="button"
+        onClick={onGo}
+        className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-bold hover:bg-primary/90 transition-colors"
+      >
+        {t.goBtn || t.goToBtn}
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        className="p-1 rounded-lg hover:bg-muted text-muted-foreground"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 }

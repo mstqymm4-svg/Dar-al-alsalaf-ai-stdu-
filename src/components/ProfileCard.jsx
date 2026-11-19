@@ -133,16 +133,35 @@ export default function ProfileCard() {
     } catch {}
   };
 
+  const fileToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const handleAvatarPick = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     setUploading(true);
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      let finalUrl = "";
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        finalUrl = await fileToDataUrl(file);
+      } else {
+        try {
+          const { file_url } = await base44.integrations.Core.UploadFile({ file });
+          finalUrl = file_url;
+        } catch {
+          finalUrl = await fileToDataUrl(file);
+        }
+      }
+      if (!finalUrl) throw new Error("Empty avatar URL");
       const em = getAccountEmail(user) || linkedEmail.trim();
-      setAvatarUrl(em, file_url);
-      setAvatar(file_url);
+      setAvatarUrl(em, finalUrl);
+      setAvatar(finalUrl);
       window.dispatchEvent(new Event("dau-avatar-change"));
       toast.success(t.changePhoto + " ✓");
     } catch {
@@ -269,9 +288,6 @@ export default function ProfileCard() {
               <div className="min-w-0">
                 <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">
                   {t.loggedInStatus}
-                </p>
-                <p className="text-xs font-mono text-foreground truncate" dir="ltr">
-                  {linkedEmail}
                 </p>
               </div>
             </div>

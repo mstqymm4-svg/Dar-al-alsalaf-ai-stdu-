@@ -5,7 +5,7 @@ import {
   Share2, Rewind, FastForward, Repeat, SkipBack, SkipForward,
   ListVideo, Sun, HelpCircle, Gauge
 } from "lucide-react";
-import { extractYoutubeId } from "@/components/dev/DevVideos";
+import { extractYoutubeId } from "@/lib/youtubeMeta";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import { usePlayerGestures } from "@/hooks/usePlayerGestures";

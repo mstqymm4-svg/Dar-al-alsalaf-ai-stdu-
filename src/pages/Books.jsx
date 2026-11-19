@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { Search, X, LayoutGrid, List, RotateCcw, BookOpen, Star, BookMarked, Heart } from "lucide-react";
-import AISearch from "../components/AISearch";
+import AISearch, { runOfflineSmartBookSearch } from "../components/AISearch";
 import BookCard from "../components/BookCard";
 import { SkeletonGrid } from "../components/Skeleton";
 import { Input } from "@/components/ui/input";
@@ -109,23 +109,22 @@ export default function Books() {
     return arr;
   };
 
-  const filteredBooks =
-    aiResults ??
-    sortBooks(
-      books.filter((book) => {
-        const matchesCategory =
-          activeCategory === "الكل" || book.category === activeCategory;
-        const matchesSearch =
-          !searchQuery ||
-          book.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          book.author?.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesLanguage =
-          preferredLanguage === "الكل" ||
-          !book.language ||
-          book.language === preferredLanguage;
-        return matchesCategory && matchesSearch && matchesLanguage;
-      })
-    );
+  const filteredBooks = useMemo(() => {
+    if (aiResults) return aiResults;
+    const baseFiltered = books.filter((book) => {
+      const matchesCategory =
+        activeCategory === "الكل" || book.category === activeCategory;
+      const matchesLanguage =
+        preferredLanguage === "الكل" ||
+        !book.language ||
+        book.language === preferredLanguage;
+      return matchesCategory && matchesLanguage;
+    });
+    if (searchQuery && searchQuery.trim()) {
+      return runOfflineSmartBookSearch(baseFiltered, searchQuery);
+    }
+    return sortBooks(baseFiltered);
+  }, [aiResults, books, activeCategory, preferredLanguage, searchQuery, sortBy]);
 
   const resetAllFilters = () => {
     setActiveCategory("الكل");

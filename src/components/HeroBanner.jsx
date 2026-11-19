@@ -131,8 +131,11 @@ export default function HeroBanner() {
     backgroundColor: `rgba(${hexToRgb(s.overlayColor)},${s.overlayAlpha / 100})`
   };
 
+  const safeBlur = Math.min(Math.max(0, s.blur || 0), 10);
   const bgFilterStyle = {
-    filter: `blur(${s.blur}px) brightness(${s.brightness / 100}) contrast(${(s.contrast || 100) / 100}) saturate(${(s.saturation || 100) / 100})`,
+    filter: safeBlur > 0 || s.brightness !== 100 || (s.contrast && s.contrast !== 100) || (s.saturation && s.saturation !== 100)
+      ? `blur(${safeBlur}px) brightness(${s.brightness / 100}) contrast(${(s.contrast || 100) / 100}) saturate(${(s.saturation || 100) / 100})`
+      : undefined,
     opacity: s.opacity / 100,
     transform: s.zoom ? "scale(1.05)" : undefined
   };

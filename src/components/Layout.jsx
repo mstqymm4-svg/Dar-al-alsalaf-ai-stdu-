@@ -1,7 +1,6 @@
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { BookOpen, Home, Code, MessageCircle, User } from "lucide-react";
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { useT } from "@/lib/i18n";
 import { getSetting, subscribeToSettings } from "@/lib/settingsStore";
@@ -152,15 +151,9 @@ export default function Layout() {
       </header>
 
       {/* Main Content */}
-      <motion.main
-        key={location.pathname}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        className="pb-24 md:pb-8">
-        
+      <main className="pb-24 md:pb-8">
         <Outlet />
-      </motion.main>
+      </main>
 
       {/* Bottom Nav — Mobile Only */}
       <nav id="bottom-nav" className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-2xl border-t border-border shadow-lg shadow-black/5 transition-transform duration-300">

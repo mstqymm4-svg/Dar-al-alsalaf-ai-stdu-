@@ -5,11 +5,17 @@ import { useT } from "@/lib/i18n";
 import { apiUrl } from "@/lib/apiBase";
 import SmartImage from "./SmartImage";
 
+let _liveCache = { ts: 0, data: [] };
+
 export default function LiveStreamBanner({ channelId = null }) {
   const t = useT();
-  const [liveStreams, setLiveStreams] = useState([]);
+  const [liveStreams, setLiveStreams] = useState(() => _liveCache.data || []);
 
-  const checkLive = async () => {
+  const checkLive = async (force = false) => {
+    if (!force && Date.now() - _liveCache.ts < 60000) {
+      setLiveStreams(_liveCache.data);
+      return;
+    }
     try {
       const channels = await getVideoChannels();
       if (!channels || channels.length === 0) return;
@@ -28,20 +34,17 @@ export default function LiveStreamBanner({ channelId = null }) {
 
       if (!res.ok) return;
       const data = await res.json();
-      if (data.success && Array.isArray(data.liveStreams)) {
-        setLiveStreams(data.liveStreams);
-      } else {
-        setLiveStreams([]);
-      }
-    } catch (e) {
+      const next = data.success && Array.isArray(data.liveStreams) ? data.liveStreams : [];
+      _liveCache = { ts: Date.now(), data: next };
+      setLiveStreams(next);
+    } catch {
       // Ignore background fetch error
     }
   };
 
   useEffect(() => {
-    checkLive();
-    // Poll every 60 seconds so ended streams disappear immediately and new live streams appear automatically
-    const interval = setInterval(checkLive, 60000);
+    checkLive(false);
+    const interval = setInterval(() => checkLive(true), 60000);
     return () => clearInterval(interval);
   }, []);
 

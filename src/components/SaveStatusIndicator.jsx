@@ -21,7 +21,7 @@ export default function SaveStatusIndicator() {
         className="fixed bottom-20 md:bottom-5 left-4 z-[60] flex items-center gap-2 rounded-full bg-card/95 backdrop-blur border border-border px-3 py-1.5 text-xs font-medium text-foreground shadow-lg"
       >
         <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-        <span>{t.syncStatusSyncing || "جارٍ الحفظ..."}</span>
+        <span>{t.saving || "جارٍ الحفظ..."}</span>
       </div>
     );
   }
@@ -33,7 +33,7 @@ export default function SaveStatusIndicator() {
         className="fixed bottom-20 md:bottom-5 left-4 z-[60] flex items-center gap-2 rounded-full bg-destructive text-destructive-foreground px-3 py-1.5 text-xs font-bold shadow-lg"
       >
         <AlertTriangle className="w-3.5 h-3.5" />
-        <span>{t.syncStatusOffline || "تعذر الحفظ السحابي"}</span>
+        <span>{t.cloudSaveError || "تعذر الحفظ السحابي"}</span>
       </div>
     );
   }
@@ -45,7 +45,7 @@ export default function SaveStatusIndicator() {
         className="fixed bottom-20 md:bottom-5 left-4 z-[60] flex items-center gap-1.5 rounded-full bg-emerald-600 text-white px-3 py-1.5 text-xs font-medium shadow-lg"
       >
         <Check className="w-3.5 h-3.5" />
-        <span>{t.syncStatusUpdated || "تم الحفظ"}</span>
+        <span>{t.saved || "تم الحفظ"}</span>
       </div>
     );
   }
