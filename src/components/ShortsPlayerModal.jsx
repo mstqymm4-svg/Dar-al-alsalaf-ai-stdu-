@@ -61,10 +61,15 @@ export default function ShortsPlayerModal({
   const t = useT();
   const { isOnline } = useOnlineStatus();
 
-  const list = useMemo(
-    () => (shortsList.length > 0 ? shortsList : initialVideo ? [initialVideo] : []),
-    [shortsList, initialVideo]
-  );
+  const list = useMemo(() => {
+    if (shortsList.length > 0) {
+      if (initialVideo?.id && !shortsList.some((v) => v.id === initialVideo.id)) {
+        return [initialVideo, ...shortsList];
+      }
+      return shortsList;
+    }
+    return initialVideo ? [initialVideo] : [];
+  }, [shortsList, initialVideo]);
 
   const initialIndex = list.findIndex((v) => v.id === initialVideo?.id);
   const [currentIndex, setCurrentIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
@@ -77,11 +82,13 @@ export default function ShortsPlayerModal({
   const [favIds, setFavIds] = useState(() => getVideoFavIds(getAccountEmail(user)));
 
   const currentIndexRef = useRef(currentIndex);
+  const currentVideoIdRef = useRef(initialVideo?.id || null);
   const listRef = useRef(list);
   const userPausedRef = useRef(false);
   const isMutedRef = useRef(false);
   const activeNativeVideoRef = useRef(null);
   const deckRef = useRef(null);
+  const scrubbingRef = useRef(false);
 
   // Persistent YT.Player refs so swiping between Shorts reuses the warm player in <150ms
   const ytHostRef = useRef(null);
@@ -89,12 +96,19 @@ export default function ShortsPlayerModal({
   const ytReadyRef = useRef(false);
   const loadedVidIdRef = useRef(null);
   const autoplayGuardTimerRef = useRef(null);
+  const autoplayInnerTimerRef = useRef(null);
+  const watchdogTimerRef = useRef(null);
+  const slideAnimTimerRef = useRef(null);
 
   currentIndexRef.current = currentIndex;
   listRef.current = list;
   isMutedRef.current = isMuted;
 
-  const currentVideo = list[currentIndex] || initialVideo;
+  const currentVideo = list[currentIndex] || list[0] || initialVideo;
+  if (currentVideo?.id) {
+    currentVideoIdRef.current = currentVideo.id;
+  }
+
   const rawUrl = currentVideo?.youtube_url || currentVideo?.file_url || "";
   const activeVidId = extractYoutubeId(rawUrl);
   const isDirectFile = !activeVidId && isDirectVideoUrl(rawUrl);
@@ -107,6 +121,18 @@ export default function ShortsPlayerModal({
   const channelLogo = currentChannel?.channel_logo || currentVideo?.channel_logo || "";
   const channelName = currentChannel?.name || currentVideo?.channel_name || "";
   const isFav = Boolean(currentVideo?.id && favIds.includes(currentVideo.id));
+
+  // Keep currentIndex anchored to currentVideoId if shortsList refreshes in the background
+  useEffect(() => {
+    if (!isOpen || !currentVideoIdRef.current || list.length === 0) return;
+    const activeItem = list[currentIndex];
+    if (activeItem?.id === currentVideoIdRef.current) return;
+    const foundIdx = list.findIndex((v) => v.id === currentVideoIdRef.current);
+    if (foundIdx >= 0 && foundIdx !== currentIndex) {
+      currentIndexRef.current = foundIdx;
+      setCurrentIndex(foundIdx);
+    }
+  }, [isOpen, list, currentIndex]);
 
   // Sync favorite IDs when modal opens or user changes
   useEffect(() => {
@@ -134,31 +160,34 @@ export default function ShortsPlayerModal({
     if (!isOpen || !initialVideo?.id) return;
     const idx = listRef.current.findIndex((v) => v.id === initialVideo.id);
     const targetIdx = idx >= 0 ? idx : 0;
-    setCurrentIndex(targetIdx);
+    currentVideoIdRef.current = initialVideo.id;
     currentIndexRef.current = targetIdx;
+    setCurrentIndex(targetIdx);
     userPausedRef.current = false;
     setUserPaused(false);
     setIsSlideReady(false);
     setIsBuffering(true);
     setProgress(0);
     if (deckRef.current) {
+      deckRef.current.style.transition = "none";
       deckRef.current.style.transform = "translate3d(0, 0px, 0)";
     }
   }, [isOpen, initialVideo?.id]);
 
-  // Preload thumbnails for adjacent Shorts so swipes never flash an empty frame
+  // Preload thumbnails for adjacent Shorts (including wrap-around) so swipes never flash empty frame
   useEffect(() => {
     if (!isOpen || list.length === 0) return;
-    [currentIndex - 1, currentIndex, currentIndex + 1]
-      .filter((i) => i >= 0 && i < list.length)
-      .forEach((i) => {
-        const item = list[i];
-        const thumb = item?.thumbnail || getThumbnail(item?.youtube_url);
-        if (thumb) {
-          const img = new Image();
-          img.src = thumb;
-        }
-      });
+    const len = list.length;
+    const prevIdx = currentIndex > 0 ? currentIndex - 1 : len > 1 ? len - 1 : 0;
+    const nextIdx = currentIndex < len - 1 ? currentIndex + 1 : len > 1 ? 0 : 0;
+    [prevIdx, currentIndex, nextIdx].forEach((i) => {
+      const item = list[i];
+      const thumb = item?.thumbnail || getThumbnail(item?.youtube_url);
+      if (thumb) {
+        const img = new Image();
+        img.src = thumb;
+      }
+    });
   }, [isOpen, currentIndex, list]);
 
   // Record watched when currentVideo changes
@@ -180,6 +209,7 @@ export default function ShortsPlayerModal({
   const triggerPlayWithAutoplayGuard = useCallback((player) => {
     if (!player) return;
     clearTimeout(autoplayGuardTimerRef.current);
+    clearTimeout(autoplayInnerTimerRef.current);
     try {
       if (isMutedRef.current) {
         player.mute?.();
@@ -197,20 +227,22 @@ export default function ShortsPlayerModal({
         // -1 = UNSTARTED, 5 = CUED, 2 = PAUSED
         if (st === -1 || st === 5 || st === 2) {
           player.playVideo?.();
-          setTimeout(() => {
+          autoplayInnerTimerRef.current = setTimeout(() => {
             if (userPausedRef.current) return;
-            const st2 = player.getPlayerState?.();
-            if (st2 === -1 || st2 === 5 || st2 === 2) {
-              // Browser blocked unmuted autoplay -> fallback to muted autoplay immediately
-              player.mute?.();
-              isMutedRef.current = true;
-              setIsMuted(true);
-              player.playVideo?.();
-            }
-          }, 280);
+            try {
+              const st2 = player.getPlayerState?.();
+              if (st2 === -1 || st2 === 5 || st2 === 2) {
+                // Browser blocked unmuted autoplay -> fallback to muted autoplay immediately
+                player.mute?.();
+                isMutedRef.current = true;
+                setIsMuted(true);
+                player.playVideo?.();
+              }
+            } catch {}
+          }, 260);
         }
       } catch {}
-    }, 320);
+    }, 300);
   }, []);
 
   // Initialize or reuse persistent YT.Player instance for instant Shorts playback
@@ -225,37 +257,26 @@ export default function ShortsPlayerModal({
 
     let cancelled = false;
     let pollInterval = null;
+    clearTimeout(watchdogTimerRef.current);
 
-    const loadOrCreatePlayer = () => {
+    const destroyExistingPlayer = () => {
+      if (ytPlayerRef.current) {
+        try {
+          ytPlayerRef.current.destroy?.();
+        } catch {}
+        ytPlayerRef.current = null;
+      }
+      ytReadyRef.current = false;
+      loadedVidIdRef.current = null;
+    };
+
+    const createFreshPlayer = () => {
       if (cancelled || !ytHostRef.current) return;
       const YT = /** @type {any} */ (window).YT;
       if (!YT?.Player) return;
 
-      // Fast path: Reuse existing warm YT.Player instance via loadVideoById (<150ms!)
-      if (ytPlayerRef.current && ytReadyRef.current) {
-        try {
-          if (loadedVidIdRef.current !== activeVidId) {
-            loadedVidIdRef.current = activeVidId;
-            ytPlayerRef.current.loadVideoById({
-              videoId: activeVidId,
-              startSeconds: 0,
-            });
-          } else {
-            ytPlayerRef.current.seekTo?.(0, true);
-          }
-          triggerPlayWithAutoplayGuard(ytPlayerRef.current);
-          return;
-        } catch {
-          // If existing player threw an error, recreate cleanly below
-          try {
-            ytPlayerRef.current.destroy?.();
-          } catch {}
-          ytPlayerRef.current = null;
-          ytReadyRef.current = false;
-        }
-      }
+      destroyExistingPlayer();
 
-      // First-time mount: create persistent YT.Player instance
       ytHostRef.current.innerHTML = "";
       const mountNode = document.createElement("div");
       mountNode.className = "w-full h-full pointer-events-none";
@@ -289,6 +310,7 @@ export default function ShortsPlayerModal({
             const state = e.data;
             // 1 = PLAYING
             if (state === 1) {
+              clearTimeout(watchdogTimerRef.current);
               setIsSlideReady(true);
               setIsBuffering(false);
               userPausedRef.current = false;
@@ -314,11 +336,67 @@ export default function ShortsPlayerModal({
           },
           onError: () => {
             if (cancelled) return;
+            clearTimeout(watchdogTimerRef.current);
             setIsBuffering(false);
             setIsSlideReady(true);
           },
         },
       });
+    };
+
+    const loadOrCreatePlayer = () => {
+      if (cancelled || !ytHostRef.current) return;
+      const YT = /** @type {any} */ (window).YT;
+      if (!YT?.Player) return;
+
+      const existingPlayer = ytPlayerRef.current;
+      const existingIframe = existingPlayer?.getIframe?.();
+      const isConnected = Boolean(
+        existingIframe &&
+          existingIframe.isConnected &&
+          ytHostRef.current.contains(existingIframe)
+      );
+
+      // Fast path: Reuse warm, connected YT.Player instance via loadVideoById (<150ms!)
+      if (
+        existingPlayer &&
+        ytReadyRef.current &&
+        isConnected &&
+        typeof existingPlayer.loadVideoById === "function"
+      ) {
+        try {
+          if (loadedVidIdRef.current !== activeVidId) {
+            loadedVidIdRef.current = activeVidId;
+            existingPlayer.loadVideoById({
+              videoId: activeVidId,
+              startSeconds: 0,
+            });
+          } else {
+            existingPlayer.seekTo?.(0, true);
+          }
+          triggerPlayWithAutoplayGuard(existingPlayer);
+
+          // Watchdog: if loadVideoById stalls for >1.8s without advancing or playing, recreate fresh
+          watchdogTimerRef.current = setTimeout(() => {
+            if (cancelled || userPausedRef.current) return;
+            try {
+              const p = ytPlayerRef.current;
+              const st = p?.getPlayerState?.();
+              const cur = Number(p?.getCurrentTime?.() || 0);
+              if (st !== 1 && cur < 0.05) {
+                createFreshPlayer();
+              }
+            } catch {
+              createFreshPlayer();
+            }
+          }, 1800);
+          return;
+        } catch {
+          // Fall through to createFreshPlayer
+        }
+      }
+
+      createFreshPlayer();
     };
 
     ensureYouTubeIframeApi();
@@ -338,6 +416,8 @@ export default function ShortsPlayerModal({
       cancelled = true;
       if (pollInterval) clearInterval(pollInterval);
       clearTimeout(autoplayGuardTimerRef.current);
+      clearTimeout(autoplayInnerTimerRef.current);
+      clearTimeout(watchdogTimerRef.current);
     };
   }, [isOpen, isOnline, activeVidId, isDirectFile, triggerPlayWithAutoplayGuard]);
 
@@ -345,6 +425,9 @@ export default function ShortsPlayerModal({
   useEffect(() => {
     if (isOpen) return;
     clearTimeout(autoplayGuardTimerRef.current);
+    clearTimeout(autoplayInnerTimerRef.current);
+    clearTimeout(watchdogTimerRef.current);
+    clearTimeout(slideAnimTimerRef.current);
     if (ytPlayerRef.current) {
       try {
         ytPlayerRef.current.destroy?.();
@@ -355,42 +438,56 @@ export default function ShortsPlayerModal({
     }
   }, [isOpen]);
 
-  // Poll playback progress every 200ms while open
+  // Poll playback progress every 180ms while open
   useEffect(() => {
     if (!isOpen || isDirectFile) return;
     const interval = setInterval(() => {
+      if (scrubbingRef.current) return;
       const player = ytPlayerRef.current;
       if (!player || !ytReadyRef.current) return;
       try {
         const cur = Number(player.getCurrentTime?.() || 0);
         const dur = Number(player.getDuration?.() || 0);
-        if (cur > 0.05) {
+        const st = player.getPlayerState?.();
+        if (cur > 0.04 || st === 1) {
           setIsSlideReady(true);
-          setIsBuffering(false);
+          if (st === 1) setIsBuffering(false);
         }
         if (dur > 0 && cur >= 0) {
           setProgress(Math.min(100, (cur / dur) * 100));
         }
       } catch {}
-    }, 200);
+    }, 180);
     return () => clearInterval(interval);
   }, [isOpen, isDirectFile]);
 
-  const switchToIndex = useCallback((nextIdx) => {
+  const switchToIndex = useCallback((nextIdx, direction = "next") => {
     const items = listRef.current;
     if (nextIdx < 0 || nextIdx >= items.length) return;
     if (currentIndexRef.current === nextIdx) return;
 
+    clearTimeout(slideAnimTimerRef.current);
     userPausedRef.current = false;
     setUserPaused(false);
     setProgress(0);
     setIsSlideReady(false);
     setIsBuffering(true);
     currentIndexRef.current = nextIdx;
+    if (items[nextIdx]?.id) {
+      currentVideoIdRef.current = items[nextIdx].id;
+    }
     setCurrentIndex(nextIdx);
-    if (deckRef.current) {
-      deckRef.current.style.transition = "transform 160ms ease-out";
-      deckRef.current.style.transform = "translate3d(0, 0px, 0)";
+
+    // Smoothly animate the new slide coming in from bottom ("next") or top ("prev")
+    const deck = deckRef.current;
+    if (deck) {
+      const startOffset = direction === "prev" ? "-22%" : "22%";
+      deck.style.transition = "none";
+      deck.style.transform = `translate3d(0, ${startOffset}, 0)`;
+      // Force reflow so browser registers starting offset
+      void deck.offsetHeight;
+      deck.style.transition = "transform 210ms cubic-bezier(0.22, 1, 0.36, 1)";
+      deck.style.transform = "translate3d(0, 0px, 0)";
     }
   }, []);
 
@@ -507,9 +604,9 @@ export default function ShortsPlayerModal({
       const idx = currentIndexRef.current;
       const len = listRef.current.length;
       if (idx < len - 1) {
-        switchToIndex(idx + 1);
+        switchToIndex(idx + 1, "next");
       } else if (len > 1) {
-        switchToIndex(0);
+        switchToIndex(0, "next");
       } else {
         toast.info(t.reachedLastShort || "وصلت إلى آخر مقطع قصير");
       }
@@ -521,11 +618,41 @@ export default function ShortsPlayerModal({
     (e) => {
       if (e) e.stopPropagation();
       const idx = currentIndexRef.current;
+      const len = listRef.current.length;
       if (idx > 0) {
-        switchToIndex(idx - 1);
+        switchToIndex(idx - 1, "prev");
+      } else if (len > 1) {
+        switchToIndex(len - 1, "prev");
       }
     },
     [switchToIndex]
+  );
+
+  // Seek within current Short via bottom interactive progress bar
+  const seekShortToRatio = useCallback(
+    (ratio) => {
+      const clamped = Math.min(1, Math.max(0, ratio));
+      setProgress(clamped * 100);
+
+      if (isDirectFile && activeNativeVideoRef.current) {
+        const el = activeNativeVideoRef.current;
+        if (el.duration > 0) {
+          el.currentTime = clamped * el.duration;
+        }
+        return;
+      }
+
+      const player = ytPlayerRef.current;
+      if (player && ytReadyRef.current) {
+        try {
+          const dur = Number(player.getDuration?.() || 0);
+          if (dur > 0) {
+            player.seekTo?.(clamped * dur, true);
+          }
+        } catch {}
+      }
+    },
+    [isDirectFile]
   );
 
   // Keyboard navigation
@@ -556,8 +683,8 @@ export default function ShortsPlayerModal({
   const wheelLockRef = useRef(false);
   const handleWheel = useCallback(
     (e) => {
-      if (wheelLockRef.current) return;
-      if (Math.abs(e.deltaY) > 25) {
+      if (wheelLockRef.current || listRef.current.length <= 1) return;
+      if (Math.abs(e.deltaY) > 22) {
         wheelLockRef.current = true;
         if (e.deltaY > 0) {
           goToNext();
@@ -572,95 +699,79 @@ export default function ShortsPlayerModal({
     [goToNext, goToPrev]
   );
 
-  // Direct DOM transform touch drag (0 React re-renders during finger move)
+  // Unified Pointer Events swipe & tap gesture engine (works identically on mobile touch & desktop mouse)
+  const pointerIdRef = useRef(null);
   const dragStartY = useRef(null);
   const dragStartX = useRef(null);
   const dragStartTime = useRef(0);
-  const lastTouchTimeRef = useRef(0);
 
-  const handleTouchStart = (e) => {
-    lastTouchTimeRef.current = Date.now();
-    dragStartY.current = e.touches?.[0]?.clientY ?? null;
-    dragStartX.current = e.touches?.[0]?.clientX ?? null;
+  const handlePointerDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointerIdRef.current = e.pointerId;
+    dragStartY.current = e.clientY;
+    dragStartX.current = e.clientX;
     dragStartTime.current = Date.now();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
     if (deckRef.current) {
       deckRef.current.style.transition = "none";
     }
   };
 
-  const handleTouchMove = (e) => {
-    if (dragStartY.current === null || !deckRef.current) return;
-    const curY = e.touches?.[0]?.clientY;
-    const curX = e.touches?.[0]?.clientX;
-    if (typeof curY === "number") {
-      const dy = curY - dragStartY.current;
-      const dx =
-        typeof curX === "number" && dragStartX.current !== null
-          ? Math.abs(curX - dragStartX.current)
-          : 0;
-      if (Math.abs(dy) > 10 && Math.abs(dy) > dx) {
-        const damped = Math.max(-130, Math.min(130, dy * 0.55));
-        deckRef.current.style.transform = `translate3d(0, ${damped}px, 0)`;
-      }
+  const handlePointerMove = (e) => {
+    if (pointerIdRef.current !== e.pointerId || dragStartY.current === null || !deckRef.current) {
+      return;
+    }
+    const dy = e.clientY - dragStartY.current;
+    const dx = dragStartX.current !== null ? Math.abs(e.clientX - dragStartX.current) : 0;
+    if (Math.abs(dy) > 8 && Math.abs(dy) > dx * 0.85) {
+      const canDrag = listRef.current.length > 1;
+      const factor = canDrag ? 0.72 : 0.2;
+      const maxOffset = canDrag ? 220 : 40;
+      const damped = Math.max(-maxOffset, Math.min(maxOffset, dy * factor));
+      deckRef.current.style.transform = `translate3d(0, ${damped}px, 0)`;
     }
   };
 
-  const handleTouchEnd = (e) => {
-    lastTouchTimeRef.current = Date.now();
-    if (dragStartY.current === null) return;
-    const endY = e.changedTouches?.[0]?.clientY;
-    const endX = e.changedTouches?.[0]?.clientX;
+  const finishPointerGesture = (e, cancelled = false) => {
+    if (pointerIdRef.current !== e.pointerId || dragStartY.current === null) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
 
-    if (deckRef.current) {
-      deckRef.current.style.transition = "transform 160ms ease-out";
-      deckRef.current.style.transform = "translate3d(0, 0px, 0)";
-    }
+    const deltaY = e.clientY - dragStartY.current;
+    const deltaX = dragStartX.current !== null ? Math.abs(e.clientX - dragStartX.current) : 0;
+    const elapsed = Math.max(1, Date.now() - dragStartTime.current);
+    const velocityY = Math.abs(deltaY) / elapsed; // px per ms
 
-    if (typeof endY === "number") {
-      const deltaY = endY - dragStartY.current;
-      const deltaX =
-        typeof endX === "number" && dragStartX.current !== null
-          ? Math.abs(endX - dragStartX.current)
-          : 0;
-      const elapsed = Date.now() - dragStartTime.current;
+    pointerIdRef.current = null;
+    dragStartY.current = null;
+    dragStartX.current = null;
 
-      if (Math.abs(deltaY) > 36 && Math.abs(deltaY) > deltaX) {
-        if (deltaY < -36) {
+    if (!cancelled) {
+      // Trigger swipe if dragged >= 34px vertically OR fast flick >= 18px with velocity > 0.25 px/ms
+      const isSwipe =
+        Math.abs(deltaY) > deltaX &&
+        (Math.abs(deltaY) >= 34 || (Math.abs(deltaY) >= 18 && velocityY > 0.25));
+
+      if (isSwipe && listRef.current.length > 0) {
+        if (deltaY < 0) {
           goToNext();
-        } else if (deltaY > 36) {
+          return;
+        } else if (deltaY > 0) {
           goToPrev();
+          return;
         }
       } else if (Math.abs(deltaY) < 14 && deltaX < 14 && elapsed < 550) {
         togglePlayPause();
       }
     }
-    dragStartY.current = null;
-    dragStartX.current = null;
-  };
 
-  const handleMouseDown = (e) => {
-    if (Date.now() - lastTouchTimeRef.current < 800) return;
-    dragStartY.current = e.clientY;
-    dragStartX.current = e.clientX;
-  };
-
-  const handleMouseUp = (e) => {
-    if (Date.now() - lastTouchTimeRef.current < 800) return;
-    if (dragStartY.current === null) return;
-    const deltaY = e.clientY - dragStartY.current;
-    const deltaX =
-      dragStartX.current !== null ? Math.abs(e.clientX - dragStartX.current) : 0;
-    if (Math.abs(deltaY) > 35 && Math.abs(deltaY) > deltaX) {
-      if (deltaY < -35) {
-        goToNext();
-      } else if (deltaY > 35) {
-        goToPrev();
-      }
-    } else if (Math.abs(deltaY) < 10 && deltaX < 10) {
-      togglePlayPause();
+    if (deckRef.current) {
+      deckRef.current.style.transition = "transform 180ms ease-out";
+      deckRef.current.style.transform = "translate3d(0, 0px, 0)";
     }
-    dragStartY.current = null;
-    dragStartX.current = null;
   };
 
   if (!isOpen || !currentVideo) return null;
@@ -669,9 +780,11 @@ export default function ShortsPlayerModal({
     return <OfflineVideoNotice video={currentVideo} onClose={onClose} />;
   }
 
-  const prevSlideVideo = currentIndex > 0 ? list[currentIndex - 1] : null;
-  const nextSlideVideo =
-    currentIndex < list.length - 1 ? list[currentIndex + 1] : null;
+  const len = list.length;
+  const prevIdx = currentIndex > 0 ? currentIndex - 1 : len > 1 ? len - 1 : -1;
+  const nextIdx = currentIndex < len - 1 ? currentIndex + 1 : len > 1 ? 0 : -1;
+  const prevSlideVideo = prevIdx >= 0 ? list[prevIdx] : null;
+  const nextSlideVideo = nextIdx >= 0 ? list[nextIdx] : null;
   const prevPoster =
     prevSlideVideo?.thumbnail || getThumbnail(prevSlideVideo?.youtube_url);
   const nextPoster =
@@ -687,10 +800,10 @@ export default function ShortsPlayerModal({
     >
       {/* Main Responsive 9:16 Shorts Container */}
       <div className="relative w-full h-full sm:h-[90dvh] sm:w-auto sm:aspect-[9/16] max-w-full sm:rounded-3xl overflow-hidden bg-black shadow-2xl flex flex-col justify-between sm:border sm:border-white/15">
-        {/* Video Deck */}
+        {/* Video Deck (Notice: NO overflow-hidden here so -100% and +100% adjacent slides are visible while dragging!) */}
         <div
           ref={deckRef}
-          className="absolute inset-0 z-0 bg-black overflow-hidden will-change-transform"
+          className="absolute inset-0 z-0 bg-black will-change-transform"
         >
           {/* Previous Slide Poster Preview (Above) */}
           {prevSlideVideo && (
@@ -705,6 +818,7 @@ export default function ShortsPlayerModal({
                   className="w-full h-full object-cover"
                 />
               )}
+              <div className="absolute inset-0 bg-black/25" />
             </div>
           )}
 
@@ -729,6 +843,7 @@ export default function ShortsPlayerModal({
                 }}
                 onWaiting={() => setIsBuffering(true)}
                 onTimeUpdate={(e) => {
+                  if (scrubbingRef.current) return;
                   const el = e.currentTarget;
                   if (el.duration > 0) {
                     setProgress((el.currentTime / el.duration) * 100);
@@ -786,6 +901,7 @@ export default function ShortsPlayerModal({
                   className="w-full h-full object-cover"
                 />
               )}
+              <div className="absolute inset-0 bg-black/25" />
             </div>
           )}
 
@@ -798,14 +914,14 @@ export default function ShortsPlayerModal({
             </div>
           )}
 
-          {/* Protective Touch/Swipe Shield: Captures swipe up/down & single tap to pause/resume */}
+          {/* Protective Pointer/Swipe Shield: Captures vertical swipe up/down & single tap to pause/resume */}
           <div
             className="absolute inset-0 z-10 cursor-pointer"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUp}
+            style={{ touchAction: "none" }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={(e) => finishPointerGesture(e, false)}
+            onPointerCancel={(e) => finishPointerGesture(e, true)}
             onWheel={handleWheel}
             onContextMenu={(e) => e.preventDefault()}
           />
@@ -913,9 +1029,8 @@ export default function ShortsPlayerModal({
               <button
                 type="button"
                 onClick={goToPrev}
-                disabled={currentIndex === 0}
                 title={t.prevShortTip || "المقطع السابق"}
-                className="w-9 h-9 rounded-full bg-black/65 hover:bg-black/85 disabled:opacity-30 text-white border border-white/20 flex items-center justify-center shadow active:scale-90 transition-all"
+                className="w-9 h-9 rounded-full bg-black/65 hover:bg-black/85 text-white border border-white/20 flex items-center justify-center shadow active:scale-90 transition-all"
               >
                 <ChevronUp className="w-5 h-5" />
               </button>
@@ -931,8 +1046,8 @@ export default function ShortsPlayerModal({
           )}
         </div>
 
-        {/* Bottom Overlay Info (Channel, Category, Title & Progress Bar) */}
-        <div className="relative z-20 p-4 pb-5 pe-16 bg-gradient-to-t from-black/95 via-black/75 to-transparent text-white space-y-2 pointer-events-none">
+        {/* Bottom Overlay Info (Channel, Category, Title & Interactive Progress Scrubber) */}
+        <div className="relative z-20 p-4 pb-4 pe-16 bg-gradient-to-t from-black/95 via-black/75 to-transparent text-white space-y-2 pointer-events-none">
           <div className="flex flex-wrap items-center gap-2">
             {channelName && (
               <div className="flex items-center gap-2">
@@ -979,12 +1094,56 @@ export default function ShortsPlayerModal({
             )}
           </AnimatePresence>
 
-          {/* Playback Progress Bar */}
-          <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden mt-1">
-            <div
-              className="h-full bg-purple-500 transition-all duration-150"
-              style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
-            />
+          {/* Interactive Draggable Playback Progress Bar */}
+          <div
+            dir="ltr"
+            style={{ touchAction: "none" }}
+            className="w-full py-2 cursor-pointer pointer-events-auto group"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              scrubbingRef.current = true;
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {}
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width > 0) {
+                seekShortToRatio((e.clientX - rect.left) / rect.width);
+              }
+            }}
+            onPointerMove={(e) => {
+              if (!scrubbingRef.current) return;
+              e.stopPropagation();
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width > 0) {
+                seekShortToRatio((e.clientX - rect.left) / rect.width);
+              }
+            }}
+            onPointerUp={(e) => {
+              if (!scrubbingRef.current) return;
+              e.stopPropagation();
+              scrubbingRef.current = false;
+              try {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              } catch {}
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width > 0) {
+                seekShortToRatio((e.clientX - rect.left) / rect.width);
+              }
+            }}
+            onPointerCancel={() => {
+              scrubbingRef.current = false;
+            }}
+          >
+            <div className="relative w-full h-1.5 group-hover:h-2 bg-white/25 rounded-full overflow-visible transition-all">
+              <div
+                className="h-full bg-purple-500 rounded-full transition-all duration-75"
+                style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+              />
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white shadow ring-2 ring-purple-500"
+                style={{ left: `${Math.min(100, Math.max(0, progress))}%` }}
+              />
+            </div>
           </div>
         </div>
       </div>

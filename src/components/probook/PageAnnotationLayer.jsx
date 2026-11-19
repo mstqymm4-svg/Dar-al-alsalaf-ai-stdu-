@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
-import { X, Check, GripHorizontal } from "lucide-react";
+import { X, Check, GripHorizontal, MessageSquare } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
 const ANNOT_PREFIX = "dau_annot_";
@@ -102,13 +102,44 @@ function drawItemOnContext(ctx, item, width, height, isDarkTheme) {
   ctx.lineJoin = "round";
   ctx.globalAlpha = isHighlighter ? 0.32 : 0.96;
 
-  // Shape tools: line, rect, circle
+  // Shape tools: line, arrow, rect, circle
   if (item.tool === "line" && Array.isArray(item.points) && item.points.length >= 2) {
     const start = item.points[0];
     const end = item.points[item.points.length - 1];
     ctx.beginPath();
     ctx.moveTo(start[0] * width, start[1] * height);
     ctx.lineTo(end[0] * width, end[1] * height);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (item.tool === "arrow" && Array.isArray(item.points) && item.points.length >= 2) {
+    const start = item.points[0];
+    const end = item.points[item.points.length - 1];
+    const x1 = start[0] * width;
+    const y1 = start[1] * height;
+    const x2 = end[0] * width;
+    const y2 = end[1] * height;
+
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const headLen = Math.max(10, pxWidth * 3.4);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - headLen * Math.cos(angle - Math.PI / 6),
+      y2 - headLen * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - headLen * Math.cos(angle + Math.PI / 6),
+      y2 - headLen * Math.sin(angle + Math.PI / 6)
+    );
     ctx.stroke();
     ctx.restore();
     return;
@@ -197,7 +228,7 @@ function hitTestItem(item, normX, normY, radiusNorm = 0.035) {
   const r2 = radiusNorm * radiusNorm;
   const pts = item.points;
 
-  if (item.tool === "line" && pts.length >= 2) {
+  if ((item.tool === "line" || item.tool === "arrow") && pts.length >= 2) {
     const start = pts[0];
     const end = pts[pts.length - 1];
     return distToSegmentSquared(normX, normY, start[0], start[1], end[0], end[1]) <= r2;
@@ -241,7 +272,7 @@ export default function PageAnnotationLayer({
   width,
   height,
   active = false,
-  tool = "pen", // "pen" | "highlighter" | "line" | "rect" | "circle" | "text" | "eraser" | "pan"
+  tool = "pen", // "pen" | "highlighter" | "line" | "arrow" | "rect" | "circle" | "text" | "eraser" | "pan"
   color = "#EF4444",
   size = 3.5,
   theme = "light",
@@ -255,6 +286,10 @@ export default function PageAnnotationLayer({
     pointerId: null,
     currentStroke: null,
     draggingNoteId: null,
+    notePointerId: null,
+    noteStartX: 0,
+    noteStartY: 0,
+    noteMoved: false,
     dragOffsetX: 0,
     dragOffsetY: 0,
   });
@@ -266,6 +301,7 @@ export default function PageAnnotationLayer({
   annotationsRef.current = annotations;
 
   const [draftNote, setDraftNote] = useState(null); // { id, x, y, text, color }
+  const [viewingNote, setViewingNote] = useState(null); // Read-only popover when Pen mode is off or pan
   const [eraserPos, setEraserPos] = useState(null); // { x, y } in [0..1]
 
   const isDark = theme === "dark" || theme === "dusk";
@@ -343,17 +379,26 @@ export default function PageAnnotationLayer({
 
   const eraseAtPoint = (nx, ny) => {
     const cur = annotationsRef.current;
+    const removed = [];
     const filtered = cur.filter((item) => {
+      let hit = false;
       if (item.type === "text") {
         const dx = Math.abs((item.x || 0) - nx);
         const dy = Math.abs((item.y || 0) - ny);
-        return !(dx < 0.08 && dy < 0.05);
+        hit = dx < 0.08 && dy < 0.05;
+      } else {
+        hit = hitTestItem(item, nx, ny, 0.036);
       }
-      return !hitTestItem(item, nx, ny, 0.036);
+      if (hit) removed.push(item);
+      return !hit;
     });
-    if (filtered.length !== cur.length) {
+    if (removed.length > 0) {
       const key = getStorageKey(bookId, pageNumber);
-      redoStacks.set(key, [...cur]);
+      const stack = redoStacks.get(key) || [];
+      for (const r of removed) {
+        stack.push(r);
+      }
+      redoStacks.set(key, stack);
       commitAnnotations(filtered, false);
     }
   };
@@ -377,6 +422,7 @@ export default function PageAnnotationLayer({
 
     if (tool === "text") {
       e.preventDefault();
+      setViewingNote(null);
       setDraftNote({
         id: `txt_${Date.now()}`,
         x: Math.min(0.84, Math.max(0.16, x)),
@@ -440,8 +486,8 @@ export default function PageAnnotationLayer({
     const stroke = drawingRef.current.currentStroke;
     if (!stroke) return;
 
-    // For geometric shape tools (line, rect, circle), only keep [startPoint, currentPoint]
-    if (tool === "line" || tool === "rect" || tool === "circle") {
+    // For geometric shape tools (line, arrow, rect, circle), only keep [startPoint, currentPoint]
+    if (tool === "line" || tool === "arrow" || tool === "rect" || tool === "circle") {
       stroke.points = [stroke.points[0], [x, y]];
       redrawCanvas(annotationsRef.current, stroke);
       return;
@@ -474,7 +520,10 @@ export default function PageAnnotationLayer({
     if (stroke && stroke.points.length > 0) {
       // Ignore accidental zero-length shape taps
       if (
-        (stroke.tool === "line" || stroke.tool === "rect" || stroke.tool === "circle") &&
+        (stroke.tool === "line" ||
+          stroke.tool === "arrow" ||
+          stroke.tool === "rect" ||
+          stroke.tool === "circle") &&
         stroke.points.length < 2
       ) {
         redrawCanvas(annotationsRef.current, null);
@@ -485,12 +534,27 @@ export default function PageAnnotationLayer({
     }
   };
 
-  // Dragging existing text notes on the page
+  // Dragging or tapping existing text notes on the page
   const startNoteDrag = (e, note) => {
-    if (!isDrawingActive || tool === "eraser") return;
     e.stopPropagation();
+    if (!isDrawingActive) {
+      // When Pen mode is off (or in Pan mode), tapping a note opens a clean read/view popover
+      setViewingNote((prev) => (prev?.id === note.id ? null : note));
+      return;
+    }
+    if (tool === "eraser") {
+      deleteTextNote(note.id);
+      return;
+    }
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
     const { x, y } = getNormalizedCoords(e);
     drawingRef.current.draggingNoteId = note.id;
+    drawingRef.current.notePointerId = e.pointerId;
+    drawingRef.current.noteStartX = e.clientX;
+    drawingRef.current.noteStartY = e.clientY;
+    drawingRef.current.noteMoved = false;
     drawingRef.current.dragOffsetX = (note.x || 0.5) - x;
     drawingRef.current.dragOffsetY = (note.y || 0.5) - y;
   };
@@ -499,6 +563,13 @@ export default function PageAnnotationLayer({
     const noteId = drawingRef.current.draggingNoteId;
     if (!noteId) return;
     e.stopPropagation();
+    const movePx = Math.hypot(
+      e.clientX - drawingRef.current.noteStartX,
+      e.clientY - drawingRef.current.noteStartY
+    );
+    if (movePx > 5) {
+      drawingRef.current.noteMoved = true;
+    }
     const { x, y } = getNormalizedCoords(e);
     const nextX = Math.max(0.08, Math.min(0.92, +(x + drawingRef.current.dragOffsetX).toFixed(4)));
     const nextY = Math.max(0.06, Math.min(0.94, +(y + drawingRef.current.dragOffsetY).toFixed(4)));
@@ -509,11 +580,25 @@ export default function PageAnnotationLayer({
     annotationsRef.current = updated;
   };
 
-  const endNoteDrag = (e) => {
-    if (!drawingRef.current.draggingNoteId) return;
+  const endNoteDrag = (e, note) => {
+    const noteId = drawingRef.current.draggingNoteId;
+    if (!noteId) return;
     e?.stopPropagation?.();
+    try {
+      if (drawingRef.current.notePointerId !== null) {
+        e?.currentTarget?.releasePointerCapture?.(drawingRef.current.notePointerId);
+      }
+    } catch {}
+    const wasMoved = drawingRef.current.noteMoved;
     drawingRef.current.draggingNoteId = null;
-    savePageAnnotations(bookId, pageNumber, annotationsRef.current);
+    drawingRef.current.notePointerId = null;
+    drawingRef.current.noteMoved = false;
+
+    if (wasMoved) {
+      savePageAnnotations(bookId, pageNumber, annotationsRef.current);
+    } else if (note && isDrawingActive && tool !== "eraser") {
+      setDraftNote(note);
+    }
   };
 
   const saveDraftNote = () => {
@@ -538,6 +623,8 @@ export default function PageAnnotationLayer({
 
   const deleteTextNote = (id) => {
     const next = annotationsRef.current.filter((it) => it.id !== id);
+    if (viewingNote?.id === id) setViewingNote(null);
+    if (draftNote?.id === id) setDraftNote(null);
     commitAnnotations(next, true);
   };
 
@@ -551,8 +638,6 @@ export default function PageAnnotationLayer({
   return (
     <div
       data-annotation-layer
-      onPointerMove={moveNoteDrag}
-      onPointerUp={endNoteDrag}
       className={`absolute inset-0 z-10 select-none ${
         isDrawingActive ? "pointer-events-auto" : "pointer-events-none"
       }`}
@@ -590,43 +675,42 @@ export default function PageAnnotationLayer({
         />
       )}
 
-      {/* Saved Text Notes on the Page */}
+      {/* Saved Text Notes on the Page (Always tappable to view even when Pen mode is closed) */}
       {textNotes.map((note) => (
         <div
           key={note.id}
+          data-viewer-ui
           onPointerDown={(e) => startNoteDrag(e, note)}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!isDrawingActive) return;
-            if (tool === "eraser") {
-              deleteTextNote(note.id);
-            } else {
-              setDraftNote(note);
-            }
-          }}
+          onPointerMove={moveNoteDrag}
+          onPointerUp={(e) => endNoteDrag(e, note)}
+          onPointerCancel={(e) => endNoteDrag(e, note)}
+          onClick={(e) => e.stopPropagation()}
           style={{
             left: `${(note.x || 0.1) * 100}%`,
             top: `${(note.y || 0.1) * 100}%`,
             borderColor: resolveStrokeColor(note.color, isDark),
           }}
-          className={`absolute -translate-x-1/2 -translate-y-1/2 max-w-[210px] px-2.5 py-1.5 rounded-xl border-2 shadow-lg text-xs font-bold leading-snug break-words transition-transform ${
+          className={`pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 max-w-[210px] px-2.5 py-1.5 rounded-xl border-2 shadow-lg text-xs font-bold leading-snug break-words transition-transform ${
             isDrawingActive
-              ? "pointer-events-auto cursor-move hover:scale-105"
-              : "pointer-events-none"
+              ? "cursor-move hover:scale-105"
+              : "cursor-pointer hover:scale-105"
           } ${
             isDark
-              ? "bg-neutral-900/95 text-stone-100"
-              : "bg-amber-50/95 text-stone-900"
+              ? "bg-neutral-900 text-stone-100"
+              : "bg-amber-50 text-stone-900"
           }`}
         >
           <div className="flex items-start gap-1.5">
-            {isDrawingActive && (
+            {isDrawingActive ? (
               <GripHorizontal className="w-3.5 h-3.5 opacity-50 shrink-0 mt-0.5" />
+            ) : (
+              <MessageSquare className="w-3 h-3 opacity-60 shrink-0 mt-0.5" />
             )}
-            <span className="flex-1">{note.text}</span>
+            <span className="flex-1 line-clamp-3">{note.text}</span>
             {isDrawingActive && (
               <button
                 type="button"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   deleteTextNote(note.id);
@@ -640,8 +724,59 @@ export default function PageAnnotationLayer({
         </div>
       ))}
 
+      {/* Read/Edit Note Modal when tapped while reading */}
+      {viewingNote && !draftNote && (
+        <div
+          data-viewer-ui
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            left: `${Math.min(72, Math.max(28, (viewingNote.x || 0.5) * 100))}%`,
+            top: `${Math.min(78, Math.max(18, (viewingNote.y || 0.5) * 100))}%`,
+          }}
+          className="absolute -translate-x-1/2 -translate-y-1/2 z-30 w-64 p-3.5 rounded-2xl bg-neutral-900 text-white border border-slate-700 shadow-2xl pointer-events-auto"
+          dir="auto"
+        >
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-white/10">
+            <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5" />
+              {t.penNoteViewTitle || "ملاحظة الصفحة"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setViewingNote(null)}
+              className="w-6 h-6 rounded-full hover:bg-white/10 flex items-center justify-center text-white/70"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <p className="text-xs leading-relaxed text-stone-100 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+            {viewingNote.text}
+          </p>
+          <div className="flex items-center justify-end gap-1.5 mt-3 pt-2 border-t border-white/10">
+            <button
+              type="button"
+              onClick={() => deleteTextNote(viewingNote.id)}
+              className="px-2.5 py-1 rounded-lg text-[11px] bg-rose-500/20 hover:bg-rose-500/30 text-rose-300"
+            >
+              {t.delete || "حذف"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDraftNote(viewingNote);
+                setViewingNote(null);
+              }}
+              className="px-3 py-1 rounded-lg text-[11px] font-bold bg-primary text-primary-foreground"
+            >
+              {t.penEditNoteBtn || "تعديل"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Active Text Note Editor Popover */}
-      {isDrawingActive && draftNote && (
+      {draftNote && (
         <div
           data-viewer-ui
           onPointerDown={(e) => e.stopPropagation()}
@@ -650,12 +785,12 @@ export default function PageAnnotationLayer({
             left: `${Math.min(72, Math.max(28, draftNote.x * 100))}%`,
             top: `${Math.min(78, Math.max(18, draftNote.y * 100))}%`,
           }}
-          className="absolute -translate-x-1/2 -translate-y-1/2 z-30 w-60 p-3 rounded-2xl bg-neutral-900/95 text-white border border-white/20 shadow-2xl pointer-events-auto"
+          className="absolute -translate-x-1/2 -translate-y-1/2 z-30 w-60 p-3 rounded-2xl bg-neutral-900 text-white border border-slate-700 shadow-2xl pointer-events-auto"
           dir="auto"
         >
           <textarea
             autoFocus
-            rows={2}
+            rows={3}
             value={draftNote.text}
             onChange={(e) =>
               setDraftNote((d) => (d ? { ...d, text: e.target.value } : null))

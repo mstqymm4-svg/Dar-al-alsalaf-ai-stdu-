@@ -113,7 +113,7 @@ export default function ReadBook() {
     <div
       data-book-reader
       className={`fixed inset-x-0 bottom-0 z-40 flex flex-col bg-background select-none transition-all ${
-        isZenMode ? "top-0 z-50" : "top-16"
+        isZenMode ? "top-0 z-50" : "top-14 sm:top-16"
       }`}
       onPointerDown={() => {
         if (isWindowBlurred) setIsWindowBlurred(false);

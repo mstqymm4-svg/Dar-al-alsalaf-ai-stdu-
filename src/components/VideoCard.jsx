@@ -1,6 +1,27 @@
-import { Play, Heart, Share2, Star, Clock, Video, CheckCircle, Radio, Flame } from "lucide-react";
+import { useState, useEffect } from "react";
+import {
+  Play,
+  Heart,
+  Share2,
+  Star,
+  Clock,
+  Video,
+  CheckCircle,
+  Radio,
+  Flame,
+  Download,
+  Check,
+  Loader2,
+  WifiOff,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
+import {
+  isVideoSavedOffline,
+  downloadVideoForOffline,
+  removeVideoFromOffline,
+} from "@/lib/offlineDB";
+import { toast } from "sonner";
 import SmartImage from "./SmartImage";
 
 export default function VideoCard({
@@ -13,14 +34,59 @@ export default function VideoCard({
   onShare,
 }) {
   const t = useT();
+  const [isOfflineSaved, setIsOfflineSaved] = useState(() =>
+    isVideoSavedOffline(video?.id)
+  );
+  const [downloading, setDownloading] = useState(false);
+  const [downloadPct, setDownloadPct] = useState(0);
+
+  useEffect(() => {
+    setIsOfflineSaved(isVideoSavedOffline(video?.id));
+    const onSync = () => {
+      setIsOfflineSaved(isVideoSavedOffline(video?.id));
+    };
+    window.addEventListener("dau:offline-videos-changed", onSync);
+    return () => window.removeEventListener("dau:offline-videos-changed", onSync);
+  }, [video?.id]);
+
+  const handleOfflineToggle = async (e) => {
+    e.stopPropagation();
+    if (!video?.id || downloading) return;
+
+    if (isOfflineSaved) {
+      await removeVideoFromOffline(video.id);
+      setIsOfflineSaved(false);
+      toast.info(
+        t.removedOfflineVideo || "تمت إزالة الفيديو من التنزيلات بلا نت"
+      );
+      return;
+    }
+
+    setDownloading(true);
+    setDownloadPct(5);
+    try {
+      await downloadVideoForOffline(video, (pct) => {
+        setDownloadPct(pct);
+      });
+      setIsOfflineSaved(true);
+      toast.success(
+        t.savedVideoOfflineSuccess || "تم تحميل الفيديو للمشاهدة بلا نت ✓"
+      );
+    } catch {
+      toast.error(
+        t.downloadVideoFailed || "تعذر تحميل الفيديو حالياً، حاول مرة أخرى"
+      );
+    } finally {
+      setDownloading(false);
+      setDownloadPct(0);
+    }
+  };
 
   const channelLogo = channel?.channel_logo;
   const channelDisplayName = channel?.name || video.channel_name;
 
   return (
-    <div
-      className="group bg-card border border-border/80 hover:border-primary/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-1 transition-transform duration-200 flex flex-col"
-    >
+    <div className="group bg-card border border-border/80 hover:border-primary/40 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-primary/5 hover:-translate-y-0.5 transition-all duration-200 flex flex-col">
       {/* Thumbnail Area */}
       <div
         className="relative aspect-video bg-muted/80 cursor-pointer overflow-hidden"
@@ -44,7 +110,7 @@ export default function VideoCard({
         )}
 
         {/* Gradient shadow overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 opacity-60 group-hover:opacity-40 transition-opacity" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/25 opacity-65 group-hover:opacity-45 transition-opacity" />
 
         {/* Central Play Button Overlay */}
         <div className="absolute inset-0 flex items-center justify-center opacity-90 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
@@ -54,11 +120,12 @@ export default function VideoCard({
         </div>
 
         {/* Badges on Top */}
-        <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between pointer-events-none">
+        <div className="absolute top-2.5 inset-x-2.5 flex items-center justify-between pointer-events-none gap-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             {video.is_featured && (
               <span className="px-2 py-0.5 rounded-md bg-amber-500 text-white text-[10px] font-bold flex items-center gap-1 shadow-md">
-                <Star className="w-2.5 h-2.5 fill-current" /> {t.featured || "مميز"}
+                <Star className="w-2.5 h-2.5 fill-current" />{" "}
+                {t.featured || "مميز"}
               </span>
             )}
             {video.video_type === "short" && (
@@ -71,10 +138,16 @@ export default function VideoCard({
                 <Radio className="w-2.5 h-2.5" /> {t.liveLabel || "مباشر"}
               </span>
             )}
+            {isOfflineSaved && (
+              <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 shadow-md">
+                <WifiOff className="w-2.5 h-2.5" />{" "}
+                {t.availableOfflineBadge || "بلا نت ✓"}
+              </span>
+            )}
           </div>
 
           {isWatched && (
-            <span className="px-1.5 py-0.5 rounded-md bg-black/75 backdrop-blur-sm text-emerald-400 text-[10px] font-medium flex items-center gap-1 shadow">
+            <span className="px-1.5 py-0.5 rounded-md bg-black/75 text-emerald-400 text-[10px] font-medium flex items-center gap-1 shadow">
               <CheckCircle className="w-3 h-3" /> {t.watched || "تمّت المشاهدة"}
             </span>
           )}
@@ -85,6 +158,16 @@ export default function VideoCard({
           <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/85 text-white text-[11px] font-mono font-medium flex items-center gap-1 shadow pointer-events-none">
             <Clock className="w-2.5 h-2.5 opacity-80" /> {video.duration}
           </span>
+        )}
+
+        {/* Active Download Progress Bar on Thumbnail Bottom */}
+        {downloading && (
+          <div className="absolute bottom-0 inset-x-0 h-1.5 bg-black/70 overflow-hidden">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-150"
+              style={{ width: `${downloadPct}%` }}
+            />
+          </div>
         )}
       </div>
 
@@ -126,7 +209,7 @@ export default function VideoCard({
           )}
         </div>
 
-        {/* Action Buttons */}
+        {/* Action Buttons: Play + Offline Download + Favorite + Share */}
         <div className="flex items-center gap-1.5 pt-2 border-t border-border/50">
           <Button
             size="sm"
@@ -136,15 +219,61 @@ export default function VideoCard({
             <Play className="w-3.5 h-3.5 fill-current" /> {t.play || "تشغيل"}
           </Button>
 
+          {/* Offline Download Button for watching without internet */}
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={downloading}
+            onClick={handleOfflineToggle}
+            title={
+              isOfflineSaved
+                ? t.savedForOfflineTip || "محفوظ للمشاهدة بلا نت (اضغط للإزالة)"
+                : t.downloadForOfflineTip || "تحميل الفيديو للمشاهدة بلا نت"
+            }
+            className={`h-8 px-2.5 rounded-xl border text-[11px] font-bold gap-1 transition-all shrink-0 ${
+              isOfflineSaved
+                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/25"
+                : downloading
+                ? "border-primary/40 bg-primary/10 text-primary"
+                : "border-border/60 hover:border-primary/50 hover:bg-primary/10 text-muted-foreground hover:text-primary"
+            }`}
+          >
+            {downloading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span className="font-mono text-[10px]">{downloadPct}%</span>
+              </>
+            ) : isOfflineSaved ? (
+              <>
+                <Check className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
+                <span>{t.offlineSavedShort || "بلا نت"}</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-3.5 h-3.5 shrink-0" />
+                <span>{t.downloadOfflineBtn || "تحميل"}</span>
+              </>
+            )}
+          </Button>
+
           {onToggleFavorite && (
             <Button
               size="icon"
               variant="ghost"
-              className="h-8 w-8 rounded-xl border border-border/60 hover:border-red-400 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors"
-              title={isFavorite ? (t.removeFav || "إزالة من المفضلة") : (t.addFav || "إضافة للمفضلة")}
+              className="h-8 w-8 rounded-xl border border-border/60 hover:border-red-400 hover:bg-red-500/10 text-muted-foreground hover:text-red-500 transition-colors shrink-0"
+              title={
+                isFavorite
+                  ? t.removeFav || "إزالة من المفضلة"
+                  : t.addFav || "إضافة للمفضلة"
+              }
               onClick={() => onToggleFavorite(video.id)}
             >
-              <Heart className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : ""}`} />
+              <Heart
+                className={`w-3.5 h-3.5 ${
+                  isFavorite ? "fill-red-500 text-red-500" : ""
+                }`}
+              />
             </Button>
           )}
 
@@ -152,7 +281,7 @@ export default function VideoCard({
             <Button
               size="icon"
               variant="ghost"
-              className="h-8 w-8 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              className="h-8 w-8 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
               title={t.shareLink || "مشاركة الرابط"}
               onClick={() => onShare(video)}
             >

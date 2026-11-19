@@ -14,31 +14,31 @@ const clampZoom = (z) => Math.max(0.5, Math.min(3, +Number(z).toFixed(2)));
 export const READER_THEMES = {
   light: {
     id: "light",
-    canvasBg: "bg-[#F5F2EB]",
+    canvasBg: "bg-[#F4F1EA]",
     pageBg: "bg-white",
-    pageShadow: "shadow-[0_4px_20px_rgba(28,25,23,0.10)] ring-1 ring-stone-300/80",
+    pageShadow: "shadow-[0_6px_24px_rgba(28,25,23,0.10)] ring-1 ring-stone-300/80",
     badgeBg: "bg-stone-900/80 text-stone-100",
   },
   sepia: {
     id: "sepia",
-    canvasBg: "bg-[#EFE5D3]",
-    pageBg: "bg-[#EFE5D3]",
-    pageShadow: "shadow-[0_4px_20px_rgba(68,51,28,0.14)] ring-1 ring-[#D8CAAE]",
+    canvasBg: "bg-[#E8DEC8]",
+    pageBg: "bg-[#F2E7D2]",
+    pageShadow: "shadow-[0_6px_24px_rgba(68,51,28,0.14)] ring-1 ring-[#D5C5A5]",
     badgeBg: "bg-[#3D2E1E]/85 text-[#F7EFE2]",
   },
   dusk: {
     id: "dusk",
-    canvasBg: "bg-[#181C22]",
-    pageBg: "bg-[#181C22]",
-    pageShadow: "shadow-[0_6px_24px_rgba(0,0,0,0.45)] ring-1 ring-slate-700/60",
-    badgeBg: "bg-slate-800/90 text-slate-200",
+    canvasBg: "bg-[#11151E]",
+    pageBg: "bg-[#1A202B]",
+    pageShadow: "shadow-[0_10px_30px_rgba(0,0,0,0.55)] ring-1 ring-slate-700/70",
+    badgeBg: "bg-slate-800/90 text-slate-200 ring-1 ring-white/10",
   },
   dark: {
     id: "dark",
-    canvasBg: "bg-[#0B0D11]",
-    pageBg: "bg-[#121418]",
-    pageShadow: "shadow-[0_6px_26px_rgba(0,0,0,0.65)] ring-1 ring-neutral-800",
-    badgeBg: "bg-neutral-800/90 text-neutral-200",
+    canvasBg: "bg-[#090B10]",
+    pageBg: "bg-[#12151C]",
+    pageShadow: "shadow-[0_12px_34px_rgba(0,0,0,0.75)] ring-1 ring-white/10",
+    badgeBg: "bg-[#1C202B]/95 text-stone-200 ring-1 ring-white/10",
   },
 };
 
@@ -139,22 +139,25 @@ export default function VerticalPageStream({
   effZoomRef.current = effZoom;
   const isZoomed = effZoom > 1.05;
 
-  // ── Calculate dimensions efficiently ──
+  // ── Calculate dimensions efficiently across all devices (320px phones -> tablets -> 4K desktops) ──
   const { pageWidth, pageHeight } = useMemo(() => {
     const r = baseRatio || DEFAULT_RATIO;
-    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
-    const availH = Math.max(360, containerSize.height - 28);
+    const cw = containerSize.width || (typeof window !== "undefined" ? window.innerWidth : 375);
+    const ch = containerSize.height || (typeof window !== "undefined" ? window.innerHeight - 120 : 600);
+    const hPad = cw > 640 ? 48 : cw < 380 ? 8 : 14;
+    const availW = Math.max(220, cw - hPad);
+    const availH = Math.max(260, ch - 24);
 
     let baseW;
-    if (viewMode === "spread" && containerSize.width >= 768) {
+    if (viewMode === "spread" && cw >= 768) {
       const halfW = (availW - 16) / 2;
       const fitPageW = availH * r;
       baseW = Math.min(halfW, fitPageW);
     } else if (fitMode === "page" || viewMode === "single") {
       const fitPageW = availH * r;
-      baseW = Math.min(availW, fitPageW, 880);
+      baseW = Math.min(availW, fitPageW, 920);
     } else {
-      baseW = Math.min(availW, 860);
+      baseW = Math.min(availW, 880);
     }
 
     const finalW = Math.round(baseW * effZoom);
@@ -164,19 +167,22 @@ export default function VerticalPageStream({
 
   const committedDim = useMemo(() => {
     const r = baseRatio || DEFAULT_RATIO;
-    const availW = Math.max(280, containerSize.width - (containerSize.width > 640 ? 48 : 16));
-    const availH = Math.max(360, containerSize.height - 28);
+    const cw = containerSize.width || (typeof window !== "undefined" ? window.innerWidth : 375);
+    const ch = containerSize.height || (typeof window !== "undefined" ? window.innerHeight - 120 : 600);
+    const hPad = cw > 640 ? 48 : cw < 380 ? 8 : 14;
+    const availW = Math.max(220, cw - hPad);
+    const availH = Math.max(260, ch - 24);
 
     let baseW;
-    if (viewMode === "spread" && containerSize.width >= 768) {
+    if (viewMode === "spread" && cw >= 768) {
       const halfW = (availW - 16) / 2;
       const fitPageW = availH * r;
       baseW = Math.min(halfW, fitPageW);
     } else if (fitMode === "page" || viewMode === "single") {
       const fitPageW = availH * r;
-      baseW = Math.min(availW, fitPageW, 880);
+      baseW = Math.min(availW, fitPageW, 920);
     } else {
-      baseW = Math.min(availW, 860);
+      baseW = Math.min(availW, 880);
     }
 
     const finalW = Math.round(baseW * zoom);
@@ -242,6 +248,24 @@ export default function VerticalPageStream({
       }
     }
   }, [zoom]);
+
+  // Keep scrollTop anchored to currentPage when baseRatio (PDF page 1 aspect ratio) or fitMode changes pageHeight
+  const prevBaseMetricsRef = useRef({ baseRatio, fitMode });
+  useEffect(() => {
+    const prev = prevBaseMetricsRef.current;
+    if (prev.baseRatio !== baseRatio || prev.fitMode !== fitMode) {
+      prevBaseMetricsRef.current = { baseRatio, fitMode };
+      const el = scrollRef.current;
+      if (el && viewMode === "scroll" && totalItemHeight > 0 && currentPageRef.current > 1) {
+        isProgrammaticScrollRef.current = true;
+        el.scrollTop = (currentPageRef.current - 1) * totalItemHeight;
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 180);
+      }
+    }
+  }, [baseRatio, fitMode, viewMode, totalItemHeight]);
 
   // ── Native non-passive touch listeners so pinch NEVER triggers browser scroll/page-flip ──
   useEffect(() => {

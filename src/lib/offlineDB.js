@@ -21,7 +21,7 @@ import initialSocialChannels from "../../data-export/SocialChannels.json";
 import initialSettings from "../../data-export/AppSettings.json";
 
 const DB_NAME = "dar_al_ulum_offline";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let _db = null;
 let _dbReady = null; // in-flight open promise to avoid duplicate opens
@@ -41,16 +41,17 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains("books"))     db.createObjectStore("books",     { keyPath: "id" });
-      if (!db.objectStoreNames.contains("pdfs"))      db.createObjectStore("pdfs",      { keyPath: "url" });
-      if (!db.objectStoreNames.contains("images"))    db.createObjectStore("images",    { keyPath: "url" });
-      if (!db.objectStoreNames.contains("favorites")) db.createObjectStore("favorites", { keyPath: "bookId" });
-      if (!db.objectStoreNames.contains("pending"))   db.createObjectStore("pending",   { keyPath: "id", autoIncrement: true });
-      if (!db.objectStoreNames.contains("meta"))      db.createObjectStore("meta",      { keyPath: "key" });
-      if (!db.objectStoreNames.contains("videos"))    db.createObjectStore("videos",    { keyPath: "id" });
-      if (!db.objectStoreNames.contains("channels"))  db.createObjectStore("channels",  { keyPath: "id" });
-      if (!db.objectStoreNames.contains("social"))    db.createObjectStore("social",    { keyPath: "id" });
-      if (!db.objectStoreNames.contains("settings"))  db.createObjectStore("settings",  { keyPath: "setting_key" });
+      if (!db.objectStoreNames.contains("books"))       db.createObjectStore("books",       { keyPath: "id" });
+      if (!db.objectStoreNames.contains("pdfs"))        db.createObjectStore("pdfs",        { keyPath: "url" });
+      if (!db.objectStoreNames.contains("images"))      db.createObjectStore("images",      { keyPath: "url" });
+      if (!db.objectStoreNames.contains("favorites"))   db.createObjectStore("favorites",   { keyPath: "bookId" });
+      if (!db.objectStoreNames.contains("pending"))     db.createObjectStore("pending",     { keyPath: "id", autoIncrement: true });
+      if (!db.objectStoreNames.contains("meta"))        db.createObjectStore("meta",        { keyPath: "key" });
+      if (!db.objectStoreNames.contains("videos"))      db.createObjectStore("videos",      { keyPath: "id" });
+      if (!db.objectStoreNames.contains("video_blobs")) db.createObjectStore("video_blobs", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("channels"))    db.createObjectStore("channels",    { keyPath: "id" });
+      if (!db.objectStoreNames.contains("social"))      db.createObjectStore("social",      { keyPath: "id" });
+      if (!db.objectStoreNames.contains("settings"))    db.createObjectStore("settings",    { keyPath: "setting_key" });
     };
     req.onsuccess = () => {
       _db = req.result;
@@ -309,6 +310,185 @@ export async function deleteCachedVideo(id) {
   store.delete(id);
   store.delete(String(id));
   await txDone(store);
+  await removeVideoFromOffline(id).catch(() => {});
+}
+
+// ─── Offline Video Blobs (Watch Without Internet) ─────────────────────────────
+const OFFLINE_VIDEOS_KEY = "dau_offline_video_ids";
+
+export function getSavedOfflineVideoIds() {
+  try {
+    const raw = localStorage.getItem(OFFLINE_VIDEOS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isVideoSavedOffline(videoId) {
+  if (!videoId) return false;
+  return getSavedOfflineVideoIds().includes(String(videoId));
+}
+
+function setSavedOfflineVideoIds(ids) {
+  try {
+    const unique = Array.from(new Set(ids.map(String)));
+    localStorage.setItem(OFFLINE_VIDEOS_KEY, JSON.stringify(unique));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("dau:offline-videos-changed", { detail: unique }));
+    }
+  } catch {}
+}
+
+export async function getOfflineVideoRecord(videoId) {
+  if (!videoId) return null;
+  try {
+    const store = await tx("video_blobs");
+    return (
+      (await reqAsPromise(store.get(videoId))) ||
+      (await reqAsPromise(store.get(String(videoId)))) ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+export async function getOfflineVideoBlobUrl(videoId) {
+  const rec = await getOfflineVideoRecord(videoId);
+  if (rec && rec.blob instanceof Blob && rec.blob.size > 0) {
+    return {
+      blobUrl: URL.createObjectURL(rec.blob),
+      mimeType: rec.mimeType || "video/mp4",
+      size: rec.size || rec.blob.size,
+      record: rec,
+    };
+  }
+  return null;
+}
+
+export async function removeVideoFromOffline(videoId) {
+  if (!videoId) return;
+  try {
+    const store = await tx("video_blobs", "readwrite");
+    store.delete(videoId);
+    store.delete(String(videoId));
+    await txDone(store);
+  } catch {}
+  const current = getSavedOfflineVideoIds().filter((id) => id !== String(videoId));
+  setSavedOfflineVideoIds(current);
+}
+
+export async function downloadVideoForOffline(video, onProgress) {
+  if (!video || !video.id) throw new Error("Invalid video");
+  const vidKey = String(video.id);
+  onProgress?.(5);
+
+  // 1. Always cache the video metadata in IndexedDB "videos"
+  try {
+    await cacheVideos([video]);
+  } catch {}
+
+  // 2. Cache the video thumbnail image for offline display
+  const thumbUrl = video.thumbnail || video.thumbnail_url || "";
+  if (thumbUrl) {
+    try {
+      const proxiedThumb = `/api/proxy-image?url=${encodeURIComponent(thumbUrl)}`;
+      const tRes = await fetch(proxiedThumb);
+      if (tRes.ok) {
+        const tBlob = await tRes.blob();
+        if (tBlob && tBlob.size > 0) {
+          await cacheImage(thumbUrl, tBlob);
+        }
+      }
+    } catch {}
+  }
+  onProgress?.(18);
+
+  // 3. Download MP4 video stream via /api/youtube-download or direct file_url
+  const rawUrl = video.file_url || video.youtube_url || "";
+  const isDirect =
+    rawUrl &&
+    (/\.(mp4|webm|mov)(\?.*)?$/i.test(rawUrl) ||
+      rawUrl.startsWith("blob:") ||
+      rawUrl.startsWith("data:video/"));
+
+  const downloadEndpoint = isDirect
+    ? `/api/youtube-download?directUrl=${encodeURIComponent(rawUrl)}`
+    : `/api/youtube-download?url=${encodeURIComponent(rawUrl)}`;
+
+  let videoBlob = null;
+  let mimeType = "video/mp4";
+
+  try {
+    const res = await fetch(downloadEndpoint);
+    if (res.ok) {
+      mimeType = (res.headers.get("content-type") || "video/mp4").split(";")[0];
+      const totalBytes = Number(res.headers.get("content-length") || 0);
+
+      if (res.body && typeof res.body.getReader === "function") {
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            chunks.push(value);
+            received += value.byteLength;
+            if (totalBytes > 0) {
+              const pct = Math.min(96, Math.round(18 + (received / totalBytes) * 78));
+              onProgress?.(pct);
+            } else {
+              // Smooth synthetic progress when Content-Length is chunked
+              const approxPct = Math.min(92, 18 + Math.floor(Math.log10(received + 10) * 11));
+              onProgress?.(approxPct);
+            }
+          }
+        }
+        if (received > 0) {
+          videoBlob = new Blob(chunks, { type: mimeType });
+        }
+      } else {
+        const buf = await res.arrayBuffer();
+        if (buf && buf.byteLength > 0) {
+          videoBlob = new Blob([buf], { type: mimeType });
+        }
+      }
+    }
+  } catch {
+    // Fallback if direct MP4 stream extraction was blocked
+  }
+
+  onProgress?.(98);
+
+  // 4. Save into IndexedDB "video_blobs"
+  const store = await tx("video_blobs", "readwrite");
+  const record = {
+    id: vidKey,
+    title: video.title || "",
+    channel_name: video.channel_name || "",
+    youtube_url: video.youtube_url || "",
+    thumbnail: thumbUrl,
+    blob: videoBlob,
+    hasVideoBlob: Boolean(videoBlob && videoBlob.size > 0),
+    mimeType,
+    size: videoBlob ? videoBlob.size : 0,
+    date: Date.now(),
+  };
+  store.put(record);
+  await txDone(store);
+
+  const ids = getSavedOfflineVideoIds();
+  if (!ids.includes(vidKey)) {
+    setSavedOfflineVideoIds([...ids, vidKey]);
+  } else {
+    setSavedOfflineVideoIds(ids);
+  }
+  onProgress?.(100);
+  return record;
 }
 
 // ─── Video Channels ───────────────────────────────────────────────────────────

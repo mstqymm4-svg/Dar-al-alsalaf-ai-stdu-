@@ -17,9 +17,6 @@ import {
   User,
   Check,
   LogIn,
-  Download,
-  BookOpen,
-  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -34,15 +31,9 @@ import { Link } from "react-router-dom";
 import { useT, TRANSLATIONS } from "@/lib/i18n";
 import { setSetting } from "@/lib/settingsStore";
 import { bookLangLabel, BOOK_LANG_VALUES } from "@/lib/i18n-terms";
-import { getAccountEmail, getDownloadedBookIds, addDownloadedBookId } from "@/lib/activeUser";
+import { getAccountEmail } from "@/lib/activeUser";
 import { setThemeMode, getThemeState, subscribeToTheme } from "@/lib/themeEngine";
 import { PageSpinner } from "@/components/Skeleton";
-import {
-  getBooks,
-  getVideos,
-  getDownloadedBooks,
-  downloadMultiplePdfs,
-} from "@/lib/offlineSync";
 
 const ls = {
   get: (k, fb = "") => {
@@ -70,14 +61,6 @@ export default function Settings() {
   const [verified, setVerified] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [userName, setUserName] = useState("");
-  const [allBooksList, setAllBooksList] = useState([]);
-  const [offlineStats, setOfflineStats] = useState({
-    books: 0,
-    downloadedPdfs: 0,
-    videos: 0,
-  });
-  const [downloadingAll, setDownloadingAll] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState({ done: 0, total: 0 });
 
   // All cards are closed by default, open upon click ("مقفلة عند الضغط عليه يفتح")
   const [openCards, setOpenCards] = useState({
@@ -85,7 +68,6 @@ export default function Settings() {
     lang: false,
     appearance: false,
     preferences: false,
-    offline: false,
     security: false,
     about: false,
     logout: false,
@@ -98,31 +80,8 @@ export default function Settings() {
     }));
   };
 
-  const refreshOfflineStats = async () => {
-    try {
-      const [bks, vids, dlBooks] = await Promise.all([
-        getBooks().catch(() => []),
-        getVideos().catch(() => []),
-        getDownloadedBooks().catch(() => []),
-      ]);
-      const em = getAccountEmail() || "guest@local";
-      const localDlIds = getDownloadedBookIds(em) || [];
-      const combinedDlSet = new Set([
-        ...localDlIds,
-        ...(dlBooks || []).map((b) => b.id).filter(Boolean),
-      ]);
-      setAllBooksList(bks || []);
-      setOfflineStats({
-        books: (bks || []).length,
-        downloadedPdfs: combinedDlSet.size,
-        videos: (vids || []).length,
-      });
-    } catch {}
-  };
-
   useEffect(() => {
     loadUser();
-    refreshOfflineStats();
     const unsub = subscribeToTheme(({ isDark }) => setDarkMode(isDark));
     const onVerified = () => {
       const em = getAccountEmail();
@@ -188,32 +147,6 @@ export default function Settings() {
       .catch(() => {});
     toast.success((t.savePreferences || "تم حفظ التفضيلات") + " ✓");
     setSaving(false);
-  };
-
-  const handleDownloadAllBooksOffline = async () => {
-    if (downloadingAll) return;
-    setDownloadingAll(true);
-    try {
-      const booksToDl = allBooksList.length > 0 ? allBooksList : await getBooks();
-      const validBooks = (booksToDl || []).filter((b) => b.pdf_url);
-      setDownloadProgress({ done: 0, total: validBooks.length });
-      await downloadMultiplePdfs(validBooks, (prog) => {
-        const done = typeof prog === "object" ? prog.done || 0 : Number(prog) || 0;
-        const total =
-          typeof prog === "object" ? prog.total || validBooks.length : validBooks.length;
-        setDownloadProgress({ done, total });
-      });
-      const em = getAccountEmail() || "guest@local";
-      for (const b of validBooks) {
-        if (b?.id) addDownloadedBookId(em, b.id);
-      }
-      await refreshOfflineStats();
-      toast.success((t.allBooksDownloaded || "جميع الكتب جاهزة للقراءة بلا إنترنت") + " ✓");
-    } catch {
-      toast.error(t.downloadFailed || "تعذر التنزيل، تحقق من الاتصال بالإنترنت");
-    } finally {
-      setDownloadingAll(false);
-    }
   };
 
   const handleSelectAppLang = (code) => {
@@ -627,131 +560,6 @@ export default function Settings() {
                     <Lock className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                     <p>{t.securityPrivacySub}</p>
                   </div>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* 5.5 Offline Library & Access Manager Card (Collapsible) */}
-        <div className="bg-card border border-border/80 rounded-3xl overflow-hidden shadow-xs transition-all">
-          <button
-            type="button"
-            onClick={() => {
-              toggleCard("offline");
-              refreshOfflineStats();
-            }}
-            className="w-full flex items-center justify-between p-4 sm:p-5 text-start hover:bg-muted/30 transition-colors cursor-pointer select-none"
-          >
-            <div className="flex items-center gap-3.5 min-w-0">
-              <div className="w-11 h-11 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0 shadow-xs">
-                <Download className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-sm sm:text-base font-bold text-foreground">
-                  {t.offlineCardTitle || "المكتبة والعمل بلا إنترنت"}
-                </h2>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2.5 shrink-0 ms-2">
-              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-primary/10 text-primary font-mono">
-                {offlineStats.downloadedPdfs}/{offlineStats.books}
-              </span>
-              <div
-                className={`w-8 h-8 rounded-full bg-muted/60 flex items-center justify-center transition-transform duration-300 ${
-                  openCards.offline ? "rotate-180 bg-primary/15 text-primary" : "text-muted-foreground"
-                }`}
-              >
-                <ChevronDown className="w-4 h-4" />
-              </div>
-            </div>
-          </button>
-
-          <AnimatePresence initial={false}>
-            {openCards.offline && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                className="overflow-hidden border-t border-border/60"
-              >
-                <div className="p-4 sm:p-6 space-y-4">
-                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
-                    {t.offlineCardSub ||
-                      "تصفح واقرأ وابحث واحفظ كتبك ومفضلاتك في أي وقت حتى بدون اتصال بالإنترنت"}
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/60 flex items-center justify-between sm:flex-col sm:items-start gap-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-                        <BookOpen className="w-4 h-4 text-primary shrink-0" />
-                        <span>{t.offlineBooksCached || "الكتب المخزنة للتصفح والبحث بلا نت"}</span>
-                      </div>
-                      <span className="text-lg font-black font-mono text-foreground">
-                        {offlineStats.books}
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/60 flex items-center justify-between sm:flex-col sm:items-start gap-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-                        <Download className="w-4 h-4 text-emerald-500 shrink-0" />
-                        <span>{t.offlinePdfsDownloaded || "الكتب المحملة كاملة للقراءة بلا نت"}</span>
-                      </div>
-                      <span className="text-lg font-black font-mono text-emerald-600 dark:text-emerald-400">
-                        {offlineStats.downloadedPdfs}
-                      </span>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-muted/40 border border-border/60 flex items-center justify-between sm:flex-col sm:items-start gap-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-                        <Video className="w-4 h-4 text-primary shrink-0" />
-                        <span>{t.offlineVideosCached || "الفيديوهات والشورتات المخزنة بلا نت"}</span>
-                      </div>
-                      <span className="text-lg font-black font-mono text-foreground">
-                        {offlineStats.videos}
-                      </span>
-                    </div>
-                  </div>
-
-                  {downloadingAll && downloadProgress.total > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-semibold text-primary">
-                        <span>{t.downloadingAllBooks || "جاري تنزيل الكتب للقراءة بلا نت..."}</span>
-                        <span className="font-mono">
-                          {downloadProgress.done} / {downloadProgress.total}
-                        </span>
-                      </div>
-                      <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-                        <div
-                          className="h-full bg-primary transition-all duration-200"
-                          style={{
-                            width: `${Math.round(
-                              (downloadProgress.done / Math.max(1, downloadProgress.total)) * 100
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <Button
-                    type="button"
-                    onClick={handleDownloadAllBooksOffline}
-                    disabled={downloadingAll}
-                    className="w-full gap-2 rounded-[4px_20px_4px_20px] font-bold"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>
-                      {downloadingAll
-                        ? t.downloadingAllBooks || "جاري تنزيل الكتب للقراءة بلا نت..."
-                        : offlineStats.books > 0 &&
-                          offlineStats.downloadedPdfs >= offlineStats.books
-                        ? t.allBooksDownloaded || "جميع الكتب جاهزة للقراءة بلا إنترنت"
-                        : t.downloadAllBooksBtn || "تنزيل جميع الكتب للقراءة بلا إنترنت"}
-                    </span>
-                  </Button>
                 </div>
               </motion.div>
             )}

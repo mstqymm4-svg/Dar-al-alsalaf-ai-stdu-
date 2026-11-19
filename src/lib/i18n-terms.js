@@ -84,7 +84,8 @@ const BOOK_LANG_LABELS = {
 const pick = (map, value, lang) => {
   if (!value) return value;
   const trimmed = String(value).trim();
-  if (!lang || lang === "ar") {
+  const code = typeof lang === "object" ? lang?.langCode : lang;
+  if (!code || code === "ar") {
     if (trimmed === "ur" || trimmed === "اورد" || trimmed === "اوردو" || trimmed === "Urdu") return "اردو";
     if (trimmed === "en" || trimmed === "انجليزي" || trimmed === "English") return "الإنجليزية";
     if (trimmed === "fr" || trimmed === "فرنسي" || trimmed === "French") return "الفرنسية";
@@ -93,7 +94,7 @@ const pick = (map, value, lang) => {
     if (trimmed === "ar" || trimmed === "عربي" || trimmed === "Arabic") return "العربية";
     return trimmed;
   }
-  return map[trimmed]?.[lang] || BOOK_LANG_LABELS[trimmed]?.[lang] || CATEGORY_LABELS[trimmed]?.[lang] || trimmed;
+  return map[trimmed]?.[code] || BOOK_LANG_LABELS[trimmed]?.[code] || CATEGORY_LABELS[trimmed]?.[code] || trimmed;
 };
 
 export const catLabel = (value, lang) => pick(CATEGORY_LABELS, value, lang);

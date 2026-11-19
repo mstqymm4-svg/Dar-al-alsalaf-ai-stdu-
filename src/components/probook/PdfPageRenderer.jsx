@@ -2,24 +2,27 @@ import React, { useRef, useState, useEffect, memo } from "react";
 import { Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
+// Universal CSS filter (supported identically on iOS Safari, Android WebView, Chrome, Firefox, Edge):
+// - invert(1) hue-rotate(180deg) preserves colored verses/headings (blue stays blue, red stays red, green stays green)
+// - contrast(0.90) brightness(0.95) maps harsh pure black/white into comfortable midnight slate (#12151C) & warm cream text
 const getCanvasFilter = (th) => {
-  if (th === "dark") return "invert(0.92) hue-rotate(180deg)";
-  if (th === "dusk") return "invert(0.86) hue-rotate(180deg)";
-  if (th === "sepia") return "sepia(0.3)";
+  if (th === "dark") return "invert(1) hue-rotate(180deg) contrast(0.90) brightness(0.95)";
+  if (th === "dusk") return "invert(1) hue-rotate(180deg) contrast(0.83) brightness(0.93)";
+  if (th === "sepia") return "sepia(0.32) contrast(0.96) brightness(0.97)";
   return "none";
 };
 
 const getCanvasBg = (th) => {
-  if (th === "dark") return "bg-[#121418]";
-  if (th === "dusk") return "bg-[#181C22]";
-  if (th === "sepia") return "bg-[#EFE5D3]";
+  if (th === "dark") return "bg-[#12151C]";
+  if (th === "dusk") return "bg-[#1A202B]";
+  if (th === "sepia") return "bg-[#F2E7D2]";
   return "bg-white";
 };
 
 /**
  * Direct single-canvas PDF Page Renderer:
  * - Zero double-canvas allocation and zero main-thread canvas.toBlob() GPU readback freezes
- * - Theme switching applies a lightweight CSS layer without re-running PDF.js rendering
+ * - Universal cross-device CSS filter (with -webkit-filter) that preserves colored Quranic verses/ink in Night Mode on all browsers & mobile WebViews
  * - Cancels in-flight PDF.js render tasks immediately on page turn or unmount
  */
 function PdfPageRenderer({
@@ -144,11 +147,27 @@ function PdfPageRenderer({
     <div className={`relative w-full h-full flex items-center justify-center overflow-hidden select-none ${containerBg}`}>
       <canvas
         ref={canvasRef}
-        style={{ filter: canvasFilter }}
+        style={{
+          filter: canvasFilter,
+          WebkitFilter: canvasFilter,
+        }}
         className={`w-full h-full block ${containerBg} ${
           hasRenderedOnce ? "opacity-100" : "opacity-0"
         }`}
       />
+
+      {/* Warm Amber Eye-Protection Tint in Night/Dusk Mode */}
+      {(theme === "dark" || theme === "dusk") && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundColor:
+              theme === "dark"
+                ? "rgba(254, 243, 199, 0.035)"
+                : "rgba(254, 243, 199, 0.025)",
+          }}
+        />
+      )}
 
       {rendering && !hasRenderedOnce && !error && (
         <div className={`absolute inset-0 flex flex-col items-center justify-center gap-2 ${containerBg} text-stone-400`}>

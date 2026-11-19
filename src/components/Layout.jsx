@@ -102,45 +102,48 @@ export default function Layout() {
   }, [t.dir, t.langCode, t.fontFamily]);
 
   return (
-    <div dir={t.dir} lang={t.langCode} className="min-h-screen bg-background" style={{ fontFamily: t.fontFamily }}>
+    <div
+      dir={t.dir}
+      lang={t.langCode}
+      className="min-h-screen min-h-[100dvh] w-full max-w-[100vw] overflow-x-hidden flex flex-col bg-background"
+      style={{ fontFamily: t.fontFamily }}
+    >
       {/* Top Header */}
-      <header className="sticky top-0 z-50 bg-card/80 backdrop-blur-2xl border-b border-border safe-area-top shadow-sm shadow-black/5">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <Link to="/" className="flex items-center gap-3 group">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center overflow-hidden shrink-0 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-primary/30 transition-all">
+      <header className="sticky top-0 z-50 bg-card/85 backdrop-blur-2xl border-b border-border safe-area-top shadow-sm shadow-black/5">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-14 sm:h-16 gap-2">
+            <Link to="/" className="flex items-center gap-2.5 sm:gap-3 group min-w-0">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center overflow-hidden shrink-0 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-primary/30 transition-all">
                 {logoUrl ?
                 <img src={logoUrl} alt="logo" className="w-full h-full object-cover" /> :
                 <BookOpen className="w-5 h-5 text-primary-foreground" />}
               </div>
               {(displayAppName || displayAppSubtitle) && (
-                <div>
-                  {displayAppName && <h1 className="text-foreground text-xl font-bold leading-tight">{displayAppName}</h1>}
-                  {displayAppSubtitle && <p className="text-[10px] text-muted-foreground -mt-0.5">{displayAppSubtitle}</p>}
+                <div className="min-w-0">
+                  {displayAppName && <h1 className="text-foreground text-base sm:text-xl font-bold leading-tight truncate">{displayAppName}</h1>}
+                  {displayAppSubtitle && <p className="text-[10px] text-muted-foreground -mt-0.5 truncate">{displayAppSubtitle}</p>}
                 </div>
               )}
             </Link>
-            <nav className="hidden md:flex items-center gap-1">
+            <nav className="hidden md:flex items-center gap-1 shrink-0">
               {navItems.map((item) => {
                 const isActive = location.pathname === item.path;
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
-                    className={`relative flex items-center gap-2 text-sm font-medium transition-all duration-200 pt-2 pr-4 pl-4 pb-2 rounded-[2px_16px_2px_16px] ${
+                    className={`relative flex items-center gap-2 text-sm font-medium transition-all duration-200 pt-2 pr-3.5 pl-3.5 pb-2 rounded-[2px_16px_2px_16px] whitespace-nowrap ${
                     isActive ?
                     "bg-primary text-primary-foreground shadow-md shadow-primary/20" :
                     "text-muted-foreground hover:text-foreground hover:bg-muted"}`
                     }>
-                    
-                    <item.icon className="w-4 h-4" />
-                    {item.label}
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    <span>{item.label}</span>
                   </Link>);
-
               })}
             </nav>
             <Link to="/settings" aria-label={t.navSettings} className="shrink-0 p-1.5 rounded-full hover:bg-muted transition-colors">
-              <div className="w-9 h-9 rounded-full overflow-hidden bg-primary/10 border border-primary/20 flex items-center justify-center">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden bg-primary/10 border border-primary/20 flex items-center justify-center">
                 {avatarUrl ?
                 <img src={avatarUrl} alt={t.profile} className="w-full h-full object-cover" /> :
                 <User className="w-4 h-4 text-primary" />}
@@ -151,33 +154,25 @@ export default function Layout() {
       </header>
 
       {/* Main Content */}
-      <main className="pb-24 md:pb-8">
+      <main className="flex-1 w-full pb-24 md:pb-8">
         <Outlet />
       </main>
 
-      {/* Bottom Nav — Mobile Only */}
+      {/* Bottom Nav — Mobile & Small Tablet Only */}
       <nav id="bottom-nav" className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-2xl border-t border-border shadow-lg shadow-black/5 transition-transform duration-300">
-        <div className="flex items-center justify-around py-1.5 px-2 safe-area-bottom">
+        <div className="flex items-center justify-around py-1 px-1 sm:px-2 safe-area-bottom">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`relative flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-all duration-200 ${
-                isActive ? "text-primary" : "text-muted-foreground"}`
+                className={`relative flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 px-1 py-1.5 rounded-xl transition-all duration-200 ${
+                isActive ? "text-primary font-bold" : "text-muted-foreground"}`
                 }>
-                
-                
-
-
-
-
-                
-                <item.icon className={`w-5 h-5 transition-transform ${isActive ? "fill-primary/20 scale-110" : ""}`} />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                <item.icon className={`w-5 h-5 shrink-0 transition-transform ${isActive ? "fill-primary/20 scale-110" : ""}`} />
+                <span className="text-[10px] font-medium truncate max-w-full leading-tight">{item.label}</span>
               </Link>);
-
           })}
         </div>
       </nav>

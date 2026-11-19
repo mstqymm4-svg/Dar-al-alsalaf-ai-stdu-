@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Maximize, Minimize, Play, Pause, RotateCcw, Volume2, VolumeX,
   Share2, Rewind, FastForward, Repeat, SkipBack, SkipForward,
-  ListVideo, Sun, HelpCircle, Gauge
+  ListVideo, Sun, HelpCircle, Gauge, Heart, Download, Check, Loader2, WifiOff
 } from "lucide-react";
 import { extractYoutubeId } from "@/lib/youtubeMeta";
 import { toast } from "sonner";
@@ -13,6 +13,13 @@ import PlaylistPanel from "@/components/video/PlaylistPanel";
 import PlayerButton from "@/components/video/PlayerButton";
 import OfflineVideoNotice from "@/components/video/OfflineVideoNotice";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { getAccountEmail, getVideoFavIds, setVideoFavIds } from "@/lib/activeUser";
+import {
+  isVideoSavedOffline,
+  getOfflineVideoBlobUrl,
+  downloadVideoForOffline,
+  removeVideoFromOffline,
+} from "@/lib/offlineDB";
 
 function formatTime(seconds) {
   if (!seconds || isNaN(seconds)) return "0:00";
@@ -23,6 +30,14 @@ function formatTime(seconds) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function isDirectVideoFile(url) {
+  if (!url || typeof url !== "string") return false;
+  const trimmed = url.trim().toLowerCase();
+  if (trimmed.startsWith("blob:") || trimmed.startsWith("data:video/")) return true;
+  if (/\.(mp4|webm|m3u8|mov)(\?.*)?$/i.test(trimmed)) return true;
+  return false;
+}
+
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 export default function VideoPlayer({ video, onClose, playlist = [], onSelectVideo = undefined }) {
@@ -30,6 +45,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const { isOnline } = useOnlineStatus();
   const containerRef = useRef(null);
   const playerHostRef = useRef(null);
+  const nativeVideoRef = useRef(null);
   const playerInstanceRef = useRef(null);
   const hideTimerRef = useRef(null);
   const resumeGuardTimerRef = useRef(null);
@@ -52,6 +68,13 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const [ready, setReady] = useState(false);
   const [rate, setRate] = useState(1);
   const [loop, setLoop] = useState(false);
+  const [favIds, setFavIds] = useState(() => getVideoFavIds(getAccountEmail()));
+  const [offlineBlobUrl, setOfflineBlobUrl] = useState(null);
+  const [checkingOffline, setCheckingOffline] = useState(true);
+  const [isOfflineSaved, setIsOfflineSaved] = useState(() => isVideoSavedOffline(video?.id));
+  const [downloadingOffline, setDownloadingOffline] = useState(false);
+  const [downloadPct, setDownloadPct] = useState(0);
+  const tapToggleTimerRef = useRef(null);
 
   // Refs for synchronization without stale closures
   const loopRef = useRef(false);
@@ -77,7 +100,104 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
   const [autoAdvanceTimer, setAutoAdvanceTimer] = useState(null);
   const [autoAdvanceSeconds, setAutoAdvanceSeconds] = useState(5);
 
-  const videoId = extractYoutubeId(video?.youtube_url);
+  const rawVideoUrl = video?.youtube_url || video?.file_url || "";
+  const videoId = extractYoutubeId(rawVideoUrl);
+  const directVideoSrc = offlineBlobUrl || (isDirectVideoFile(rawVideoUrl) ? rawVideoUrl : null);
+  const usingNativeVideo = Boolean(directVideoSrc);
+  const isFav = Boolean(video?.id && favIds.includes(video.id));
+  const posKey = videoId || video?.id || "vid";
+
+  // Check if video has a downloaded offline MP4 blob in IndexedDB
+  useEffect(() => {
+    let active = true;
+    let createdBlobUrl = null;
+    setCheckingOffline(true);
+    setOfflineBlobUrl(null);
+    setIsOfflineSaved(isVideoSavedOffline(video?.id));
+
+    if (video?.id) {
+      getOfflineVideoBlobUrl(video.id)
+        .then((res) => {
+          if (!active) {
+            if (res?.blobUrl) URL.revokeObjectURL(res.blobUrl);
+            return;
+          }
+          if (res?.blobUrl) {
+            createdBlobUrl = res.blobUrl;
+            setOfflineBlobUrl(res.blobUrl);
+            setIsOfflineSaved(true);
+          }
+          setCheckingOffline(false);
+        })
+        .catch(() => {
+          if (active) setCheckingOffline(false);
+        });
+    } else {
+      setCheckingOffline(false);
+    }
+
+    return () => {
+      active = false;
+      if (createdBlobUrl) {
+        try {
+          URL.revokeObjectURL(createdBlobUrl);
+        } catch {}
+      }
+    };
+  }, [video?.id]);
+
+  const handleToggleOfflineDownload = useCallback(
+    async (e) => {
+      if (e) e.stopPropagation();
+      if (!video?.id || downloadingOffline) return;
+
+      if (isOfflineSaved) {
+        await removeVideoFromOffline(video.id);
+        setIsOfflineSaved(false);
+        setOfflineBlobUrl(null);
+        toast.info(t.removedOfflineVideo || "تمت إزالة الفيديو من التنزيلات بلا نت");
+        return;
+      }
+
+      setDownloadingOffline(true);
+      setDownloadPct(5);
+      try {
+        const rec = await downloadVideoForOffline(video, (pct) => setDownloadPct(pct));
+        setIsOfflineSaved(true);
+        if (rec?.blob instanceof Blob && rec.blob.size > 0 && !offlineBlobUrl) {
+          setOfflineBlobUrl(URL.createObjectURL(rec.blob));
+        }
+        toast.success(t.savedVideoOfflineSuccess || "تم تحميل الفيديو للمشاهدة بلا نت ✓");
+      } catch {
+        toast.error(t.downloadVideoFailed || "تعذر تحميل الفيديو حالياً، حاول مرة أخرى");
+      } finally {
+        setDownloadingOffline(false);
+        setDownloadPct(0);
+      }
+    },
+    [video, downloadingOffline, isOfflineSaved, offlineBlobUrl, t.removedOfflineVideo, t.savedVideoOfflineSuccess, t.downloadVideoFailed]
+  );
+
+  const handleToggleFav = useCallback(
+    (e) => {
+      if (e) e.stopPropagation();
+      if (!video?.id) return;
+      const email = getAccountEmail();
+      const currentList = getVideoFavIds(email);
+      const exists = currentList.includes(video.id);
+      const updated = exists
+        ? currentList.filter((id) => id !== video.id)
+        : [...currentList, video.id];
+      setVideoFavIds(email, updated);
+      setFavIds(updated);
+      toast.success(
+        exists
+          ? t.removeFav || "تمت الإزالة من المفضلة"
+          : t.addFav || "تمت الإضافة إلى المفضلة ✓"
+      );
+    },
+    [video?.id, t.removeFav, t.addFav]
+  );
 
   // ── Playlist navigation ──
   const plIdx = playlist.findIndex((v) => v.id === video?.id);
@@ -116,8 +236,151 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     return () => clearInterval(interval);
   }, [autoAdvanceTimer, autoAdvanceSeconds]);
 
-  // Initialize YouTube IFrame API player cleanly per videoId
+  // ── Mode A: Native HTML5 Video Adapter (for offline downloaded videos & direct MP4 files) ──
   useEffect(() => {
+    if (!usingNativeVideo || !directVideoSrc) return;
+    const el = nativeVideoRef.current;
+    if (!el) return;
+
+    let savedStart = 0;
+    try {
+      const raw = Number(localStorage.getItem(`video_pos_${posKey}`) || 0);
+      if (Number.isFinite(raw) && raw > 3) {
+        savedStart = Math.floor(raw);
+      }
+    } catch {}
+
+    const adapter = {
+      playVideo: () => {
+        el.play().catch(() => {
+          el.muted = true;
+          setMuted(true);
+          mutedRef.current = true;
+          el.play().catch(() => {});
+        });
+      },
+      pauseVideo: () => el.pause(),
+      seekTo: (sec) => {
+        try {
+          el.currentTime = Math.max(0, Number(sec) || 0);
+        } catch {}
+      },
+      setPlaybackRate: (r) => {
+        try {
+          el.playbackRate = Number(r) || 1;
+        } catch {}
+      },
+      mute: () => {
+        el.muted = true;
+      },
+      unMute: () => {
+        el.muted = false;
+      },
+      setVolume: (v) => {
+        el.volume = Math.max(0, Math.min(1, (Number(v) || 0) / 100));
+      },
+      getVolume: () => Math.round((el.volume ?? 1) * 100),
+      isMuted: () => Boolean(el.muted),
+      getCurrentTime: () => Number(el.currentTime || 0),
+      getDuration: () => Number(el.duration || 0),
+      getVideoLoadedFraction: () => {
+        try {
+          if (el.buffered?.length > 0 && el.duration > 0) {
+            return el.buffered.end(el.buffered.length - 1) / el.duration;
+          }
+        } catch {}
+        return 0;
+      },
+      getPlayerState: () => {
+        if (el.ended) return 0;
+        if (el.paused) return 2;
+        return 1;
+      },
+    };
+
+    setPlayer(adapter);
+    setReady(true);
+    setBuffering(false);
+
+    const onLoadedMeta = () => {
+      const d = Number(el.duration || 0);
+      if (d > 0) {
+        setDuration(d);
+        if (savedStart > 0 && savedStart < d - 5) {
+          el.currentTime = savedStart;
+          setCurrentTime(savedStart);
+        }
+      }
+      setReady(true);
+      adapter.playVideo();
+    };
+
+    const onPlay = () => {
+      userPausedRef.current = false;
+      playingRef.current = true;
+      setPlaying(true);
+      setBuffering(false);
+      cancelAutoAdvance();
+    };
+
+    const onPause = () => {
+      if (!el.ended) {
+        playingRef.current = false;
+        setPlaying(false);
+        setBuffering(false);
+      }
+    };
+
+    const onWaiting = () => setBuffering(true);
+    const onPlaying = () => {
+      setBuffering(false);
+      setPlaying(true);
+      playingRef.current = true;
+    };
+
+    const onEnded = () => {
+      setBuffering(false);
+      try {
+        localStorage.removeItem(`video_pos_${posKey}`);
+      } catch {}
+      if (loopRef.current) {
+        el.currentTime = 0;
+        adapter.playVideo();
+      } else {
+        playingRef.current = false;
+        setPlaying(false);
+        if (nextItemRef.current) {
+          setAutoAdvanceSeconds(5);
+          setAutoAdvanceTimer(true);
+        }
+      }
+    };
+
+    el.addEventListener("loadedmetadata", onLoadedMeta);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("waiting", onWaiting);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("ended", onEnded);
+
+    if (el.readyState >= 1) {
+      onLoadedMeta();
+    }
+
+    return () => {
+      el.removeEventListener("loadedmetadata", onLoadedMeta);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("ended", onEnded);
+    };
+  }, [usingNativeVideo, directVideoSrc, posKey, cancelAutoAdvance]);
+
+  // ── Mode B: Initialize YouTube IFrame API player cleanly per videoId (when not using native video) ──
+  useEffect(() => {
+    if (usingNativeVideo || checkingOffline) return;
+
     // Reset player states immediately on videoId change so polling never reads stale instance
     setPlayer(null);
     setReady(false);
@@ -132,8 +395,9 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
     isScrubbingRef.current = false;
     cancelAutoAdvance();
 
-    if (!videoId) return;
+    if (!videoId || !isOnline) return;
     let cancelled = false;
+    let fallbackReadyTimer = null;
 
     // Read saved resume position synchronously for this specific videoId
     let savedStart = 0;
@@ -161,8 +425,10 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       mountNode.className = "w-full h-full pointer-events-none";
       playerHostRef.current.appendChild(mountNode);
 
-      playerInstanceRef.current = new YT.Player(mountNode, {
+      const inst = new YT.Player(mountNode, {
         videoId,
+        width: "100%",
+        height: "100%",
         playerVars: {
           autoplay: 1,
           controls: 0,
@@ -173,16 +439,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           fs: 0,
           disablekb: 1,
           enablejsapi: 1,
-          origin: window.location.origin,
           start: savedStart > 0 ? savedStart : 0,
         },
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            clearTimeout(fallbackReadyTimer);
             const target = e.target;
             const dur = Number(target.getDuration?.() || 0);
 
-            // If savedStart was near or past the end of the video, rewind to 0 so it doesn't stop immediately
             if (dur > 0 && savedStart >= dur - 5) {
               savedStart = 0;
               try {
@@ -196,6 +461,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
             setPlayer(target);
             if (dur > 0) setDuration(dur);
             setReady(true);
+            setBuffering(false);
 
             try {
               const initVol = target.getVolume?.();
@@ -214,13 +480,12 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               target.playVideo();
             } catch {}
 
-            // Autoplay guard: if browser blocks unmuted autoplay, fallback to muted autoplay after 500ms
+            // Autoplay guard: if browser blocks unmuted autoplay, fallback to muted autoplay
             clearTimeout(resumeGuardTimerRef.current);
             resumeGuardTimerRef.current = setTimeout(() => {
               if (cancelled || userPausedRef.current) return;
               try {
                 const st = target.getPlayerState?.();
-                // -1 = UNSTARTED, 5 = CUED, 2 = PAUSED
                 if (st === -1 || st === 5 || st === 2) {
                   target.playVideo?.();
                   setTimeout(() => {
@@ -232,13 +497,14 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                       mutedRef.current = true;
                       target.playVideo?.();
                     }
-                  }, 350);
+                  }, 320);
                 }
               } catch {}
-            }, 450);
+            }, 380);
           },
           onStateChange: (e) => {
             if (cancelled) return;
+            clearTimeout(fallbackReadyTimer);
             const YTState = /** @type {any} */ (window).YT?.PlayerState || {
               ENDED: 0,
               PLAYING: 1,
@@ -247,6 +513,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               CUED: 5,
             };
             const state = e.data;
+            setReady(true);
 
             if (state === YTState.PLAYING) {
               userPausedRef.current = false;
@@ -257,17 +524,14 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               if (d > 0) setDuration(d);
               cancelAutoAdvance();
             } else if (state === YTState.BUFFERING) {
-              // Keep `playing` true during buffering so controls/overlay don't flash or interrupt playback
               setBuffering(true);
               cancelAutoAdvance();
             } else if (state === YTState.PAUSED) {
               setBuffering(false);
               const msSinceSeek = Date.now() - lastSeekAtRef.current;
-              // If YouTube emitted a transient PAUSED right after a seek/scrub/rate-change while user did NOT pause,
-              // automatically resume playback so the video never stops unexpectedly
               if (
                 !userPausedRef.current &&
-                ( isScrubbingRef.current || msSinceSeek < 1200 ) &&
+                (isScrubbingRef.current || msSinceSeek < 1200) &&
                 document.visibilityState !== "hidden"
               ) {
                 try {
@@ -306,10 +570,22 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           },
           onError: () => {
             if (cancelled) return;
+            clearTimeout(fallbackReadyTimer);
+            setReady(true);
             setBuffering(false);
           },
         },
       });
+      playerInstanceRef.current = inst;
+
+      // Safety fallback: never keep the loading spinner stuck forever if postMessage is delayed
+      fallbackReadyTimer = setTimeout(() => {
+        if (!cancelled) {
+          setPlayer((prev) => prev || inst);
+          setReady(true);
+          setBuffering(false);
+        }
+      }, 1500);
     };
 
     let pollInterval = null;
@@ -327,12 +603,13 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           pollInterval = null;
           initPlayer();
         }
-      }, 100);
+      }, 80);
     }
 
     return () => {
       cancelled = true;
       if (pollInterval) clearInterval(pollInterval);
+      clearTimeout(fallbackReadyTimer);
       clearTimeout(resumeGuardTimerRef.current);
       if (playerInstanceRef.current) {
         try {
@@ -341,7 +618,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
         playerInstanceRef.current = null;
       }
     };
-  }, [videoId, cancelAutoAdvance]);
+  }, [videoId, isOnline, usingNativeVideo, checkingOffline, cancelAutoAdvance]);
 
   // Time update polling + save position (skips updating currentTime while user is scrubbing)
   useEffect(() => {
@@ -359,18 +636,18 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
         if (!isScrubbingRef.current) {
           const cur = Number(player.getCurrentTime?.() || 0);
           setCurrentTime(cur);
-          if (videoId && cur > 2) {
+          if (posKey && cur > 2) {
             if (d > 0 && cur >= d - 4) {
-              localStorage.removeItem(`video_pos_${videoId}`);
+              localStorage.removeItem(`video_pos_${posKey}`);
             } else {
-              localStorage.setItem(`video_pos_${videoId}`, String(Math.floor(cur)));
+              localStorage.setItem(`video_pos_${posKey}`, String(Math.floor(cur)));
             }
           }
         }
       } catch {}
     }, 250);
     return () => clearInterval(interval);
-  }, [player, ready, videoId]);
+  }, [player, ready, posKey]);
 
   // Fullscreen handling
   useEffect(() => {
@@ -687,14 +964,15 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       if (nav) nav.style.transform = "translateY(0)";
       clearTimeout(hideTimerRef.current);
       clearTimeout(resumeGuardTimerRef.current);
+      clearTimeout(tapToggleTimerRef.current);
     };
   }, []);
 
-  if (!isOnline) {
+  if (!isOnline && !usingNativeVideo && !checkingOffline) {
     return <OfflineVideoNotice video={video} onClose={onClose} />;
   }
 
-  if (!videoId) {
+  if (!videoId && !usingNativeVideo && !checkingOffline) {
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/95" dir="rtl">
         <div className="text-center text-white p-8">
@@ -715,7 +993,6 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
       className="fixed inset-0 z-[60] bg-black flex flex-col select-none overflow-hidden"
       dir="rtl"
       onMouseMove={showControlsTemp}
-      onClick={showControlsTemp}
     >
       <div className="flex-1 relative flex items-center justify-center overflow-hidden">
         {/* Ambient Cinema Backdrop Glow */}
@@ -730,14 +1007,28 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           />
         )}
 
-        {/* YouTube iframe host container */}
-        <div
-          ref={playerHostRef}
-          className="w-full h-full relative z-[2] transition-filter duration-200"
-          style={{ filter: `brightness(${brightness})` }}
-        />
+        {/* Native HTML5 Video (for offline downloaded videos & direct MP4 files) OR YouTube iframe host */}
+        {usingNativeVideo ? (
+          <video
+            ref={nativeVideoRef}
+            src={directVideoSrc}
+            poster={video?.thumbnail || ""}
+            playsInline
+            autoPlay
+            muted={muted}
+            preload="auto"
+            className="w-full h-full object-contain relative z-[2] pointer-events-none select-none transition-filter duration-200"
+            style={{ filter: `brightness(${brightness})` }}
+          />
+        ) : (
+          <div
+            ref={playerHostRef}
+            className="w-full h-full relative z-[2] transition-filter duration-200"
+            style={{ filter: `brightness(${brightness})` }}
+          />
+        )}
 
-        {(!ready || buffering) && (
+        {(!ready || buffering || checkingOffline) && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-10 pointer-events-none">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
@@ -745,11 +1036,32 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
 
         {/* Gesture capture layer */}
         <div
-          className="absolute inset-0 z-[5]"
+          className="absolute inset-0 z-[5] cursor-pointer"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
-          onDoubleClick={toggleFullscreen}
+          onClick={(e) => {
+            e.stopPropagation();
+            clearTimeout(tapToggleTimerRef.current);
+            tapToggleTimerRef.current = setTimeout(() => {
+              setShowControls((prev) => {
+                const next = !prev;
+                if (next) {
+                  showControlsTemp();
+                } else {
+                  clearTimeout(hideTimerRef.current);
+                  setShowVolumeSlider(false);
+                  setShowSpeedMenu(false);
+                }
+                return next;
+              });
+            }, 220);
+          }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            clearTimeout(tapToggleTimerRef.current);
+            toggleFullscreen();
+          }}
         />
 
         {/* Double-tap ripple feedback */}
@@ -915,9 +1227,17 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
               className="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-4 pt-4 pb-12 flex items-start justify-between gap-4 pointer-events-none z-20"
             >
               <div className="flex-1 min-w-0 text-white pointer-events-auto">
-                <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm leading-tight">
-                  {video.title}
-                </h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base sm:text-lg font-bold truncate drop-shadow-sm leading-tight">
+                    {video.title}
+                  </h2>
+                  {usingNativeVideo && (
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold flex items-center gap-1 shrink-0">
+                      <WifiOff className="w-2.5 h-2.5" />
+                      {t.availableOfflineBadge || "بلا نت ✓"}
+                    </span>
+                  )}
+                </div>
                 {video.channel_name && (
                   <p className="text-[12px] text-white/70 mt-0.5 truncate flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary" />
@@ -926,6 +1246,52 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
                 )}
               </div>
               <div className="flex items-center gap-2 pointer-events-auto shrink-0">
+                {/* Offline Download Button inside VideoPlayer */}
+                <button
+                  onClick={handleToggleOfflineDownload}
+                  disabled={downloadingOffline}
+                  title={
+                    isOfflineSaved
+                      ? t.savedForOfflineTip || "محفوظ للمشاهدة بلا نت (اضغط للإزالة)"
+                      : t.downloadForOfflineTip || "تحميل الفيديو للمشاهدة بلا نت"
+                  }
+                  className={`h-10 px-3 rounded-full backdrop-blur-md ring-1 flex items-center justify-center gap-1.5 text-xs font-bold transition-all active:scale-95 ${
+                    isOfflineSaved
+                      ? "bg-emerald-600/90 ring-emerald-400 text-white"
+                      : downloadingOffline
+                      ? "bg-primary/90 ring-primary text-white"
+                      : "bg-white/10 ring-white/15 hover:bg-white/20 text-white"
+                  }`}
+                >
+                  {downloadingOffline ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span className="font-mono text-[11px]">{downloadPct}%</span>
+                    </>
+                  ) : isOfflineSaved ? (
+                    <>
+                      <Check className="w-4 h-4 stroke-[2.5]" />
+                      <span className="hidden sm:inline">{t.offlineSavedShort || "بلا نت"}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">{t.downloadOfflineBtn || "تحميل"}</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleToggleFav}
+                  title={isFav ? t.removeFav : t.addFav}
+                  className={`w-10 h-10 rounded-full backdrop-blur-md ring-1 flex items-center justify-center transition-all active:scale-95 ${
+                    isFav
+                      ? "bg-rose-500/90 ring-rose-400 text-white"
+                      : "bg-white/10 ring-white/15 hover:bg-white/20 text-white"
+                  }`}
+                >
+                  <Heart className={`w-4 h-4 ${isFav ? "fill-current" : ""}`} />
+                </button>
                 <button
                   onClick={() => setShowShortcutsModal(true)}
                   title={t.shortcutsTitle}

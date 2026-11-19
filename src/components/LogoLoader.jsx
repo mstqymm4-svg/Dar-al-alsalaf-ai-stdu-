@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { useT } from "@/lib/i18n";
 
 const LOGO_URL =
   "https://media.base44.com/images/public/69c8e483a69a0d215eee4ef7/679b37a0c_C06AC024-1230-4B65-91B9-B30DDE077171.png";
 
 export default function LogoLoader({ isLoading = true }) {
+  const t = useT();
   const [visible, setVisible] = useState(isLoading);
   const [closing, setClosing] = useState(false);
 
@@ -54,7 +56,7 @@ export default function LogoLoader({ isLoading = true }) {
             <div className="dar-line" />
 
             <div className="dar-subtitle">
-              للعلم والمعرفة
+              {t.appSubtitle || "للعلم والمعرفة"}
             </div>
           </div>
 

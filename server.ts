@@ -133,37 +133,56 @@ async function startServer() {
   };
 
   // In-memory cache for resolved direct MP4 stream URLs (valid for 25 minutes)
-  const streamCache = new Map<string, { streamUrl: string; expiresAt: number }>();
+  const streamCache = new Map<string, { streamUrl: string; mimeType: string; contentLength?: string; expiresAt: number }>();
 
-  app.get('/api/youtube-stream', async (req, res) => {
-    const rawId = ((req.query.id as string) || (req.query.url as string) || '').trim();
-    const videoId = extractYoutubeVideoId(rawId);
-    if (!videoId) {
-      return res.status(400).json({ success: false, error: 'Valid YouTube videoId required' });
-    }
-
+  const resolveYoutubeMp4Stream = async (videoId: string) => {
     const cached = streamCache.get(videoId);
     if (cached && cached.expiresAt > Date.now()) {
-      return res.json({ success: true, videoId, streamUrl: cached.streamUrl, cached: true });
+      return cached;
     }
 
-    const clients = [
+    const clients: Array<{
+      clientName: string;
+      clientVersion: string;
+      clientId: string;
+      userAgent: string;
+      extra?: Record<string, any>;
+    }> = [
+      {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.60.19',
+        clientId: '28',
+        userAgent: 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        extra: {
+          deviceMake: 'Oculus',
+          deviceModel: 'Quest 3',
+          androidSdkVersion: 32,
+          osName: 'Android',
+          osVersion: '12L',
+        },
+      },
       {
         clientName: 'IOS',
-        clientVersion: '19.29.1',
-        deviceMake: 'Apple',
-        deviceModel: 'iPhone16,2',
-        osName: 'iPhone',
-        osVersion: '17.5.1.21F90',
-        userAgent: 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+        clientVersion: '19.45.4',
+        clientId: '5',
+        userAgent: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1_0 like Mac OS X;)',
+        extra: {
+          deviceMake: 'Apple',
+          deviceModel: 'iPhone16,2',
+          osName: 'iPhone',
+          osVersion: '18.1.0.22B83',
+        },
       },
       {
         clientName: 'ANDROID',
-        clientVersion: '19.29.37',
-        androidSdkVersion: 34,
-        osName: 'Android',
-        osVersion: '14',
-        userAgent: 'com.google.android.youtube/19.29.37 (Linux; U; Android 14) gzip',
+        clientVersion: '19.44.38',
+        clientId: '3',
+        userAgent: 'com.google.android.youtube/19.44.38 (Linux; U; Android 14) gzip',
+        extra: {
+          androidSdkVersion: 34,
+          osName: 'Android',
+          osVersion: '14',
+        },
       },
     ];
 
@@ -174,8 +193,9 @@ async function startServer() {
           headers: {
             'Content-Type': 'application/json',
             'User-Agent': client.userAgent,
-            'X-YouTube-Client-Name': client.clientName === 'IOS' ? '5' : '3',
+            'X-YouTube-Client-Name': client.clientId,
             'X-YouTube-Client-Version': client.clientVersion,
+            'Origin': 'https://www.youtube.com',
           },
           body: JSON.stringify({
             videoId,
@@ -183,13 +203,9 @@ async function startServer() {
               client: {
                 clientName: client.clientName,
                 clientVersion: client.clientVersion,
-                deviceMake: client.deviceMake,
-                deviceModel: client.deviceModel,
-                osName: client.osName,
-                osVersion: client.osVersion,
-                androidSdkVersion: client.androidSdkVersion,
                 hl: 'ar',
                 gl: 'SA',
+                ...(client.extra || {}),
               },
             },
             contentCheckOk: true,
@@ -200,32 +216,126 @@ async function startServer() {
         if (playerRes.ok) {
           const data: any = await playerRes.json();
           const formats: any[] = data?.streamingData?.formats || [];
+          const adaptiveFormats: any[] = data?.streamingData?.adaptiveFormats || [];
           // Pick combined video+audio MP4 format (itag 18 = 360p MP4, itag 22 = 720p MP4)
           const mp4Formats = formats.filter(
             (f) => f?.url && typeof f.mimeType === 'string' && f.mimeType.includes('video/mp4') && f.audioQuality
           );
-          // Sort highest resolution first for crisp Shorts playback
           mp4Formats.sort((a, b) => (b.height || 0) - (a.height || 0));
-          const best = mp4Formats[0] || formats.find((f) => f?.url);
+          const best =
+            mp4Formats[0] ||
+            formats.find((f) => f?.url) ||
+            adaptiveFormats.find((f) => f?.url && typeof f.mimeType === 'string' && f.mimeType.includes('video/mp4'));
           if (best?.url) {
-            streamCache.set(videoId, {
+            const entry = {
               streamUrl: best.url,
+              mimeType: (best.mimeType || 'video/mp4').split(';')[0],
+              contentLength: best.contentLength ? String(best.contentLength) : undefined,
               expiresAt: Date.now() + 25 * 60 * 1000,
-            });
-            return res.json({
-              success: true,
-              videoId,
-              streamUrl: best.url,
-              mimeType: best.mimeType || 'video/mp4',
-            });
+            };
+            streamCache.set(videoId, entry);
+            return entry;
           }
         }
       } catch {
         // Try next client
       }
     }
+    return null;
+  };
+
+  app.get('/api/youtube-stream', async (req, res) => {
+    const rawId = ((req.query.id as string) || (req.query.url as string) || '').trim();
+    const videoId = extractYoutubeVideoId(rawId);
+    if (!videoId) {
+      return res.status(400).json({ success: false, error: 'Valid YouTube videoId required' });
+    }
+
+    const resolved = await resolveYoutubeMp4Stream(videoId);
+    if (resolved) {
+      return res.json({
+        success: true,
+        videoId,
+        streamUrl: resolved.streamUrl,
+        mimeType: resolved.mimeType,
+        contentLength: resolved.contentLength,
+      });
+    }
 
     return res.json({ success: false, videoId });
+  });
+
+  // Proxy download endpoint for saving videos offline into IndexedDB
+  app.get('/api/youtube-download', async (req, res) => {
+    const rawId = ((req.query.id as string) || (req.query.url as string) || '').trim();
+    const directUrl = ((req.query.directUrl as string) || '').trim();
+
+    let targetStreamUrl = '';
+    let mimeType = 'video/mp4';
+
+    if (directUrl && /^https?:\/\//i.test(directUrl)) {
+      targetStreamUrl = directUrl;
+    } else {
+      const videoId = extractYoutubeVideoId(rawId);
+      if (!videoId) {
+        return res.status(400).json({ success: false, error: 'Valid video ID or URL required' });
+      }
+      const resolved = await resolveYoutubeMp4Stream(videoId);
+      if (!resolved?.streamUrl) {
+        return res.status(404).json({ success: false, error: 'Unable to resolve direct video stream' });
+      }
+      targetStreamUrl = resolved.streamUrl;
+      mimeType = resolved.mimeType || 'video/mp4';
+    }
+
+    try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+        'Accept': '*/*',
+      };
+      if (req.headers.range) {
+        headers['Range'] = req.headers.range;
+      }
+
+      const upstream = await fetch(targetStreamUrl, { headers });
+      if (!upstream.ok && upstream.status !== 206) {
+        return res.status(upstream.status).json({ success: false, error: 'Upstream video stream error' });
+      }
+
+      res.status(upstream.status);
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || mimeType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      const len = upstream.headers.get('content-length');
+      if (len) res.setHeader('Content-Length', len);
+      const range = upstream.headers.get('content-range');
+      if (range) res.setHeader('Content-Range', range);
+
+      if (!upstream.body) {
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        return res.end(buf);
+      }
+
+      const reader = upstream.body.getReader();
+      req.on('close', () => {
+        try {
+          reader.cancel();
+        } catch {}
+      });
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          res.write(Buffer.from(value));
+        }
+      }
+      return res.end();
+    } catch (err: any) {
+      if (!res.headersSent) {
+        return res.status(500).json({ success: false, error: err?.message || 'Download stream failed' });
+      }
+      return res.end();
+    }
   });
 
   // API endpoint to proxy image download for automatic logo upload/storage

@@ -127,7 +127,7 @@ export function TocPanel({
           isRTL ? "ms-0" : "me-0"
         } ${
           darkMode
-            ? "bg-neutral-900 border-neutral-800 text-stone-100"
+            ? "bg-[#11151E] border-white/10 text-stone-100"
             : "bg-card border-border text-foreground"
         }`}
       >
@@ -369,25 +369,33 @@ export function ThemeComfortPanel({
     {
       id: "light",
       label: t.themeLightLabel || "نهاري",
-      bg: "bg-white text-stone-900 border-stone-300",
+      bg: "bg-white text-stone-900 border-stone-300 shadow-xs",
+      sampleBg: "#FFFFFF",
+      sampleText: "#1C1917",
       icon: Sun,
     },
     {
       id: "sepia",
       label: t.themeSepiaLabel || t.themeSepia || "ورق دافئ",
-      bg: "bg-[#F4ECD8] text-[#3D2E1E] border-[#D8C8A8]",
+      bg: "bg-[#F2E7D2] text-[#3D2E1E] border-[#D5C5A5] shadow-xs",
+      sampleBg: "#F2E7D2",
+      sampleText: "#3D2E1E",
       icon: BookOpen,
     },
     {
       id: "dusk",
       label: t.themeDuskLabel || "مسائي",
-      bg: "bg-[#1E222A] text-slate-200 border-slate-700",
+      bg: "bg-[#1A202B] text-[#E2E5EC] border-slate-700 shadow-xs",
+      sampleBg: "#1A202B",
+      sampleText: "#E2E5EC",
       icon: Moon,
     },
     {
       id: "dark",
       label: t.themeDarkLabel || "ليلي داكن",
-      bg: "bg-[#0F1115] text-neutral-200 border-neutral-800",
+      bg: "bg-[#12151C] text-[#EAE6DF] border-white/15 shadow-xs",
+      sampleBg: "#12151C",
+      sampleText: "#EAE6DF",
       icon: Moon,
     },
   ];
@@ -414,9 +422,9 @@ export function ThemeComfortPanel({
       data-viewer-ui
       onClick={(e) => e.stopPropagation()}
       dir={t.dir || "rtl"}
-      className={`absolute bottom-14 left-1/2 -translate-x-1/2 z-30 w-[330px] max-w-[92vw] border rounded-2xl shadow-2xl p-4 space-y-4 ${
+      className={`absolute bottom-14 left-1/2 -translate-x-1/2 z-30 w-[340px] max-w-[92vw] border rounded-2xl shadow-2xl p-4 space-y-4 ${
         isDark
-          ? "bg-neutral-900 border-neutral-800 text-stone-100"
+          ? "bg-[#131722]/95 border-white/15 text-stone-100 shadow-[0_18px_42px_rgba(0,0,0,0.85)]"
           : "bg-card border-border text-foreground"
       }`}
     >
@@ -447,11 +455,26 @@ export function ThemeComfortPanel({
                 key={th.id}
                 type="button"
                 onClick={() => onSelectTheme(th.id)}
-                className={`py-2 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center gap-1 ${
+                className={`py-2.5 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center gap-1.5 ${
                   th.bg
-                } ${active ? "ring-2 ring-primary scale-[1.02] font-bold" : "opacity-85 hover:opacity-100"}`}
+                } ${
+                  active
+                    ? "ring-2 ring-primary scale-[1.03] font-bold"
+                    : "opacity-85 hover:opacity-100"
+                }`}
               >
-                <th.icon className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-1">
+                  <th.icon className="w-3.5 h-3.5" />
+                  <span
+                    className="text-[10px] font-serif font-bold px-1 rounded"
+                    style={{
+                      backgroundColor: th.sampleBg,
+                      color: th.sampleText,
+                    }}
+                  >
+                    أب
+                  </span>
+                </div>
                 <span className="text-[10px] leading-tight">{th.label}</span>
               </button>
             );
@@ -511,7 +534,15 @@ export function ThemeComfortPanel({
 /**
  * Floating "Go to page" dialog.
  */
-export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) {
+export function GoToPanel({
+  show,
+  value,
+  setValue,
+  totalPages,
+  onGo,
+  onClose,
+  darkMode = false,
+}) {
   const t = useT();
   if (!show) return null;
   return (
@@ -519,9 +550,17 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
       data-viewer-ui
       onClick={(e) => e.stopPropagation()}
       dir={t.dir || "rtl"}
-      className="absolute bottom-14 left-1/2 -translate-x-1/2 z-30 bg-card border border-border rounded-2xl shadow-2xl p-3 flex items-center gap-2"
+      className={`absolute bottom-14 left-1/2 -translate-x-1/2 z-30 border rounded-2xl shadow-2xl p-3 flex items-center gap-2 ${
+        darkMode
+          ? "bg-[#131722]/95 border-white/15 text-stone-100"
+          : "bg-card border-border text-foreground"
+      }`}
     >
-      <span className="text-xs text-muted-foreground font-medium whitespace-nowrap">
+      <span
+        className={`text-xs font-medium whitespace-nowrap ${
+          darkMode ? "text-stone-300" : "text-muted-foreground"
+        }`}
+      >
         {t.goToPageTitle || "انتقال إلى صفحة:"}
       </span>
       <input
@@ -533,7 +572,11 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onGo()}
         placeholder={`1 - ${totalPages}`}
-        className="w-20 bg-muted/60 rounded-lg px-2.5 py-1.5 text-xs text-center font-mono focus:outline-none focus:ring-2 focus:ring-primary/40"
+        className={`w-20 rounded-lg px-2.5 py-1.5 text-xs text-center font-mono focus:outline-none focus:ring-2 focus:ring-primary/40 ${
+          darkMode
+            ? "bg-white/10 text-white placeholder:text-stone-400"
+            : "bg-muted/60 text-foreground"
+        }`}
       />
       <button
         type="button"
@@ -545,7 +588,11 @@ export function GoToPanel({ show, value, setValue, totalPages, onGo, onClose }) 
       <button
         type="button"
         onClick={onClose}
-        className="p-1 rounded-lg hover:bg-muted text-muted-foreground"
+        className={`p-1 rounded-lg ${
+          darkMode
+            ? "hover:bg-white/10 text-stone-300"
+            : "hover:bg-muted text-muted-foreground"
+        }`}
       >
         <X className="w-3.5 h-3.5" />
       </button>

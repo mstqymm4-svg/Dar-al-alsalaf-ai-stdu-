@@ -17,6 +17,7 @@ import {
   Eraser,
   Type,
   Minus,
+  MoveUpRight,
   Square,
   Circle,
   Hand,
@@ -24,6 +25,7 @@ import {
   Redo2,
   Trash2,
   X,
+  Check,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -39,18 +41,18 @@ const PEN_COLORS = [
 ];
 
 const PEN_SIZES = [
-  { id: "fine", value: 2, dot: "w-1.5 h-1.5", labelKey: "sizeFine", fallback: "رفيع" },
-  { id: "medium", value: 3.5, dot: "w-2.5 h-2.5", labelKey: "sizeMedium", fallback: "متوسط" },
-  { id: "bold", value: 6, dot: "w-3.5 h-3.5", labelKey: "sizeBold", fallback: "عريض" },
-  { id: "xbold", value: 9, dot: "w-4 h-4", labelKey: "sizeXBold", fallback: "سميك" },
+  { id: "fine", value: 2, px: 5, labelKey: "sizeFine", fallback: "رفيع" },
+  { id: "medium", value: 3.5, px: 8, labelKey: "sizeMedium", fallback: "متوسط" },
+  { id: "bold", value: 6, px: 11, labelKey: "sizeBold", fallback: "عريض" },
+  { id: "xbold", value: 9, px: 14, labelKey: "sizeXBold", fallback: "سميك" },
 ];
 
 /**
- * Ergonomic bottom toolbar for ProBookViewer.
- * - Restores the single Night Mode / Comfort button as it was (zero freeze)
- * - Smooth horizontal touch scrolling left/right on both the main toolbar and Pen palette
+ * Organized, clutter-free bottom toolbar & 2-row Floating Pen Dock for ProBookViewer.
+ * - Zero crowding: Pen Dock is cleanly organized into two compact rows (Row 1: Tools + Actions, Row 2: Color Palette + Stroke Thickness)
+ * - Responsive across all devices (phones, tablets, laptops, large screens) without overflowing
+ * - Single-tap Night Mode / Comfort button (0ms instant)
  * - Draggable left/right touch progress scrubber bar
- * - Upgraded Pen suite: Pan, Pen, Highlighter, Line/Underline, Rectangle, Circle, Text Note, Eraser
  */
 export default function ViewerToolbar({
   currentPage,
@@ -93,9 +95,9 @@ export default function ViewerToolbar({
 
   const themeIcon =
     theme === "dark" || theme === "dusk" ? (
-      <Moon className="w-4 h-4" />
+      <Moon className="w-4 h-4 text-amber-400 fill-amber-400/20" />
     ) : theme === "sepia" ? (
-      <Palette className="w-4 h-4" />
+      <Palette className="w-4 h-4 text-amber-700" />
     ) : (
       <Sun className="w-4 h-4" />
     );
@@ -114,251 +116,317 @@ export default function ViewerToolbar({
     }
   };
 
+  const activeColorPreview =
+    dark && penColor === "#111827" ? "#F9FAFB" : penColor;
+
+  const toolItems = [
+    {
+      id: "pan",
+      icon: Hand,
+      label: t.penPan || "تحريك",
+      tip: t.penPanTip || "تحريك وتصفح الصفحات",
+      activeClass: dark
+        ? "bg-slate-700 text-white shadow-sm ring-1 ring-white/25"
+        : "bg-stone-800 text-white shadow-sm",
+    },
+    {
+      id: "pen",
+      icon: PenTool,
+      label: t.penDraw || "قلم",
+      tip: t.penDrawTip || "قلم كتابة حر",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "highlighter",
+      icon: Highlighter,
+      label: t.penHighlight || "تظليل",
+      tip: t.penHighlightTip || "قلم تظليل شفاف",
+      activeClass: "bg-amber-500 text-white shadow-sm ring-1 ring-amber-400/50",
+    },
+    {
+      id: "line",
+      icon: Minus,
+      label: t.penLine || "خط",
+      tip: t.penLineTip || "رسم خط مستقيم",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "arrow",
+      icon: MoveUpRight,
+      label: t.penArrow || "سهم",
+      tip: t.penArrowTip || "رسم سهم إشارة وتوضيح",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "rect",
+      icon: Square,
+      label: t.penRect || "مربع",
+      tip: t.penRectTip || "رسم إطار مستطيل",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "circle",
+      icon: Circle,
+      label: t.penCircle || "دائرة",
+      tip: t.penCircleTip || "رسم دائرة لتحديد النص",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "text",
+      icon: Type,
+      label: t.penText || "نص",
+      tip: t.penTextTip || "إضافة ملاحظة نصية على الصفحة",
+      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+    },
+    {
+      id: "eraser",
+      icon: Eraser,
+      label: t.penEraser || "ممحاة",
+      tip: t.penEraserTip || "ممحاة (مرّر فوق الرسم لمسحه)",
+      activeClass: "bg-rose-600 text-white shadow-sm ring-1 ring-rose-400/50",
+    },
+  ];
+
+  const showColorAndSizeRow = penTool !== "pan" && penTool !== "eraser";
+
   return (
     <div
       data-viewer-ui
       onClick={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
       onTouchMove={(e) => e.stopPropagation()}
-      className={`shrink-0 border-t transition-colors z-20 ${
-        dark
-          ? "border-neutral-800 bg-[#14171D] text-stone-100"
+      className={`relative shrink-0 border-t transition-colors z-20 safe-area-bottom ${
+        theme === "dark"
+          ? "border-slate-800 bg-[#0D1017] text-stone-100"
+          : theme === "dusk"
+          ? "border-slate-700 bg-[#141923] text-slate-100"
           : theme === "sepia"
-          ? "border-[#D5C7AD] bg-[#F3EAD8] text-[#3D2E1E]"
-          : "border-stone-200 bg-[#FBF9F5] text-stone-900"
+          ? "border-[#CBB994] bg-[#EFE4CE] text-[#3D2E1E]"
+          : "border-stone-300 bg-[#FAF8F5] text-stone-900"
       }`}
     >
-      {/* Upgraded Pen, Highlighter, Shapes & Notes Palette Bar (Horizontally Scrollable Left/Right) */}
+      {/* Clean 2-Tier Solid Pen & Annotation Dock (100% Opaque, Zero crowding, fits all devices!) */}
       {penMode && (
         <div
           dir="rtl"
-          style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
-          className={`border-b px-2.5 py-2 overflow-x-auto scrollbar-none ${
-            dark
-              ? "border-neutral-800 bg-[#0F1217]"
-              : theme === "sepia"
-              ? "border-[#D5C7AD] bg-[#EAE0CC]"
-              : "border-stone-200 bg-stone-100/95"
-          }`}
+          className="absolute bottom-full inset-x-0 pb-2 px-2 sm:px-4 z-30 pointer-events-none flex justify-center"
         >
-          <div className="min-w-max mx-auto flex items-center justify-between gap-2.5">
-            {/* 1. Tool Type Selector */}
-            <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 p-1 rounded-xl shrink-0">
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("pan")}
-                title={t.penPanTip || "تحريك وتصفح الصفحات"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "pan"
-                    ? "bg-stone-700 text-white shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
+          <div
+            style={{
+              backgroundColor:
+                theme === "dark"
+                  ? "#111622"
+                  : theme === "dusk"
+                  ? "#181E2C"
+                  : theme === "sepia"
+                  ? "#F4EAD5"
+                  : "#FFFFFF",
+            }}
+            className={`pointer-events-auto w-full max-w-lg rounded-2xl border-2 p-2.5 space-y-2 transition-colors ${
+              theme === "dark"
+                ? "bg-[#111622] border-slate-700 text-stone-100 shadow-[0_14px_38px_rgba(0,0,0,0.9)]"
+                : theme === "dusk"
+                ? "bg-[#181E2C] border-slate-600 text-slate-100 shadow-[0_14px_38px_rgba(0,0,0,0.85)]"
+                : theme === "sepia"
+                ? "bg-[#F4EAD5] border-[#C4B08B] text-[#3D2E1E] shadow-[0_12px_32px_rgba(61,46,30,0.28)]"
+                : "bg-white border-stone-300 text-stone-900 shadow-[0_12px_32px_rgba(15,23,42,0.22)]"
+            }`}
+          >
+            {/* Row 1: Tools Strip (Left/Right Scrollable on very narrow screens) + Pinned Undo/Redo/Clear/Close */}
+            <div className="flex items-center justify-between gap-1.5">
+              {/* Tools list: shows icon + label ONLY for the active tool on mobile to eliminate crowding */}
+              <div
+                style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
+                className={`flex-1 flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-none border ${
+                  theme === "dark"
+                    ? "bg-[#1A2130] border-slate-700"
+                    : theme === "dusk"
+                    ? "bg-[#222A3A] border-slate-600"
+                    : theme === "sepia"
+                    ? "bg-[#E6D8BC] border-[#CBB994]"
+                    : "bg-stone-100 border-stone-200"
                 }`}
               >
-                <Hand className="w-3.5 h-3.5" />
-                <span>{t.penPan || "تحريك"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("pen")}
-                title={t.penDrawTip || "قلم كتابة حر"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "pen"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <PenTool className="w-3.5 h-3.5" />
-                <span>{t.penDraw || "قلم"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("highlighter")}
-                title={t.penHighlightTip || "قلم تظليل شفاف"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "highlighter"
-                    ? "bg-amber-500 text-white shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Highlighter className="w-3.5 h-3.5" />
-                <span>{t.penHighlight || "تظليل"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("line")}
-                title={t.penLineTip || "رسم خط مستقيم"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "line"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Minus className="w-3.5 h-3.5" />
-                <span>{t.penLine || "خط"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("rect")}
-                title={t.penRectTip || "رسم إطار مستطيل"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "rect"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Square className="w-3.5 h-3.5" />
-                <span>{t.penRect || "مربع"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("circle")}
-                title={t.penCircleTip || "رسم دائرة لتحديد النص"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "circle"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Circle className="w-3.5 h-3.5" />
-                <span>{t.penCircle || "دائرة"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("text")}
-                title={t.penTextTip || "إضافة ملاحظة نصية على الصفحة"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "text"
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Type className="w-3.5 h-3.5" />
-                <span>{t.penText || "نص"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => onSelectPenTool?.("eraser")}
-                title={t.penEraserTip || "ممحاة"}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                  penTool === "eraser"
-                    ? "bg-rose-600 text-white shadow-sm"
-                    : "hover:bg-black/5 dark:hover:bg-white/10"
-                }`}
-              >
-                <Eraser className="w-3.5 h-3.5" />
-                <span>{t.penEraser || "ممحاة"}</span>
-              </button>
-            </div>
-
-            {/* 2. Color Swatches & Stroke Sizes */}
-            <div className="flex items-center gap-2 shrink-0">
-              <div className="flex items-center gap-1.5">
-                {PEN_COLORS.map((c) => {
-                  const isSelected = penColor === c.value;
-                  const displayBg =
-                    dark && c.value === "#111827" ? "#F9FAFB" : c.value;
+                {toolItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = penTool === item.id;
                   return (
                     <button
-                      key={c.id}
+                      key={item.id}
                       type="button"
-                      onClick={() => {
-                        onSelectPenColor?.(c.value);
-                        if (penTool === "eraser" || penTool === "pan") {
-                          onSelectPenTool?.("pen");
-                        }
-                      }}
-                      title={t[c.labelKey] || c.fallback}
-                      className={`w-6 h-6 rounded-full border border-black/15 dark:border-white/20 flex items-center justify-center transition-transform shrink-0 ${
-                        isSelected
-                          ? "scale-110 ring-2 ring-primary ring-offset-2 ring-offset-background"
-                          : "opacity-85 hover:opacity-100 hover:scale-105"
-                      }`}
-                      style={{ backgroundColor: displayBg }}
-                    />
-                  );
-                })}
-              </div>
-
-              <div className="h-4 w-px bg-stone-300 dark:bg-neutral-700 mx-0.5" />
-
-              {/* Stroke Thickness */}
-              <div className="flex items-center gap-1">
-                {PEN_SIZES.map((sz) => {
-                  const isSelected = penSize === sz.value;
-                  const dotColor =
-                    dark && penColor === "#111827" ? "#F9FAFB" : penColor;
-                  return (
-                    <button
-                      key={sz.id}
-                      type="button"
-                      onClick={() => onSelectPenSize?.(sz.value)}
-                      title={t[sz.labelKey] || sz.fallback}
-                      className={`w-6 h-6 rounded-lg flex items-center justify-center transition-colors ${
-                        isSelected
-                          ? "bg-primary/20 text-primary ring-1 ring-primary"
-                          : "hover:bg-black/5 dark:hover:bg-white/10"
+                      onClick={() => onSelectPenTool?.(item.id)}
+                      title={item.tip}
+                      className={`relative flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
+                        isActive
+                          ? `${item.activeClass} px-2.5`
+                          : dark
+                          ? "w-8 text-stone-200 hover:bg-slate-700 hover:text-white"
+                          : "w-8 text-stone-700 hover:bg-stone-200 hover:text-stone-950"
                       }`}
                     >
-                      <span
-                        className={`rounded-full bg-current ${sz.dot}`}
-                        style={{
-                          color:
-                            penTool !== "eraser" && penTool !== "pan"
-                              ? dotColor
-                              : undefined,
-                        }}
-                      />
+                      <Icon className="w-3.5 h-3.5 shrink-0" />
+                      <span className={isActive ? "inline" : "hidden lg:inline"}>
+                        {item.label}
+                      </span>
                     </button>
                   );
                 })}
               </div>
+
+              {/* Action Buttons (Undo / Redo / Clear / Close) — Always visible & 100% solid */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={onUndoAnnotation}
+                  disabled={annotationCount === 0}
+                  title={t.penUndo || "تراجع"}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-30 transition-colors ${
+                    dark
+                      ? "bg-[#1A2130] hover:bg-slate-700 text-stone-200"
+                      : theme === "sepia"
+                      ? "bg-[#E6D8BC] hover:bg-[#D9C8A7] text-[#3D2E1E]"
+                      : "bg-stone-100 hover:bg-stone-200 text-stone-800"
+                  }`}
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onRedoAnnotation}
+                  disabled={!canRedo}
+                  title={t.penRedo || "إعادة"}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-30 transition-colors ${
+                    dark
+                      ? "bg-[#1A2130] hover:bg-slate-700 text-stone-200"
+                      : theme === "sepia"
+                      ? "bg-[#E6D8BC] hover:bg-[#D9C8A7] text-[#3D2E1E]"
+                      : "bg-stone-100 hover:bg-stone-200 text-stone-800"
+                  }`}
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onClearAnnotations}
+                  disabled={annotationCount === 0}
+                  title={t.penClearPage || "مسح جميع رسومات هذه الصفحة"}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center text-rose-600 dark:text-rose-400 disabled:opacity-30 transition-colors ${
+                    dark
+                      ? "bg-[#1A2130] hover:bg-rose-950"
+                      : theme === "sepia"
+                      ? "bg-[#E6D8BC] hover:bg-rose-100"
+                      : "bg-stone-100 hover:bg-rose-100"
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onTogglePenMode}
+                  title={t.penClose || "إغلاق شريط القلم"}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                    dark
+                      ? "bg-slate-700 hover:bg-slate-600 text-white"
+                      : theme === "sepia"
+                      ? "bg-[#D9C8A7] hover:bg-[#CBB994] text-[#3D2E1E]"
+                      : "bg-stone-200 hover:bg-stone-300 text-stone-900"
+                  }`}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            {/* 3. Undo / Redo / Clear / Close Pen */}
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={onUndoAnnotation}
-                disabled={annotationCount === 0}
-                title={t.penUndo || "تراجع"}
-                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
+            {/* Row 2: Color Swatches & Stroke Thickness (Shown when drawing/highlighting/noting) */}
+            {showColorAndSizeRow && (
+              <div
+                style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
+                className={`flex items-center justify-between gap-2 pt-2 border-t overflow-x-auto scrollbar-none ${
+                  dark
+                    ? "border-slate-700"
+                    : theme === "sepia"
+                    ? "border-[#CBB994]"
+                    : "border-stone-200"
+                }`}
               >
-                <Undo2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onRedoAnnotation}
-                disabled={!canRedo}
-                title={t.penRedo || "إعادة"}
-                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 transition-colors"
-              >
-                <Redo2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onClearAnnotations}
-                disabled={annotationCount === 0}
-                title={t.penClearPage || "مسح جميع رسومات هذه الصفحة"}
-                className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={onTogglePenMode}
-                title={t.penClose || "إغلاق شريط القلم"}
-                className="p-1.5 rounded-lg bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 transition-colors ms-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+                {/* Ink Colors */}
+                <div className="flex items-center gap-1.5 shrink-0 py-0.5 px-0.5">
+                  {PEN_COLORS.map((c) => {
+                    const isSelected = penColor === c.value;
+                    const displayBg =
+                      dark && c.value === "#111827" ? "#F9FAFB" : c.value;
+                    const checkContrast =
+                      dark && c.value === "#111827" ? "#111827" : "#FFFFFF";
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => onSelectPenColor?.(c.value)}
+                        title={t[c.labelKey] || c.fallback}
+                        className={`relative w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                          isSelected
+                            ? "scale-110 ring-2 ring-primary ring-offset-1 ring-offset-background shadow"
+                            : "hover:scale-105 ring-1 ring-stone-400 dark:ring-slate-500"
+                        }`}
+                        style={{ backgroundColor: displayBg }}
+                      >
+                        {isSelected && (
+                          <Check
+                            className="w-3 h-3 stroke-[3]"
+                            style={{ color: checkContrast }}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Stroke Thickness Selector */}
+                {penTool !== "text" && (
+                  <div
+                    className={`flex items-center gap-1 p-0.5 rounded-xl shrink-0 border ${
+                      theme === "dark"
+                        ? "bg-[#1A2130] border-slate-700"
+                        : theme === "dusk"
+                        ? "bg-[#222A3A] border-slate-600"
+                        : theme === "sepia"
+                        ? "bg-[#E6D8BC] border-[#CBB994]"
+                        : "bg-stone-100 border-stone-200"
+                    }`}
+                  >
+                    {PEN_SIZES.map((sz) => {
+                      const isSelected = penSize === sz.value;
+                      return (
+                        <button
+                          key={sz.id}
+                          type="button"
+                          onClick={() => onSelectPenSize?.(sz.value)}
+                          title={t[sz.labelKey] || sz.fallback}
+                          className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
+                            isSelected
+                              ? dark
+                                ? "bg-slate-700 ring-1 ring-primary text-white shadow-xs"
+                                : "bg-white ring-1 ring-primary text-stone-900 shadow-xs"
+                              : dark
+                              ? "hover:bg-slate-700"
+                              : "hover:bg-stone-200"
+                          }`}
+                        >
+                          <span
+                            className="rounded-full transition-transform"
+                            style={{
+                              width: `${sz.px}px`,
+                              height: `${sz.px}px`,
+                              backgroundColor: activeColorPreview,
+                            }}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -368,7 +436,13 @@ export default function ViewerToolbar({
         dir="ltr"
         style={{ touchAction: "none" }}
         className={`h-3 cursor-pointer group relative flex items-center ${
-          dark ? "bg-neutral-800" : theme === "sepia" ? "bg-[#DFD2BA]" : "bg-stone-200"
+          theme === "dark"
+            ? "bg-[#181C26]"
+            : theme === "dusk"
+            ? "bg-[#1E2532]"
+            : theme === "sepia"
+            ? "bg-[#DFD0B5]"
+            : "bg-stone-200/90"
         }`}
         onPointerDown={(e) => {
           e.stopPropagation();
@@ -440,15 +514,15 @@ export default function ViewerToolbar({
         )}
       </div>
 
-      {/* Main Bottom Toolbar Controls Row (Horizontally Scrollable Left & Right) */}
+      {/* Main Bottom Toolbar Controls Row (Fits all devices cleanly & scrolls smoothly if needed) */}
       <div
         dir="ltr"
         style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
         className="w-full overflow-x-auto scrollbar-none"
       >
-        <div className="min-w-max max-w-4xl mx-auto flex items-center justify-between px-3 py-1.5 sm:py-2 gap-3 sm:gap-4">
+        <div className="min-w-max max-w-4xl mx-auto flex items-center justify-between px-2.5 sm:px-4 py-1.5 sm:py-2 gap-2 sm:gap-4">
           {/* Left group: Zoom controls */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
             <ToolBtn onClick={onZoomOut} dark={dark} title={t.tbZoomOut || "تصغير"}>
               <ZoomOut className="w-4 h-4" />
             </ToolBtn>
@@ -459,8 +533,8 @@ export default function ViewerToolbar({
                 onResetZoom?.();
               }}
               title={t.tbResetZoom || "إعادة ضبط التكبير (100%)"}
-              className={`inline-flex text-[11px] font-mono tabular-nums font-bold px-2 py-1 rounded-md transition-colors ${
-                dark ? "hover:bg-neutral-800 text-stone-300" : "hover:bg-stone-200/70 text-stone-700"
+              className={`inline-flex text-[11px] font-mono tabular-nums font-bold px-1.5 sm:px-2 py-1 rounded-md transition-colors ${
+                dark ? "hover:bg-white/10 text-stone-200" : "hover:bg-stone-200/70 text-stone-700"
               }`}
             >
               {Math.round(zoom * 100)}%
@@ -471,7 +545,7 @@ export default function ViewerToolbar({
           </div>
 
           {/* Center group: Page navigation */}
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
             <ToolBtn
               onClick={onPrev}
               dark={dark}
@@ -488,11 +562,13 @@ export default function ViewerToolbar({
                 onToggleGoTo?.();
               }}
               title={t.tbGoTo || "انتقال إلى صفحة"}
-              className={`text-xs font-mono tabular-nums font-bold px-3 py-1.5 rounded-xl shrink-0 whitespace-nowrap transition-colors ${
-                dark
-                  ? "text-stone-100 bg-neutral-800 hover:bg-neutral-700"
+              className={`text-xs font-mono tabular-nums font-bold px-2.5 sm:px-3.5 py-1.5 rounded-xl shrink-0 whitespace-nowrap transition-colors ${
+                theme === "dark"
+                  ? "text-stone-100 bg-[#1A1F2B] hover:bg-[#232A3A] ring-1 ring-white/10"
+                  : theme === "dusk"
+                  ? "text-slate-100 bg-[#222938] hover:bg-[#2A3346] ring-1 ring-white/10"
                   : theme === "sepia"
-                  ? "text-[#3D2E1E] bg-[#E5D8C1] hover:bg-[#DBC9AC]"
+                  ? "text-[#3D2E1E] bg-[#E2D4B7] hover:bg-[#D7C6A5]"
                   : "text-stone-900 bg-stone-200/80 hover:bg-stone-300/80"
               }`}
             >
@@ -510,7 +586,7 @@ export default function ViewerToolbar({
           </div>
 
           {/* Right group: Reading & Annotation tools */}
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
             {/* TOC & Bookmarks Drawer */}
             <ToolBtn
               onClick={onToggleToc}
@@ -546,7 +622,7 @@ export default function ViewerToolbar({
               )}
             </ToolBtn>
 
-            {/* Night Mode & Reading Comfort Button (Restored as original, 0ms instant) */}
+            {/* Night Mode & Reading Comfort Button */}
             <ToolBtn
               onClick={onToggleComfort}
               dark={dark}
@@ -597,7 +673,7 @@ function ToolBtn({
         active
           ? "bg-primary text-primary-foreground shadow-sm"
           : dark
-          ? "hover:bg-neutral-800 text-stone-200"
+          ? "hover:bg-white/10 text-stone-200"
           : "hover:bg-black/5 text-current"
       } ${className}`}
     >

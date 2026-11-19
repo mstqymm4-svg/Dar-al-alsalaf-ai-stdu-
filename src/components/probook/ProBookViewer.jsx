@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { loadPdfDocument, clearPageCache } from "@/lib/pdfLoader";
 import { useT } from "@/lib/i18n";
+import { getThemeState, subscribeToTheme } from "@/lib/themeEngine";
 import ViewerToolbar from "./ViewerToolbar";
 import {
   TocPanel,
@@ -40,12 +41,32 @@ export default function ProBookViewer({
 
   const [theme, setTheme] = useState(() => {
     try {
-      const v = localStorage.getItem("dau_reader_theme");
-      return ["light", "dark", "sepia", "dusk"].includes(v) ? v : "light";
+      const appIsDark =
+        typeof document !== "undefined" &&
+        (document.documentElement.classList.contains("dark") || getThemeState().isDark);
+      const saved = localStorage.getItem("dau_reader_theme");
+      if (saved && ["light", "dark", "sepia", "dusk"].includes(saved)) {
+        // If user enabled app-wide dark mode and reader was still on default "light", honor dark mode on pages
+        if (appIsDark && saved === "light") return "dark";
+        return saved;
+      }
+      return appIsDark ? "dark" : "light";
     } catch {
       return "light";
     }
   });
+
+  // Sync book page theme whenever global App Dark Mode is toggled
+  useEffect(() => {
+    const unsub = subscribeToTheme(({ isDark }) => {
+      setTheme((prev) => {
+        if (isDark && (prev === "light" || prev === "sepia")) return "dark";
+        if (!isDark && (prev === "dark" || prev === "dusk")) return "light";
+        return prev;
+      });
+    });
+    return unsub;
+  }, []);
 
   // Always use smooth vertical scroll stream (View Mode toggle button removed per user request)
   const viewMode = "scroll";
@@ -104,6 +125,7 @@ export default function ProBookViewer({
   const currentPageRef = useRef(1);
   const pointerDownRef = useRef({ x: 0, y: 0 });
   const lastTapRef = useRef(0);
+  const tapTimerRef = useRef(null);
   const [showZoomPct, setShowZoomPct] = useState(false);
   const didRestoreRef = useRef(false);
 
@@ -350,7 +372,13 @@ export default function ProBookViewer({
     setShowGoTo((s) => !s);
   }, [currentPage]);
 
-  useEffect(() => () => clearPageCache(), []);
+  useEffect(
+    () => () => {
+      clearTimeout(tapTimerRef.current);
+      clearPageCache();
+    },
+    []
+  );
 
   const themeConfig = READER_THEMES[theme] || READER_THEMES.light;
   const isDarkTheme = theme === "dark" || theme === "dusk";
@@ -421,17 +449,20 @@ export default function ProBookViewer({
           e.clientX - pointerDownRef.current.x,
           e.clientY - pointerDownRef.current.y
         );
-        if (dist > 8) return;
+        if (dist > 14) return;
 
         const now = Date.now();
-        const isDoubleTap = now - lastTapRef.current < 320;
+        const isDoubleTap = now - lastTapRef.current < 300;
         lastTapRef.current = now;
         if (isDoubleTap) {
-          setShowToolbar((s) => !s);
+          clearTimeout(tapTimerRef.current);
           setZoom((z) => (z > 1.05 ? 1 : 1.75));
           return;
         }
-        setShowToolbar((s) => !s);
+        clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = setTimeout(() => {
+          setShowToolbar((s) => !s);
+        }, 240);
       }}
     >
       {/* Virtualized Page Stream with Precision Pen Layer */}
@@ -498,6 +529,7 @@ export default function ProBookViewer({
 
       <GoToPanel
         show={showGoTo}
+        darkMode={isDarkTheme}
         value={goToValue}
         setValue={setGoToValue}
         totalPages={totalPages}
@@ -623,6 +655,7 @@ function generateSmartOutline(numPages, lang = "ar") {
   const isUrdu = lang === "ur";
   const isTurkish = lang === "tr";
   const isFrench = lang === "fr";
+  const isHindi = lang === "hi";
 
   if (numPages <= 5) {
     return Array.from({ length: numPages }, (_, i) => ({
@@ -634,6 +667,8 @@ function generateSmartOutline(numPages, lang = "ar") {
         ? `Sayfa ${i + 1}`
         : isFrench
         ? `Page ${i + 1}`
+        : isHindi
+        ? `पृष्ठ ${i + 1}`
         : `Page ${i + 1}`,
       pageNumber: i + 1,
       items: [],
@@ -679,6 +714,14 @@ function generateSmartOutline(numPages, lang = "ar") {
           "Chapitre 2 : Corps du texte",
           "Chapitre 3 : Développements",
           "Conclusion et Index",
+        ]
+      : isHindi
+      ? [
+          "प्रस्तावना और परिचय",
+          "अध्याय 1: प्रारंभ और आधार",
+          "अध्याय 2: मुख्य विषय और पाठ",
+          "अध्याय 3: विवरण और विश्लेषण",
+          "निष्कर्ष और अनुक्रमणिका",
         ]
       : [
           "Introduction & Preface",
@@ -744,6 +787,16 @@ function generateSmartOutline(numPages, lang = "ar") {
         "Partie 4 : Règles et Préceptes",
         "Partie 5 : Commentaires et Notes",
         "Conclusion et Index des Sujets",
+      ]
+    : isHindi
+    ? [
+        "प्रस्तावना और पुस्तक परिचय",
+        "भाग 1: सिद्धांत और आधार",
+        "भाग 2: मुख्य पाठ और उद्देश्य",
+        "भाग 3: विस्तृत चर्चा और शाखाएँ",
+        "भाग 4: नियम और प्रावधान",
+        "भाग 5: टिप्पणियाँ और लाभ",
+        "निष्कर्ष और विषय-सूची",
       ]
     : [
         "Introduction & Presentation",
