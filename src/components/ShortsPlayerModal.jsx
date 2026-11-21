@@ -13,6 +13,8 @@ import {
   Heart,
   Share2,
   Loader2,
+  Download,
+  Check,
 } from "lucide-react";
 import { extractYoutubeId, getThumbnail } from "@/lib/youtubeMeta";
 import { toast } from "sonner";
@@ -26,6 +28,12 @@ import {
 } from "@/lib/activeUser";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import OfflineVideoNotice from "@/components/video/OfflineVideoNotice";
+import {
+  isVideoSavedOffline,
+  getOfflineVideoBlobUrl,
+  downloadVideoForOffline,
+  removeVideoFromOffline,
+} from "@/lib/offlineDB";
 
 // Ensure YouTube IFrame API script is preloaded globally as early as possible
 export function ensureYouTubeIframeApi() {
@@ -52,9 +60,10 @@ function isDirectVideoUrl(url) {
 
 export default function ShortsPlayerModal({
   initialVideo,
+  initialIndex: propInitialIndex,
   shortsList = [],
   channelsById = {},
-  isOpen,
+  isOpen = true,
   onClose,
   user = null,
 }) {
@@ -71,15 +80,28 @@ export default function ShortsPlayerModal({
     return initialVideo ? [initialVideo] : [];
   }, [shortsList, initialVideo]);
 
-  const initialIndex = list.findIndex((v) => v.id === initialVideo?.id);
-  const [currentIndex, setCurrentIndex] = useState(initialIndex >= 0 ? initialIndex : 0);
+  const resolvedStartIdx = useMemo(() => {
+    if (typeof propInitialIndex === "number" && propInitialIndex >= 0 && propInitialIndex < list.length) {
+      return propInitialIndex;
+    }
+    const found = list.findIndex((v) => v.id === initialVideo?.id);
+    return found >= 0 ? found : 0;
+  }, [propInitialIndex, list, initialVideo?.id]);
+
+  const [currentIndex, setCurrentIndex] = useState(resolvedStartIdx);
   const [userPaused, setUserPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [ytEmbedError, setYtEmbedError] = useState(false);
   const [isSlideReady, setIsSlideReady] = useState(false);
   const [isBuffering, setIsBuffering] = useState(true);
   const [progress, setProgress] = useState(0);
   const [showHint, setShowHint] = useState(true);
   const [favIds, setFavIds] = useState(() => getVideoFavIds(getAccountEmail(user)));
+  const [offlineBlobUrl, setOfflineBlobUrl] = useState(null);
+  const [isSavedOffline, setIsSavedOffline] = useState(false);
+  const [isDownloadingOffline, setIsDownloadingOffline] = useState(false);
+  const [offlineDownloadPct, setOfflineDownloadPct] = useState(0);
 
   const currentIndexRef = useRef(currentIndex);
   const currentVideoIdRef = useRef(initialVideo?.id || null);
@@ -98,6 +120,7 @@ export default function ShortsPlayerModal({
   const autoplayGuardTimerRef = useRef(null);
   const autoplayInnerTimerRef = useRef(null);
   const watchdogTimerRef = useRef(null);
+  const fallbackRevealTimerRef = useRef(null);
   const slideAnimTimerRef = useRef(null);
 
   currentIndexRef.current = currentIndex;
@@ -111,7 +134,9 @@ export default function ShortsPlayerModal({
 
   const rawUrl = currentVideo?.youtube_url || currentVideo?.file_url || "";
   const activeVidId = extractYoutubeId(rawUrl);
-  const isDirectFile = !activeVidId && isDirectVideoUrl(rawUrl);
+  const effectiveDirectUrl =
+    offlineBlobUrl || (!activeVidId && isDirectVideoUrl(rawUrl) ? rawUrl : null);
+  const isDirectFile = Boolean(effectiveDirectUrl);
   const activePosterUrl =
     currentVideo?.thumbnail || (activeVidId ? getThumbnail(rawUrl) : "");
 
@@ -140,6 +165,59 @@ export default function ShortsPlayerModal({
     setFavIds(getVideoFavIds(getAccountEmail(user)));
   }, [isOpen, user]);
 
+  // Check if current Short is saved in IndexedDB for offline playback
+  useEffect(() => {
+    let active = true;
+    let createdBlobUrl = null;
+    setOfflineBlobUrl(null);
+    setIsSavedOffline(false);
+
+    if (!isOpen || !currentVideo?.id) return;
+
+    const loadOfflineState = async () => {
+      const saved = Boolean(await Promise.resolve(isVideoSavedOffline(currentVideo.id)));
+      if (!active) return;
+      setIsSavedOffline(saved);
+      if (saved) {
+        const res = await getOfflineVideoBlobUrl(currentVideo.id);
+        const bUrl = res?.blobUrl || (typeof res === "string" ? res : null);
+        if (!active) {
+          if (bUrl) {
+            try {
+              URL.revokeObjectURL(bUrl);
+            } catch {}
+          }
+          return;
+        }
+        if (bUrl) {
+          createdBlobUrl = bUrl;
+          setOfflineBlobUrl(bUrl);
+          setIsSlideReady(true);
+          setIsBuffering(false);
+        }
+      }
+    };
+
+    loadOfflineState();
+
+    const onSync = () => {
+      if (currentVideo?.id && active) {
+        setIsSavedOffline(Boolean(isVideoSavedOffline(currentVideo.id)));
+      }
+    };
+    window.addEventListener("dau:offline-videos-changed", onSync);
+
+    return () => {
+      active = false;
+      window.removeEventListener("dau:offline-videos-changed", onSync);
+      if (createdBlobUrl) {
+        try {
+          URL.revokeObjectURL(createdBlobUrl);
+        } catch {}
+      }
+    };
+  }, [isOpen, currentVideo?.id]);
+
   // Hide mobile bottom-nav while ShortsPlayerModal is open, restore on close
   useEffect(() => {
     if (!isOpen) {
@@ -155,16 +233,25 @@ export default function ShortsPlayerModal({
     };
   }, [isOpen]);
 
-  // Sync index when modal opens or initialVideo ID changes
+  // Sync index when modal opens or initialVideo ID / propInitialIndex changes
   useEffect(() => {
-    if (!isOpen || !initialVideo?.id) return;
-    const idx = listRef.current.findIndex((v) => v.id === initialVideo.id);
-    const targetIdx = idx >= 0 ? idx : 0;
-    currentVideoIdRef.current = initialVideo.id;
+    if (!isOpen) return;
+    let targetIdx = 0;
+    if (typeof propInitialIndex === "number" && propInitialIndex >= 0 && propInitialIndex < listRef.current.length) {
+      targetIdx = propInitialIndex;
+    } else if (initialVideo?.id) {
+      const idx = listRef.current.findIndex((v) => v.id === initialVideo.id);
+      targetIdx = idx >= 0 ? idx : 0;
+    } else {
+      return;
+    }
+    const targetItem = listRef.current[targetIdx];
+    currentVideoIdRef.current = targetItem?.id || initialVideo?.id || null;
     currentIndexRef.current = targetIdx;
     setCurrentIndex(targetIdx);
     userPausedRef.current = false;
     setUserPaused(false);
+    setYtEmbedError(false);
     setIsSlideReady(false);
     setIsBuffering(true);
     setProgress(0);
@@ -172,7 +259,7 @@ export default function ShortsPlayerModal({
       deckRef.current.style.transition = "none";
       deckRef.current.style.transform = "translate3d(0, 0px, 0)";
     }
-  }, [isOpen, initialVideo?.id]);
+  }, [isOpen, initialVideo?.id, propInitialIndex]);
 
   // Preload thumbnails for adjacent Shorts (including wrap-around) so swipes never flash empty frame
   useEffect(() => {
@@ -250,6 +337,7 @@ export default function ShortsPlayerModal({
     if (!isOpen || !isOnline || !activeVidId || isDirectFile) return;
 
     setProgress(0);
+    setYtEmbedError(false);
     setIsSlideReady(false);
     setIsBuffering(true);
     userPausedRef.current = false;
@@ -258,6 +346,15 @@ export default function ShortsPlayerModal({
     let cancelled = false;
     let pollInterval = null;
     clearTimeout(watchdogTimerRef.current);
+    clearTimeout(fallbackRevealTimerRef.current);
+
+    // Anti-hang guarantee: reveal the video iframe within 1100ms even if YouTube iframe postMessage is delayed
+    fallbackRevealTimerRef.current = setTimeout(() => {
+      if (!cancelled) {
+        setIsSlideReady(true);
+        setIsBuffering(false);
+      }
+    }, 1100);
 
     const destroyExistingPlayer = () => {
       if (ytPlayerRef.current) {
@@ -297,12 +394,17 @@ export default function ShortsPlayerModal({
           fs: 0,
           disablekb: 1,
           enablejsapi: 1,
-          origin: window.location.origin,
+          origin: typeof window !== "undefined" ? window.location.origin : undefined,
         },
         events: {
           onReady: (e) => {
             if (cancelled) return;
             ytReadyRef.current = true;
+            setIsSlideReady(true);
+            setIsBuffering(false);
+            try {
+              e.target.setPlaybackRate?.(playbackSpeed);
+            } catch {}
             triggerPlayWithAutoplayGuard(e.target);
           },
           onStateChange: (e) => {
@@ -311,6 +413,8 @@ export default function ShortsPlayerModal({
             // 1 = PLAYING
             if (state === 1) {
               clearTimeout(watchdogTimerRef.current);
+              clearTimeout(fallbackRevealTimerRef.current);
+              setYtEmbedError(false);
               setIsSlideReady(true);
               setIsBuffering(false);
               userPausedRef.current = false;
@@ -320,9 +424,12 @@ export default function ShortsPlayerModal({
               setIsBuffering(true);
             } else if (state === 2) {
               // 2 = PAUSED
+              setIsSlideReady(true);
               setIsBuffering(false);
             } else if (state === 5) {
               // 5 = VIDEO CUED
+              setIsSlideReady(true);
+              setIsBuffering(false);
               if (!userPausedRef.current) {
                 triggerPlayWithAutoplayGuard(e.target);
               }
@@ -337,6 +444,8 @@ export default function ShortsPlayerModal({
           onError: () => {
             if (cancelled) return;
             clearTimeout(watchdogTimerRef.current);
+            clearTimeout(fallbackRevealTimerRef.current);
+            setYtEmbedError(true);
             setIsBuffering(false);
             setIsSlideReady(true);
           },
@@ -371,12 +480,10 @@ export default function ShortsPlayerModal({
               videoId: activeVidId,
               startSeconds: 0,
             });
-          } else {
-            existingPlayer.seekTo?.(0, true);
           }
           triggerPlayWithAutoplayGuard(existingPlayer);
 
-          // Watchdog: if loadVideoById stalls for >1.8s without advancing or playing, recreate fresh
+          // Watchdog: if loadVideoById stalls for >2.2s without advancing or playing, recreate fresh
           watchdogTimerRef.current = setTimeout(() => {
             if (cancelled || userPausedRef.current) return;
             try {
@@ -389,7 +496,7 @@ export default function ShortsPlayerModal({
             } catch {
               createFreshPlayer();
             }
-          }, 1800);
+          }, 2200);
           return;
         } catch {
           // Fall through to createFreshPlayer
@@ -418,6 +525,7 @@ export default function ShortsPlayerModal({
       clearTimeout(autoplayGuardTimerRef.current);
       clearTimeout(autoplayInnerTimerRef.current);
       clearTimeout(watchdogTimerRef.current);
+      clearTimeout(fallbackRevealTimerRef.current);
     };
   }, [isOpen, isOnline, activeVidId, isDirectFile, triggerPlayWithAutoplayGuard]);
 
@@ -427,6 +535,7 @@ export default function ShortsPlayerModal({
     clearTimeout(autoplayGuardTimerRef.current);
     clearTimeout(autoplayInnerTimerRef.current);
     clearTimeout(watchdogTimerRef.current);
+    clearTimeout(fallbackRevealTimerRef.current);
     clearTimeout(slideAnimTimerRef.current);
     if (ytPlayerRef.current) {
       try {
@@ -461,35 +570,61 @@ export default function ShortsPlayerModal({
     return () => clearInterval(interval);
   }, [isOpen, isDirectFile]);
 
-  const switchToIndex = useCallback((nextIdx, direction = "next") => {
-    const items = listRef.current;
-    if (nextIdx < 0 || nextIdx >= items.length) return;
-    if (currentIndexRef.current === nextIdx) return;
+  const switchToIndex = useCallback(
+    (nextIdx, direction = "next") => {
+      const items = listRef.current;
+      if (nextIdx < 0 || nextIdx >= items.length) return;
+      if (currentIndexRef.current === nextIdx) return;
 
-    clearTimeout(slideAnimTimerRef.current);
-    userPausedRef.current = false;
-    setUserPaused(false);
-    setProgress(0);
-    setIsSlideReady(false);
-    setIsBuffering(true);
-    currentIndexRef.current = nextIdx;
-    if (items[nextIdx]?.id) {
-      currentVideoIdRef.current = items[nextIdx].id;
-    }
-    setCurrentIndex(nextIdx);
+      clearTimeout(slideAnimTimerRef.current);
+      userPausedRef.current = false;
+      setUserPaused(false);
+      setProgress(0);
+      setIsSlideReady(false);
+      setIsBuffering(true);
+      currentIndexRef.current = nextIdx;
+      const targetVideo = items[nextIdx];
+      if (targetVideo?.id) {
+        currentVideoIdRef.current = targetVideo.id;
+      }
 
-    // Smoothly animate the new slide coming in from bottom ("next") or top ("prev")
-    const deck = deckRef.current;
-    if (deck) {
-      const startOffset = direction === "prev" ? "-22%" : "22%";
-      deck.style.transition = "none";
-      deck.style.transform = `translate3d(0, ${startOffset}, 0)`;
-      // Force reflow so browser registers starting offset
-      void deck.offsetHeight;
-      deck.style.transition = "transform 210ms cubic-bezier(0.22, 1, 0.36, 1)";
-      deck.style.transform = "translate3d(0, 0px, 0)";
-    }
-  }, []);
+      // Synchronously trigger loadVideoById inside the user gesture handler so mobile browsers
+      // preserve the user-gesture activation token for instant unmuted playback
+      const targetUrl = targetVideo?.youtube_url || targetVideo?.file_url || "";
+      const nextVidId = extractYoutubeId(targetUrl);
+      const existingPlayer = ytPlayerRef.current;
+      if (
+        nextVidId &&
+        existingPlayer &&
+        ytReadyRef.current &&
+        typeof existingPlayer.loadVideoById === "function"
+      ) {
+        try {
+          loadedVidIdRef.current = nextVidId;
+          existingPlayer.loadVideoById({
+            videoId: nextVidId,
+            startSeconds: 0,
+          });
+          triggerPlayWithAutoplayGuard(existingPlayer);
+        } catch {}
+      }
+
+      setCurrentIndex(nextIdx);
+
+      // Smoothly animate the new slide coming in from bottom ("next") or top ("prev")
+      const deck = deckRef.current;
+      if (deck) {
+        const startOffset = direction === "prev" ? "-22%" : "22%";
+        deck.style.transition = "none";
+        deck.style.transform = `translate3d(0, ${startOffset}, 0)`;
+        // Force reflow so browser registers starting offset
+        void deck.offsetHeight;
+        deck.style.transition = "transform 210ms cubic-bezier(0.22, 1, 0.36, 1)";
+        deck.style.transform = "translate3d(0, 0px, 0)";
+      }
+    },
+    [triggerPlayWithAutoplayGuard]
+  );
 
   // Single tap on screen or Play/Pause button: instant Pause / Resume
   const togglePlayPause = useCallback((e) => {
@@ -596,6 +731,57 @@ export default function ShortsPlayerModal({
       } catch {}
     },
     [currentVideo, t.linkCopied]
+  );
+
+  const handleToggleOfflineDownload = useCallback(
+    async (e) => {
+      if (e) e.stopPropagation();
+      if (!currentVideo?.id || isDownloadingOffline) return;
+
+      if (isSavedOffline) {
+        await removeVideoFromOffline(currentVideo.id);
+        setIsSavedOffline(false);
+        if (offlineBlobUrl) {
+          try {
+            URL.revokeObjectURL(offlineBlobUrl);
+          } catch {}
+          setOfflineBlobUrl(null);
+        }
+        toast.info(
+          t.removedOfflineVideo || "تم حذف المقطع من المشاهدة بلا نت"
+        );
+        return;
+      }
+
+      setIsDownloadingOffline(true);
+      setOfflineDownloadPct(1);
+      try {
+        await downloadVideoForOffline(currentVideo, (pct) => {
+          setOfflineDownloadPct(pct);
+        });
+        setIsSavedOffline(true);
+        const res = await getOfflineVideoBlobUrl(currentVideo.id);
+        const bUrl = res?.blobUrl || (typeof res === "string" ? res : null);
+        if (bUrl) setOfflineBlobUrl(bUrl);
+        toast.success(
+          t.savedVideoOfflineSuccess ||
+            "تم تحميل المقطع للمشاهدة بلا إنترنت ✓"
+        );
+      } catch (err) {
+        toast.error(err?.message || "تعذر تحميل المقطع للمشاهدة بلا نت");
+      } finally {
+        setIsDownloadingOffline(false);
+        setOfflineDownloadPct(0);
+      }
+    },
+    [
+      currentVideo,
+      isDownloadingOffline,
+      isSavedOffline,
+      offlineBlobUrl,
+      t.removedOfflineVideo,
+      t.savedVideoOfflineSuccess,
+    ]
   );
 
   const goToNext = useCallback(
@@ -776,7 +962,7 @@ export default function ShortsPlayerModal({
 
   if (!isOpen || !currentVideo) return null;
 
-  if (!isOnline) {
+  if (!isOnline && !isDirectFile) {
     return <OfflineVideoNotice video={currentVideo} onClose={onClose} />;
   }
 
@@ -829,7 +1015,7 @@ export default function ShortsPlayerModal({
                 ref={(el) => {
                   activeNativeVideoRef.current = el;
                 }}
-                src={rawUrl}
+                src={effectiveDirectUrl}
                 poster={activePosterUrl}
                 playsInline
                 autoPlay
@@ -837,6 +1023,10 @@ export default function ShortsPlayerModal({
                 loop
                 preload="auto"
                 className="w-full h-full object-cover pointer-events-none select-none"
+                onLoadedData={() => {
+                  setIsSlideReady(true);
+                  setIsBuffering(false);
+                }}
                 onPlaying={() => {
                   setIsSlideReady(true);
                   setIsBuffering(false);
@@ -851,10 +1041,20 @@ export default function ShortsPlayerModal({
                 }}
               />
             ) : activeVidId ? (
-              <div
-                ref={ytHostRef}
-                className="w-full h-[128%] -my-[14%] pointer-events-none select-none overflow-hidden"
-              />
+              <>
+                <div
+                  ref={ytHostRef}
+                  className="w-full h-[128%] -my-[14%] pointer-events-none select-none overflow-hidden"
+                />
+                {ytEmbedError && (
+                  <iframe
+                    src={`https://www.youtube-nocookie.com/embed/${activeVidId}?autoplay=1&loop=1&playlist=${activeVidId}&playsinline=1&rel=0&modestbranding=1`}
+                    title={currentVideo?.title || "Short"}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    className="absolute inset-0 w-full h-full border-0 z-[5]"
+                  />
+                )}
+              </>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-white/50 p-6 text-center">
                 <Tv className="w-12 h-12 mb-3 opacity-40" />
@@ -999,6 +1199,27 @@ export default function ShortsPlayerModal({
             )}
           </button>
 
+          {/* Playback Speed Button (1x / 1.25x / 1.5x / 2x) */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const speeds = [1, 1.25, 1.5, 2];
+              const nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+              setPlaybackSpeed(nextSpeed);
+              if (activeNativeVideoRef.current) {
+                activeNativeVideoRef.current.playbackRate = nextSpeed;
+              }
+              try {
+                ytPlayerRef.current?.setPlaybackRate?.(nextSpeed);
+              } catch {}
+            }}
+            title={t.speedLabel || "السرعة"}
+            className="w-11 h-11 rounded-full bg-black/65 hover:bg-black/85 text-white border border-white/20 flex items-center justify-center shadow-lg active:scale-90 transition-all text-[11px] font-mono font-bold"
+          >
+            {playbackSpeed}x
+          </button>
+
           {/* Favorite / Like Button */}
           <button
             type="button"
@@ -1011,6 +1232,38 @@ export default function ShortsPlayerModal({
             }`}
           >
             <Heart className={`w-5 h-5 ${isFav ? "fill-current" : ""}`} />
+          </button>
+
+          {/* Offline Download Button */}
+          <button
+            type="button"
+            onClick={handleToggleOfflineDownload}
+            disabled={isDownloadingOffline}
+            title={
+              isSavedOffline
+                ? t.removeOfflineVideoTip || "محفوظ للمشاهدة بلا نت (اضغط للإزالة)"
+                : t.downloadOfflineVideoTip || "تحميل لمشاهدته بلا إنترنت"
+            }
+            className={`w-11 h-11 rounded-full border flex flex-col items-center justify-center shadow-lg active:scale-90 transition-all ${
+              isSavedOffline
+                ? "bg-emerald-600 border-emerald-400 text-white"
+                : isDownloadingOffline
+                ? "bg-purple-600 border-purple-400 text-white"
+                : "bg-black/65 hover:bg-black/85 border-white/20 text-white"
+            }`}
+          >
+            {isDownloadingOffline ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-[9px] font-mono font-bold leading-none mt-0.5">
+                  {offlineDownloadPct}%
+                </span>
+              </>
+            ) : isSavedOffline ? (
+              <Check className="w-5 h-5" />
+            ) : (
+              <Download className="w-5 h-5" />
+            )}
           </button>
 
           {/* Share Button */}

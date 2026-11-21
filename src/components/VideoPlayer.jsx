@@ -440,6 +440,7 @@ export default function VideoPlayer({ video, onClose, playlist = [], onSelectVid
           disablekb: 1,
           enablejsapi: 1,
           start: savedStart > 0 ? savedStart : 0,
+          origin: typeof window !== "undefined" ? window.location.origin : undefined,
         },
         events: {
           onReady: (e) => {

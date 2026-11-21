@@ -4,12 +4,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { sendOtp, verifyOtp, sendContactEmail, logSmtpStatusOnStart } from './server/otpManager';
+import { intelligentReaderRouter } from './server/intelligentReaderRouter';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '18mb' }));
+  app.use('/api/reader', intelligentReaderRouter);
 
   // CORS: the Android app (Capacitor) loads pages from https://localhost or capacitor://localhost,
   // so its requests to this server are cross-origin.

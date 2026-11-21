@@ -10,6 +10,7 @@ import PageLogoLoader from "@/components/PageLogoLoader";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { inspectPdfFileForBook } from "@/lib/pdfLoader";
 
 const categoryOptions = [
   "القرآن وعلومه",
@@ -31,6 +32,7 @@ const emptyBook = {
   pages_count: "",
   language: "اورد",
   pdf_url: "",
+  toc: [],
   is_featured: false,
   rating: 0,
 };
@@ -62,8 +64,23 @@ export default function Admin() {
     setDialogOpen(true);
   };
 
+  const parseTocList = (rawToc) => {
+    if (!rawToc) return [];
+    if (Array.isArray(rawToc)) return rawToc.filter((x) => x && !x.isAuto);
+    if (typeof rawToc === "string") {
+      try {
+        const parsed = JSON.parse(rawToc);
+        return Array.isArray(parsed) ? parsed.filter((x) => x && !x.isAuto) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
   const openEdit = (book) => {
     setEditingBook(book);
+    const realToc = parseTocList(book.toc);
     setForm({
       title: book.title || "",
       author: book.author || "",
@@ -73,6 +90,7 @@ export default function Admin() {
       pages_count: book.pages_count || "",
       language: book.language || "اورد",
       pdf_url: book.pdf_url || "",
+      toc: realToc,
       is_featured: book.is_featured || false,
       rating: book.rating || 0,
     });
@@ -80,13 +98,24 @@ export default function Admin() {
   };
 
   const handleSave = async () => {
-    if (!form.title || !form.author || !form.category) {
-      toast.error("يرجى ملء الحقول المطلوبة");
+    const cleanTitle = (form.title || "").trim();
+    if (!cleanTitle) {
+      toast.error("يرجى إدخال عنوان الكتاب");
       return;
     }
+    if (uploadingPdf || uploadingCover) {
+      toast.info("يرجى الانتظار لحظة حتى يكتمل رفع الملف...");
+      return;
+    }
+    const cleanAuthor = (form.author || "").trim() || "دار التوحيد";
     setSaving(true);
+    const cleanToc = parseTocList(form.toc);
     const data = {
       ...form,
+      title: cleanTitle,
+      author: cleanAuthor,
+      category: form.category || "القرآن وعلومه",
+      toc: cleanToc,
       pages_count: form.pages_count ? Number(form.pages_count) : null,
       rating: Number(form.rating) || 0,
     };
@@ -131,18 +160,55 @@ export default function Admin() {
     else setUploadingPdf(true);
 
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      const derivedTitle =
+        type !== "cover"
+          ? file.name.replace(/\.pdf$/i, "").replace(/[-_+]+/g, " ").trim()
+          : "";
+      if (derivedTitle) {
+        setForm((prev) => ({ ...prev, title: prev.title || derivedTitle }));
+      }
+
+      const uploadRes = await base44.integrations.Core.UploadFile({ file });
+      const file_url = uploadRes?.file_url || uploadRes?.url || "";
+      if (!file_url) throw new Error("تعذر إنشاء رابط الملف");
+
       if (type === "cover") {
         setForm((prev) => ({ ...prev, cover_image: file_url }));
+        setUploadingCover(false);
+        toast.success("تم رفع الغلاف ✓");
       } else {
-        setForm((prev) => ({ ...prev, pdf_url: file_url }));
+        setForm((prev) => ({
+          ...prev,
+          title: prev.title || derivedTitle,
+          pdf_url: file_url,
+        }));
+        setUploadingPdf(false);
+        toast.success("تم رفع ملف PDF بنجاح ✓");
+
+        Promise.race([
+          inspectPdfFileForBook(file),
+          new Promise((resolve) => setTimeout(() => resolve({ numPages: 0, outline: [] }), 4500)),
+        ])
+          .then((extractedMeta) => {
+            if (!extractedMeta) return;
+            setForm((prev) => ({
+              ...prev,
+              toc: Array.isArray(extractedMeta.outline) ? extractedMeta.outline : prev.toc || [],
+              pages_count:
+                prev.pages_count ||
+                (extractedMeta.numPages > 0 ? String(extractedMeta.numPages) : ""),
+            }));
+            if (extractedMeta.outline?.length > 0) {
+              toast.success(`تم استخراج الفهرس الأصلي (${extractedMeta.outline.length} قسم) ✓`);
+            }
+          })
+          .catch(() => {});
       }
-      toast.success("تم الرفع ✓");
     } catch (err) {
       toast.error("فشل الرفع: " + (err?.message || "خطأ غير معروف"));
-    } finally {
       if (type === "cover") setUploadingCover(false);
       else setUploadingPdf(false);
+    } finally {
       e.target.value = "";
     }
   };

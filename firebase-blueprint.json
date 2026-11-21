@@ -17,6 +17,7 @@
         "is_featured": { "type": "boolean" },
         "rating": { "type": "number" },
         "status": { "type": "string", "maxLength": 50 },
+        "toc": { "type": "string", "maxLength": 150000 },
         "created_date": { "type": "string", "maxLength": 64 },
         "updated_date": { "type": "string", "maxLength": 64 },
         "created_by": { "type": "string", "maxLength": 256 }

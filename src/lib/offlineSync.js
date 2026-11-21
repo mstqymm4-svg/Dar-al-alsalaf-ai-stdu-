@@ -92,7 +92,10 @@ export async function downloadBookPdf(book, onProgress) {
   if (existing) return { alreadyCached: true, size: existing.size };
 
   if (String(book.pdf_url).startsWith("firestore://book_files/")) {
-    const buffer = await fetchFirestorePdfBuffer(book.pdf_url, onProgress);
+    const buffer = await fetchFirestorePdfBuffer(book.pdf_url, onProgress, {
+      bookId: book.id,
+      title: book.title,
+    });
     await db.cachePdf(book.pdf_url, buffer, book.id, book.title);
     return { alreadyCached: false, size: buffer.byteLength };
   }
@@ -344,11 +347,16 @@ export async function syncPendingFavorites(userEmail) {
  * Get all books — from fast memory/cache + background sync.
  */
 export async function getBooks() {
+  let list = [];
   try {
-    return await entities.Book.list('-created_date', 1000);
-  } catch(e) {
-    return db.getCachedBooks();
+    list = (await entities.Book.list('-created_date', 1000)) || [];
+  } catch (e) {
+    list = [];
   }
+  if (!Array.isArray(list) || list.length === 0) {
+    list = (await db.getCachedBooks()) || [];
+  }
+  return list;
 }
 
 /**
@@ -368,15 +376,33 @@ export async function getRecentBooks() {
 }
 
 /**
- * Get a single book by id (instant lookup via memory/IndexedDB, fallback to server).
+ * Get a single book by id (instant lookup via memory/IndexedDB, fallback to server, and auto-recover pdf_url from cached PDFs if needed).
  */
 export async function getBook(id) {
   if (!id) return null;
+  let book = null;
   try {
-    const book = await entities.Book.get(id);
-    if (book) return book;
-  } catch(e) {}
-  return db.getCachedBook(id);
+    book = await entities.Book.get(id);
+  } catch (e) {}
+  if (!book) {
+    book = await db.getCachedBook(id);
+  }
+  if (!book) {
+    const allBooks = await db.getCachedBooks().catch(() => []);
+    book = (allBooks || []).find((b) => String(b?.id) === String(id)) || null;
+  }
+  if (book && !book.pdf_url && !book.file_url && !book.url) {
+    try {
+      const cachedPdf = await db.findCachedPdfForBook({
+        bookId: book.id,
+        title: book.title,
+      });
+      if (cachedPdf?.url) {
+        book = { ...book, pdf_url: cachedPdf.url };
+      }
+    } catch {}
+  }
+  return book;
 }
 
 /**

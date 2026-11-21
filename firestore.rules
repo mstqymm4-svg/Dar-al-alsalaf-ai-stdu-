@@ -38,7 +38,7 @@ service cloud.firestore {
         data.keys().hasOnly([
           'id', 'title', 'author', 'category', 'description', 'cover_image',
           'pdf_url', 'pages_count', 'language', 'is_featured', 'rating',
-          'status', 'created_date', 'updated_date', 'created_by'
+          'status', 'toc', 'created_date', 'updated_date', 'created_by'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
         data.title is string && data.title.size() >= 1 && data.title.size() <= 500 &&
@@ -52,6 +52,7 @@ service cloud.firestore {
         (!('is_featured' in data) || data.is_featured is bool) &&
         (!('rating' in data) || data.rating is number) &&
         (!('status' in data) || (data.status is string && data.status.size() <= 50)) &&
+        (!('toc' in data) || (data.toc is string && data.toc.size() <= 150000) || (data.toc is list && data.toc.size() <= 500)) &&
         data.created_date is string && data.created_date.size() <= 64 &&
         data.updated_date is string && data.updated_date.size() <= 64 &&
         (!('created_by' in data) || (data.created_by is string && data.created_by.size() <= 256));
@@ -222,7 +223,7 @@ service cloud.firestore {
         incoming().diff(existing()).affectedKeys().hasOnly([
           'title', 'author', 'category', 'description', 'cover_image',
           'pdf_url', 'pages_count', 'language', 'is_featured', 'rating',
-          'status', 'updated_date', 'created_by'
+          'status', 'toc', 'updated_date', 'created_by'
         ]);
       allow delete: if isValidId(bookId);
     }

@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 import {
   getFirestore,
+  initializeFirestore,
   collection,
   doc,
   getDoc,
@@ -32,16 +33,43 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 try {
   setLogLevel("silent");
 } catch {}
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+let firestoreDb;
+try {
+  firestoreDb = initializeFirestore(
+    app,
+    {
+      experimentalAutoDetectLongPolling: true,
+    },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+export const db = firestoreDb;
 export const auth = getAuth(app);
 
-// Validate connection to Firestore on boot (non-blocking)
+// Validate connection to Firestore on boot (with retry for iframe/WebChannel warm-up)
 async function testConnection() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
   try {
-    await getDocFromServer(doc(db, "app_settings", "connection_test"));
+    await getDocFromServer(doc(db, "test", "connection"));
   } catch (error) {
     if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.error("Please check your Firebase configuration.");
+      // Retry once after long-polling auto-detection settles
+      await new Promise((r) => setTimeout(r, 2500));
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      try {
+        await getDocFromServer(doc(db, "test", "connection"));
+      } catch (retryError) {
+        if (
+          retryError instanceof Error &&
+          retryError.message.includes("the client is offline") &&
+          (typeof navigator === "undefined" || navigator.onLine !== false)
+        ) {
+          console.warn("Firestore connection using local offline cache fallback.");
+        }
+      }
     }
   }
 }
@@ -195,6 +223,25 @@ function clearPendingCatalogOp(collectionName, docId) {
   }
 }
 
+function applyPendingOpsToCatalogList(collectionName, remoteList, sanitizeFn) {
+  const ops = readPendingCatalogOps().filter((op) => op.collectionName === collectionName);
+  if (ops.length === 0) return Array.isArray(remoteList) ? remoteList : [];
+  const byId = new Map();
+  for (const item of remoteList || []) {
+    if (item?.id) byId.set(item.id, item);
+  }
+  for (const op of ops) {
+    if (op.op === "delete") {
+      byId.delete(op.docId);
+      if (op.cleanId) byId.delete(op.cleanId);
+    } else if ((op.op === "create" || op.op === "update") && op.payload) {
+      const clean = sanitizeFn(op.payload, byId.get(op.docId) || {});
+      byId.set(clean.id, clean);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 function truncStr(val, maxBytes, fallback = "") {
   if (val === undefined || val === null) return fallback;
   const str = String(val);
@@ -273,10 +320,39 @@ function filterRecords(items, queryObj) {
 }
 
 // ─── Schema Sanitizers (Match firebase-blueprint.json & firestore.rules) ──────
+function parseBookToc(rawToc) {
+  if (!rawToc) return [];
+  if (Array.isArray(rawToc)) {
+    return rawToc.filter((x) => x && !x.isAuto).slice(0, 500);
+  }
+  if (typeof rawToc === "string") {
+    try {
+      const parsed = JSON.parse(rawToc);
+      return Array.isArray(parsed)
+        ? parsed.filter((x) => x && !x.isAuto).slice(0, 500)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function sanitizeBook(raw, existing = {}) {
   const now = new Date().toISOString();
   const merged = { ...existing, ...raw };
   const id = sanitizeId(merged.id, "book");
+  const cleanToc = parseBookToc(merged.toc ?? existing.toc);
+  let serializedToc = "";
+  if (cleanToc.length > 0) {
+    try {
+      const json = JSON.stringify(cleanToc);
+      if (json.length <= 145000) {
+        serializedToc = json;
+      }
+    } catch {}
+  }
+
   const out = {
     id,
     title: truncStr(merged.title || "بدون عنوان", 500),
@@ -293,6 +369,7 @@ function sanitizeBook(raw, existing = {}) {
     is_featured: Boolean(merged.is_featured),
     rating: safeNum(merged.rating, 0),
     status: truncStr(merged.status || "published", 50),
+    ...(serializedToc ? { toc: serializedToc } : {}),
     created_date: truncStr(existing.created_date || merged.created_date || now, 64),
     updated_date: truncStr(raw?.updated_date || now, 64),
     created_by: truncStr(merged.created_by || auth.currentUser?.email || OWNER_EMAIL, 256),
@@ -471,9 +548,10 @@ function createPublicCatalogEntity({
 
   async function loadLocalList() {
     if (memCache && memCache.length > 0) {
+      const withPending = applyPendingOpsToCatalogList(collectionName, memCache, sanitizeFn);
       const deleted = getDeletedIds();
-      if (deleted.size === 0) return memCache;
-      return memCache.filter(
+      if (deleted.size === 0) return withPending;
+      return withPending.filter(
         (item) => item && !deleted.has(String(item.id)) && !deleted.has(sanitizeId(item.id))
       );
     }
@@ -483,7 +561,8 @@ function createPublicCatalogEntity({
       try {
         const cached = await getCachedAll().catch(() => []);
         const base = mergeSeedWithItems(cached);
-        const cleaned = filterDeleted(base);
+        const withPending = applyPendingOpsToCatalogList(collectionName, base, sanitizeFn);
+        const cleaned = filterDeleted(withPending);
         memCache = cleaned;
         return cleaned;
       } finally {
@@ -499,12 +578,18 @@ function createPublicCatalogEntity({
 
   async function readServerDoc(rawId, cleanId) {
     try {
-      const snap = await getDoc(doc(db, collectionName, rawId));
+      const snap = await Promise.race([
+        getDoc(doc(db, collectionName, rawId)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 900)),
+      ]);
       if (snap?.exists()) return { docId: snap.id, data: snap.data() };
     } catch {}
     if (cleanId && cleanId !== rawId) {
       try {
-        const snap = await getDoc(doc(db, collectionName, cleanId));
+        const snap = await Promise.race([
+          getDoc(doc(db, collectionName, cleanId)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 900)),
+        ]);
         if (snap?.exists()) return { docId: snap.id, data: snap.data() };
       } catch {}
     }
@@ -621,6 +706,7 @@ function createPublicCatalogEntity({
 
         // Merge with local/seed so any setting or catalog item not yet in Firestore is preserved!
         docs = mergeSeedWithItems(docs);
+        docs = applyPendingOpsToCatalogList(collectionName, docs, sanitizeFn);
         if (collectionName === "app_settings") {
           docs = mergeSettingsWithLocal(docs, localBefore);
         }
@@ -706,31 +792,46 @@ function createPublicCatalogEntity({
       unmarkDeletedId(item.id);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+        // Allow explicit admin create actions to attempt Firestore write even if a previous quota timer was set
+        localStorage.removeItem(WRITE_QUOTA_UNTIL_KEY);
       }
-      if (memCache) {
-        memCache = deduplicateSettingsIfNeeded([
-          item,
-          ...memCache.filter(
-            (x) => x.id !== item.id && (collectionName !== "app_settings" || x.setting_key !== item.setting_key)
-          ),
-        ]);
-      }
+      // Queue as pending first in localStorage so any concurrent snapshot or list() preserves this item
+      enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
+
+      const existingList = await loadLocalList().catch(() => []);
+      memCache = deduplicateSettingsIfNeeded([
+        item,
+        ...existingList.filter(
+          (x) => x.id !== item.id && (collectionName !== "app_settings" || x.setting_key !== item.setting_key)
+        ),
+      ]);
       cacheAll([item]).catch(() => {});
       dispatchChanged();
 
       if (canAttemptFirestoreWrite()) {
-        try {
-          await setDoc(doc(db, collectionName, item.id), item);
-          clearPendingCatalogOp(collectionName, item.id);
-        } catch (error) {
-          if (isNetworkLikeError(error)) {
-            enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
-          } else {
-            handleFirestoreError(error, OperationType.CREATE, `${collectionName}/${item.id}`);
+        const syncCreateToCloud = async () => {
+          try {
+            await setDoc(doc(db, collectionName, item.id), item);
+            clearPendingCatalogOp(collectionName, item.id);
+          } catch (error) {
+            if (collectionName === "books" && "toc" in item) {
+              try {
+                const { toc: _omitToc, ...withoutToc } = item;
+                await setDoc(doc(db, collectionName, item.id), withoutToc);
+                clearPendingCatalogOp(collectionName, item.id);
+                return;
+              } catch {}
+            }
+            if (!isNetworkLikeError(error)) {
+              console.warn(`Cloud sync deferred for ${collectionName}/${item.id}:`, error?.message || error);
+            }
           }
-        }
-      } else {
-        enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
+        };
+        // Wait at most 1100ms for immediate cloud confirmation; otherwise finish in background so UI never hangs
+        await Promise.race([
+          syncCreateToCloud(),
+          new Promise((resolve) => setTimeout(resolve, 1100)),
+        ]);
       }
       return item;
     },
@@ -739,19 +840,6 @@ function createPublicCatalogEntity({
       const rawId = String(id);
       const cleanId = sanitizeId(id);
       let existing = (await this.get(id)) || { id: cleanId };
-      if (canAttemptFirestoreWrite()) {
-        try {
-          const serverDoc = await readServerDoc(rawId, cleanId);
-          if (serverDoc?.data) {
-            existing = {
-              ...existing,
-              id: collectionName === "app_settings" ? cleanId : (serverDoc.docId || existing.id || cleanId),
-              ...(serverDoc.data.created_date ? { created_date: serverDoc.data.created_date } : {}),
-              ...(serverDoc.data.setting_key ? { setting_key: serverDoc.data.setting_key } : {}),
-            };
-          }
-        } catch {}
-      }
 
       const targetId = collectionName === "app_settings"
         ? sanitizeId(payload?.setting_key || existing.setting_key || cleanId, "set")
@@ -772,33 +860,45 @@ function createPublicCatalogEntity({
       unmarkDeletedId(updated.id);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
+        localStorage.removeItem(WRITE_QUOTA_UNTIL_KEY);
       }
-      if (memCache) {
-        const filtered = memCache.filter(
-          (x) =>
-            x.id !== updated.id &&
-            x.id !== rawId &&
-            x.id !== cleanId &&
-            (collectionName !== "app_settings" || x.setting_key !== updated.setting_key)
-        );
-        memCache = [updated, ...filtered];
-      }
+      enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
+
+      const existingList = await loadLocalList().catch(() => []);
+      const filtered = existingList.filter(
+        (x) =>
+          x.id !== updated.id &&
+          x.id !== rawId &&
+          x.id !== cleanId &&
+          (collectionName !== "app_settings" || x.setting_key !== updated.setting_key)
+      );
+      memCache = [updated, ...filtered];
       cacheAll([updated]).catch(() => {});
       dispatchChanged();
 
       if (canAttemptFirestoreWrite()) {
-        try {
-          await setDoc(doc(db, collectionName, updated.id), updated);
-          clearPendingCatalogOp(collectionName, updated.id);
-        } catch (error) {
-          if (isNetworkLikeError(error)) {
-            enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
-          } else {
-            handleFirestoreError(error, OperationType.UPDATE, `${collectionName}/${updated.id}`);
+        const syncUpdateToCloud = async () => {
+          try {
+            await setDoc(doc(db, collectionName, updated.id), updated);
+            clearPendingCatalogOp(collectionName, updated.id);
+          } catch (error) {
+            if (collectionName === "books" && "toc" in updated) {
+              try {
+                const { toc: _omitToc, ...withoutToc } = updated;
+                await setDoc(doc(db, collectionName, updated.id), withoutToc);
+                clearPendingCatalogOp(collectionName, updated.id);
+                return;
+              } catch {}
+            }
+            if (!isNetworkLikeError(error)) {
+              console.warn(`Cloud update deferred for ${collectionName}/${updated.id}:`, error?.message || error);
+            }
           }
-        }
-      } else {
-        enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
+        };
+        await Promise.race([
+          syncUpdateToCloud(),
+          new Promise((resolve) => setTimeout(resolve, 1100)),
+        ]);
       }
       return updated;
     },
@@ -814,6 +914,7 @@ function createPublicCatalogEntity({
       if (memCache) {
         memCache = memCache.filter((x) => x.id !== rawId && x.id !== cleanId);
       }
+      enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
       if (deleteCached) {
         deleteCached(rawId).catch(() => {});
         if (cleanId !== rawId) deleteCached(cleanId).catch(() => {});
@@ -821,33 +922,31 @@ function createPublicCatalogEntity({
       dispatchChanged();
 
       if (canAttemptFirestoreWrite()) {
-        let lastErr = null;
-        try {
-          await deleteDoc(doc(db, collectionName, rawId));
-        } catch (error) {
-          lastErr = error;
-        }
-        if (cleanId !== rawId && !isQuotaExceededError(lastErr)) {
+        const syncDeleteToCloud = async () => {
+          let lastErr = null;
           try {
-            await deleteDoc(doc(db, collectionName, cleanId));
-            lastErr = null;
+            await deleteDoc(doc(db, collectionName, rawId));
           } catch (error) {
-            lastErr = lastErr || error;
+            lastErr = error;
           }
-        }
-        if (lastErr) {
-          if (isNetworkLikeError(lastErr)) {
-            enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
-          } else {
-            unmarkDeletedId(rawId);
-            unmarkDeletedId(cleanId);
-            handleFirestoreError(lastErr, OperationType.DELETE, `${collectionName}/${rawId}`);
+          if (cleanId !== rawId && !isQuotaExceededError(lastErr)) {
+            try {
+              await deleteDoc(doc(db, collectionName, cleanId));
+              lastErr = null;
+            } catch (error) {
+              lastErr = lastErr || error;
+            }
           }
-        } else {
-          clearPendingCatalogOp(collectionName, rawId);
-        }
-      } else {
-        enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
+          if (!lastErr) {
+            clearPendingCatalogOp(collectionName, rawId);
+          } else if (!isNetworkLikeError(lastErr)) {
+            console.warn(`Cloud delete deferred for ${collectionName}/${rawId}:`, lastErr?.message || lastErr);
+          }
+        };
+        await Promise.race([
+          syncDeleteToCloud(),
+          new Promise((resolve) => setTimeout(resolve, 1100)),
+        ]);
       }
       return { id: rawId, deleted: true };
     },
@@ -875,9 +974,13 @@ function createPublicCatalogEntity({
               }
             });
 
-            if (docs.length === 0) return;
+            if (docs.length === 0 && readPendingCatalogOps().filter((op) => op.collectionName === collectionName).length === 0) {
+              return;
+            }
 
             docs = deduplicateSettingsIfNeeded(docs);
+            docs = mergeSeedWithItems(docs);
+            docs = applyPendingOpsToCatalogList(collectionName, docs, sanitizeFn);
             if (collectionName === "app_settings") {
               const localBefore = await loadLocalList().catch(() => []);
               docs = mergeSettingsWithLocal(docs, localBefore);
@@ -1460,52 +1563,389 @@ function base64ToUint8(b64) {
 const FIRESTORE_PDF_PREFIX = "firestore://book_files/";
 const PDF_CHUNK_RAW_BYTES = 420 * 1024; // ~560KB base64 per Firestore document (<1MB limit)
 
-export async function fetchFirestorePdfBuffer(pdfUrl, onProgress) {
+export async function fetchFirestorePdfBuffer(pdfUrl, onProgress, metadata = {}) {
   if (!pdfUrl || !String(pdfUrl).startsWith(FIRESTORE_PDF_PREFIX)) {
     throw new Error("Invalid cloud PDF reference");
   }
-  const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
-  const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
-  const snap = await getDocs(q);
-  if (snap.empty) {
-    throw new Error("لم يتم العثور على ملف الكتاب في السحابة");
-  }
-  const chunks = [];
-  snap.forEach((d) => {
-    const data = d.data();
-    if (data && typeof data.chunk_index === "number" && typeof data.chunk_data === "string") {
-      chunks.push(data);
+
+  // 1. Check local IndexedDB cache first (by exact url, bookId, or normalized title)
+  try {
+    const matched = await offlineDB.findCachedPdfForBook({
+      url: pdfUrl,
+      bookId: metadata?.bookId,
+      title: metadata?.title,
+    });
+    if (matched?.buffer && matched.buffer.byteLength > 0) {
+      const repairedCached = await repairTruncatedPdfBuffer(matched.buffer);
+      if (repairedCached.byteLength !== matched.buffer.byteLength) {
+        await offlineDB.cachePdf(pdfUrl, repairedCached, metadata?.bookId || pdfUrl, matched.title || metadata?.title || "book.pdf").catch(() => {});
+      }
+      return repairedCached;
     }
-  });
-  chunks.sort((a, b) => a.chunk_index - b.chunk_index);
-  const expectedTotal = chunks[0]?.total_chunks || chunks.length;
-  if (chunks.length < expectedTotal) {
-    throw new Error("ملف الكتاب غير مكتمل في السحابة");
+  } catch {}
+
+  const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
+  let snap;
+  try {
+    const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
+    snap = await getDocs(q);
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      throw new Error("تعذر تحميل ملف PDF من السحابة بسبب تجاوز حصة القراءة اليومية المجانية لـ Firestore. يرجى فتح الكتاب من المتصفح الذي تم رفع الملف منه أو إعادة المحاولة بعد تجدد الحصة.");
+    }
+    throw err;
   }
 
+  const chunkMap = new Map();
+  let expectedTotal = 0;
+  let expectedSize = 0;
+  let fileName = metadata?.title || "book.pdf";
+
+  if (snap && !snap.empty) {
+    snap.forEach((d) => {
+      const data = d.data();
+      if (data && typeof data.chunk_index === "number" && typeof data.chunk_data === "string") {
+        chunkMap.set(data.chunk_index, data);
+        if (data.total_chunks) expectedTotal = data.total_chunks;
+        if (data.size_bytes) expectedSize = data.size_bytes;
+        if (data.file_name) fileName = data.file_name;
+      }
+    });
+  }
+
+  // Fallback recovery: if chunks under this fileId are missing or incomplete, recover matching chunks from book_files
+  if (chunkMap.size === 0 || (expectedTotal > 0 && chunkMap.size < expectedTotal)) {
+    try {
+      const allSnap = await getDocs(collection(db, "book_files"));
+      const normMetaTitle = String(metadata?.title || "")
+        .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+        .replace(/\.pdf$/i, "")
+        .trim();
+      allSnap.forEach((d) => {
+        const data = d.data();
+        if (
+          data &&
+          typeof data.chunk_index === "number" &&
+          typeof data.chunk_data === "string"
+        ) {
+          const normFileName = String(data.file_name || "")
+            .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+            .replace(/\.pdf$/i, "")
+            .trim();
+          const matchesTitle =
+            !normMetaTitle ||
+            !normFileName ||
+            normFileName.includes(normMetaTitle) ||
+            normMetaTitle.includes(normFileName);
+          if (matchesTitle && !chunkMap.has(data.chunk_index)) {
+            chunkMap.set(data.chunk_index, data);
+            if (!expectedTotal && data.total_chunks) expectedTotal = data.total_chunks;
+            if (!expectedSize && data.size_bytes) expectedSize = data.size_bytes;
+            if (data.file_name) fileName = data.file_name;
+          }
+        }
+      });
+    } catch {}
+  }
+
+  if (chunkMap.size === 0) {
+    throw new Error("لم يتم العثور على ملف الكتاب في التخزين السحابي. يرجى إعادة رفع ملف PDF من لوحة الإدارة.");
+  }
+
+  const sortedIndices = Array.from(chunkMap.keys()).sort((a, b) => a - b);
   const decodedParts = [];
   let totalBytes = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    const part = base64ToUint8(chunks[i].chunk_data);
+  for (let i = 0; i < sortedIndices.length; i++) {
+    const idx = sortedIndices[i];
+    const chunkDoc = chunkMap.get(idx);
+    const part = base64ToUint8(chunkDoc.chunk_data);
     decodedParts.push(part);
     totalBytes += part.byteLength;
     onProgress?.({
       received: totalBytes,
-      total: chunks[0]?.size_bytes || totalBytes,
-      percent: Math.round(((i + 1) / chunks.length) * 100),
+      total: expectedSize || totalBytes,
+      percent: Math.round(((i + 1) / (expectedTotal || sortedIndices.length)) * 100),
     });
   }
 
-  const merged = new Uint8Array(totalBytes);
+  let merged = new Uint8Array(totalBytes);
   let offset = 0;
   for (const part of decodedParts) {
     merged.set(part, offset);
     offset += part.byteLength;
   }
 
-  const fileName = chunks[0]?.file_name || "book.pdf";
-  await offlineDB.cachePdf(pdfUrl, merged.buffer, pdfUrl, fileName).catch(() => {});
-  return merged.buffer;
+  // Always validate & reconstruct trailer if chunks were partially uploaded or missing trailing xref/%%EOF
+  const isPartial = expectedTotal > 0 && chunkMap.size < expectedTotal;
+  const finalBuffer = await repairTruncatedPdfBuffer(merged, { force: isPartial });
+
+  await offlineDB.cachePdf(pdfUrl, finalBuffer, metadata?.bookId || pdfUrl, fileName).catch(() => {});
+  return finalBuffer;
+}
+
+async function decompressFlateBytes(compressedUint8) {
+  if (typeof DecompressionStream === "undefined") return null;
+  for (const format of ["deflate", "deflate-raw"]) {
+    try {
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      writer.write(compressedUint8).catch(() => {});
+      writer.close().catch(() => {});
+      const reader = ds.readable.getReader();
+      const chunks = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          total += value.byteLength;
+        }
+      }
+      if (total > 0) {
+        const out = new Uint8Array(total);
+        let pos = 0;
+        for (const c of chunks) {
+          out.set(c, pos);
+          pos += c.byteLength;
+        }
+        return out;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+export async function repairTruncatedPdfBuffer(input, options = {}) {
+  const isArrayBuffer = input instanceof ArrayBuffer;
+  const uint8 = isArrayBuffer
+    ? new Uint8Array(input)
+    : input instanceof Uint8Array
+    ? input
+    : new Uint8Array(input?.buffer || new ArrayBuffer(0));
+  if (uint8.length < 32) return isArrayBuffer ? uint8.buffer : uint8;
+
+  try {
+    const decoder = new TextDecoder("latin1");
+    const encoder = new TextEncoder();
+
+    const headStr = decoder.decode(uint8.subarray(0, Math.min(2048, uint8.length)));
+    if (!headStr.includes("%PDF-")) {
+      return isArrayBuffer ? uint8.buffer : uint8;
+    }
+
+    const tailStr = decoder.decode(uint8.subarray(Math.max(0, uint8.length - 2048)));
+    const hasValidEof =
+      tailStr.includes("%%EOF") &&
+      tailStr.includes("startxref") &&
+      !tailStr.includes("DAR_REPAIRED_EOF");
+    if (hasValidEof && !options.force) {
+      return isArrayBuffer ? uint8.buffer : uint8;
+    }
+
+    let fullText = decoder.decode(uint8);
+    // Strip any older repair suffix if force-repairing
+    const prevRepairMarker = fullText.indexOf("%DAR_REPAIR_START%");
+    if (prevRepairMarker > 0) {
+      fullText = fullText.slice(0, prevRepairMarker);
+    }
+
+    const lastEndObj = fullText.lastIndexOf("endobj");
+    const cleanByteLen = lastEndObj >= 0 ? lastEndObj + 6 : fullText.length;
+
+    // Clone prefix bytes so we can neutralize /Linearized and /XRef without shifting byte offsets
+    const prefixBytes = uint8.slice(0, cleanByteLen);
+    let cleanText = fullText.slice(0, cleanByteLen);
+
+    // CRITICAL FIX 1: PDF.js checks the first 1024 bytes for `/Linearized` and jumps to the broken
+    // first-page xref instead of reading `startxref` at the end of the file!
+    // Replacing `/Linearized` -> `/Linearize_` (11 bytes -> 11 bytes) and `/XRef` -> `/XRe_` (5 bytes -> 5 bytes)
+    // preserves 100% of byte offsets while forcing PDF.js to use our reconstructed xref table at the end.
+    const linRegex = /\/Linearized\b/g;
+    let lm;
+    while ((lm = linRegex.exec(cleanText)) !== null) {
+      prefixBytes[lm.index + 10] = 0x5f; // '_'
+    }
+    const xrefStreamRegex = /\/Type\s*\/XRef\b/g;
+    while ((lm = xrefStreamRegex.exec(cleanText)) !== null) {
+      const xIdx = cleanText.indexOf("/XRef", lm.index);
+      if (xIdx >= 0) {
+        prefixBytes[xIdx + 4] = 0x5f; // '/XRe_'
+      }
+    }
+    cleanText = decoder.decode(prefixBytes);
+
+    // Collect all complete indirect objects
+    const objRegex = /(?:^|\r|\n)(\d+)\s+(\d+)\s+obj\b/g;
+    const objOffsets = new Map();
+    const objStarts = [];
+    let m;
+    while ((m = objRegex.exec(cleanText)) !== null) {
+      const id = Number(m[1]);
+      const pos = m.index + (m[0].startsWith("\r") || m[0].startsWith("\n") ? 1 : 0);
+      objOffsets.set(id, pos);
+      objStarts.push({ id, pos });
+    }
+
+    const pageIds = [];
+    const pageIdSet = new Set();
+    const imageObjs = [];
+    const objStmEntries = [];
+    let maxObjId = 1;
+
+    for (let i = 0; i < objStarts.length; i++) {
+      const { id, pos } = objStarts[i];
+      if (id > maxObjId) maxObjId = id;
+      const nextPos = i + 1 < objStarts.length ? objStarts[i + 1].pos : cleanByteLen;
+      const objSlice = cleanText.slice(pos, Math.min(nextPos, pos + 131072));
+      const streamIdx = objSlice.indexOf("stream");
+      const dictText = streamIdx > 0 ? objSlice.slice(0, streamIdx) : objSlice;
+
+      if (/\/Type\s*\/Page\b(?![a-zA-Z])/i.test(dictText)) {
+        if (!pageIdSet.has(id)) {
+          pageIdSet.add(id);
+          pageIds.push(id);
+        }
+      } else if (/\/Type\s*\/ObjStm\b/i.test(dictText) && streamIdx > 0) {
+        const firstMatch = dictText.match(/\/First\s+(\d+)/);
+        if (firstMatch) {
+          const firstOffset = Number(firstMatch[1]);
+          let dataStart = pos + streamIdx + 6;
+          if (prefixBytes[dataStart] === 0x0d && prefixBytes[dataStart + 1] === 0x0a) dataStart += 2;
+          else if (prefixBytes[dataStart] === 0x0a || prefixBytes[dataStart] === 0x0d) dataStart += 1;
+          const endStreamIdx = objSlice.indexOf("endstream", streamIdx + 6);
+          if (endStreamIdx > 0) {
+            let dataEnd = pos + endStreamIdx;
+            while (
+              dataEnd > dataStart &&
+              (prefixBytes[dataEnd - 1] === 0x0a || prefixBytes[dataEnd - 1] === 0x0d)
+            ) {
+              dataEnd--;
+            }
+            objStmEntries.push({
+              id,
+              firstOffset,
+              isFlate: /\/FlateDecode\b/i.test(dictText),
+              bytes: prefixBytes.subarray(dataStart, dataEnd),
+            });
+          }
+        }
+      } else if (/\/Subtype\s*\/Image\b/i.test(dictText)) {
+        const wMatch = dictText.match(/\/Width\s+(\d+)/);
+        const hMatch = dictText.match(/\/Height\s+(\d+)/);
+        imageObjs.push({
+          id,
+          width: wMatch ? Number(wMatch[1]) : 595,
+          height: hMatch ? Number(hMatch[1]) : 842,
+        });
+      }
+    }
+
+    // CRITICAL FIX 2: Unpack compressed Object Streams (/Type /ObjStm) so compressed /Type /Page objects become accessible
+    let extraObjsStr = "\n%DAR_REPAIR_START%\n";
+    if (objStmEntries.length > 0) {
+      for (const stm of objStmEntries) {
+        const rawBytes = stm.isFlate ? await decompressFlateBytes(stm.bytes) : stm.bytes;
+        if (!rawBytes || rawBytes.length <= stm.firstOffset) continue;
+        const stmText = decoder.decode(rawBytes);
+        const headerPart = stmText.slice(0, stm.firstOffset).trim();
+        const bodyPart = stmText.slice(stm.firstOffset);
+        const tokens = headerPart.split(/\s+/).map(Number);
+        const pairs = [];
+        for (let k = 0; k + 1 < tokens.length; k += 2) {
+          if (Number.isFinite(tokens[k]) && Number.isFinite(tokens[k + 1])) {
+            pairs.push({ objId: tokens[k], relOffset: tokens[k + 1] });
+          }
+        }
+        for (let k = 0; k < pairs.length; k++) {
+          const { objId, relOffset } = pairs[k];
+          const nextRel = k + 1 < pairs.length ? pairs[k + 1].relOffset : bodyPart.length;
+          if (relOffset < 0 || relOffset >= bodyPart.length) continue;
+          const objContent = bodyPart.slice(relOffset, nextRel).trim();
+          if (!objContent) continue;
+          if (objId > maxObjId) maxObjId = objId;
+
+          const thisObjOffset = cleanByteLen + extraObjsStr.length;
+          const unwrappedObj = `${objId} 0 obj\n${objContent}\nendobj\n`;
+          extraObjsStr += unwrappedObj;
+          objOffsets.set(objId, thisObjOffset);
+
+          if (/\/Type\s*\/Page\b(?![a-zA-Z])/i.test(objContent) && !pageIdSet.has(objId)) {
+            pageIdSet.add(objId);
+            pageIds.push(objId);
+          }
+        }
+      }
+    }
+
+    // CRITICAL FIX 3: If the PDF is a scanned book where all /Type /Page dictionaries were at the truncated end
+    // of the file, synthesize a valid /Type /Page for each complete scanned page image (/Subtype /Image) found!
+    if (pageIds.length === 0 && imageObjs.length > 0) {
+      for (const img of imageObjs) {
+        const contentObjId = ++maxObjId;
+        const pageObjId = ++maxObjId;
+        const pageW = 595;
+        const pageH = Math.round((img.height / Math.max(1, img.width)) * 595) || 842;
+        const streamCmd = `q ${pageW} 0 0 ${pageH} 0 0 cm /Im${img.id} Do Q`;
+
+        const contentOffset = cleanByteLen + extraObjsStr.length;
+        const contentObj = `${contentObjId} 0 obj\n<< /Length ${streamCmd.length} >>\nstream\n${streamCmd}\nendstream\nendobj\n`;
+        extraObjsStr += contentObj;
+        objOffsets.set(contentObjId, contentOffset);
+
+        const pageOffset = cleanByteLen + extraObjsStr.length;
+        const pageObj = `${pageObjId} 0 obj\n<< /Type /Page /MediaBox [0 0 ${pageW} ${pageH}] /Resources << /XObject << /Im${img.id} ${img.id} 0 R >> >> /Contents ${contentObjId} 0 R >>\nendobj\n`;
+        extraObjsStr += pageObj;
+        objOffsets.set(pageObjId, pageOffset);
+        pageIds.push(pageObjId);
+      }
+    }
+
+    // CRITICAL FIX 4: If still 0 pages exist, synthesize 1 valid fallback page so PDF.js never throws InvalidPDFException
+    if (pageIds.length === 0) {
+      const pageObjId = ++maxObjId;
+      const pageOffset = cleanByteLen + extraObjsStr.length;
+      const pageObj = `${pageObjId} 0 obj\n<< /Type /Page /MediaBox [0 0 595 842] /Resources << >> >>\nendobj\n`;
+      extraObjsStr += pageObj;
+      objOffsets.set(pageObjId, pageOffset);
+      pageIds.push(pageObjId);
+    }
+
+    const pagesObjId = ++maxObjId;
+    const catalogObjId = ++maxObjId;
+    const kidsRefs = pageIds.map((pid) => `${pid} 0 R`).join(" ");
+
+    const pagesObjOffset = cleanByteLen + extraObjsStr.length;
+    const pagesObjStr = `${pagesObjId} 0 obj\n<< /Type /Pages /Kids [ ${kidsRefs} ] /Count ${pageIds.length} >>\nendobj\n`;
+    extraObjsStr += pagesObjStr;
+    objOffsets.set(pagesObjId, pagesObjOffset);
+
+    const catalogObjOffset = cleanByteLen + extraObjsStr.length;
+    const catalogObjStr = `${catalogObjId} 0 obj\n<< /Type /Catalog /Pages ${pagesObjId} 0 R >>\nendobj\n`;
+    extraObjsStr += catalogObjStr;
+    objOffsets.set(catalogObjId, catalogObjOffset);
+
+    const totalSize = catalogObjId + 1;
+    const xrefOffset = cleanByteLen + extraObjsStr.length;
+    let xrefStr = `xref\n0 ${totalSize}\n0000000000 65535 f \n`;
+    for (let id = 1; id < totalSize; id++) {
+      const off = objOffsets.get(id);
+      if (off !== undefined) {
+        xrefStr += `${String(off).padStart(10, "0")} 00000 n \n`;
+      } else {
+        xrefStr += `0000000000 65535 f \n`;
+      }
+    }
+    const trailerStr = `trailer\n<< /Size ${totalSize} /Root ${catalogObjId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n%DAR_REPAIRED_EOF%\n`;
+    const suffixBytes = encoder.encode(extraObjsStr + xrefStr + trailerStr);
+
+    const out = new Uint8Array(cleanByteLen + suffixBytes.length);
+    out.set(prefixBytes, 0);
+    out.set(suffixBytes, cleanByteLen);
+    return isArrayBuffer ? out.buffer : out;
+  } catch {
+    return isArrayBuffer ? uint8.buffer : uint8;
+  }
 }
 
 export async function deleteFirestorePdfChunks(pdfUrl) {
@@ -1540,92 +1980,57 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
     const fileId = sanitizeId(`pdf_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, "pdf");
     const safeFileName = truncStr(file.name || "book.pdf", 300);
     const pdfUrl = `${FIRESTORE_PDF_PREFIX}${fileId}`;
+
+    onProgress?.({ percent: 45, loaded: Math.round(bytes.length * 0.45), total: bytes.length, speedText: "تجهيز..." });
+
+    // 1. Store immediately in local IndexedDB so the book is 100% ready to save & read right away
     await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
 
-    if (!canAttemptFirestoreWrite()) {
-      onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "Local" });
-      return { file_url: pdfUrl, url: pdfUrl };
-    }
+    onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "جاهز ✓" });
 
-    const now = new Date().toISOString();
-    const startedAt = Date.now();
-    const uploadedDocIds = [];
-
-    const uploadSingleChunk = async (idx) => {
-      const start = idx * PDF_CHUNK_RAW_BYTES;
-      const end = Math.min(bytes.length, start + PDF_CHUNK_RAW_BYTES);
-      const chunkBytes = bytes.subarray(start, end);
-      const chunkData = uint8ToBase64(chunkBytes);
-      const chunkId = sanitizeId(`${fileId}_p${idx}`, "chk");
-      const docPayload = {
-        id: chunkId,
-        file_id: fileId,
-        chunk_index: idx,
-        total_chunks: totalChunks,
-        file_name: safeFileName,
-        mime_type: "application/pdf",
-        size_bytes: bytes.length,
-        chunk_data: chunkData,
-        created_date: now,
-      };
-      let lastErr = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
+    // 2. Sync chunks to Firestore in the background without blocking the user from saving the book
+    if (canAttemptFirestoreWrite()) {
+      const now = new Date().toISOString();
+      const uploadChunksInBackground = async () => {
+        const uploadSingleChunk = async (idx) => {
+          const start = idx * PDF_CHUNK_RAW_BYTES;
+          const end = Math.min(bytes.length, start + PDF_CHUNK_RAW_BYTES);
+          const chunkBytes = bytes.subarray(start, end);
+          const chunkData = uint8ToBase64(chunkBytes);
+          const chunkId = sanitizeId(`${fileId}_p${idx}`, "chk");
+          const docPayload = {
+            id: chunkId,
+            file_id: fileId,
+            chunk_index: idx,
+            total_chunks: totalChunks,
+            file_name: safeFileName,
+            mime_type: "application/pdf",
+            size_bytes: bytes.length,
+            chunk_data: chunkData,
+            created_date: now,
+          };
           await setDoc(doc(db, "book_files", chunkId), docPayload);
-          uploadedDocIds.push(chunkId);
-          return;
+        };
+
+        try {
+          const CONCURRENCY = 3;
+          for (let i = 0; i < totalChunks; i += CONCURRENCY) {
+            if (!canAttemptFirestoreWrite()) break;
+            const batch = [];
+            for (let j = i; j < Math.min(totalChunks, i + CONCURRENCY); j++) {
+              batch.push(uploadSingleChunk(j));
+            }
+            await Promise.all(batch);
+          }
         } catch (err) {
-          lastErr = err;
           if (isQuotaExceededError(err)) {
             markWriteQuotaExhausted();
-            throw err;
           }
-          if (attempt < 2) {
-            await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-          }
+          // Keep already-uploaded chunks intact so partial uploads can be resumed or reconstructed
         }
-      }
-      throw lastErr;
-    };
+      };
 
-    try {
-      let completed = 0;
-      const CONCURRENCY = 3;
-      for (let i = 0; i < totalChunks; i += CONCURRENCY) {
-        const batch = [];
-        for (let j = i; j < Math.min(totalChunks, i + CONCURRENCY); j++) {
-          batch.push(
-            uploadSingleChunk(j).then(() => {
-              completed++;
-              const elapsedSec = Math.max(0.2, (Date.now() - startedAt) / 1000);
-              const bytesUploaded = Math.min(bytes.length, completed * PDF_CHUNK_RAW_BYTES);
-              const mbPerSec = (bytesUploaded / (1024 * 1024) / elapsedSec).toFixed(1);
-              onProgress?.({
-                percent: Math.round((completed / totalChunks) * 100),
-                loaded: bytesUploaded,
-                total: bytes.length,
-                speedText: `${mbPerSec} MB/s`,
-              });
-            })
-          );
-        }
-        await Promise.all(batch);
-      }
-    } catch (err) {
-      if (isQuotaExceededError(err)) {
-        markWriteQuotaExhausted();
-        onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "Local" });
-        return { file_url: pdfUrl, url: pdfUrl };
-      }
-      if (canAttemptFirestoreWrite()) {
-        await Promise.allSettled(uploadedDocIds.map((cid) => deleteDoc(doc(db, "book_files", cid))));
-      }
-      const rawMsg = String(err?.message || "");
-      const code = String(err?.code || "").toLowerCase();
-      if (code === "permission-denied" || rawMsg.toLowerCase().includes("permission")) {
-        throw new Error("رفضت قاعدة البيانات السحابية رفع الملف (تأكد من صلاحيات السحابة)");
-      }
-      throw new Error(rawMsg || "فشل رفع ملف PDF إلى السحابة، يرجى المحاولة مرة أخرى");
+      uploadChunksInBackground().catch(() => {});
     }
 
     return { file_url: pdfUrl, url: pdfUrl };

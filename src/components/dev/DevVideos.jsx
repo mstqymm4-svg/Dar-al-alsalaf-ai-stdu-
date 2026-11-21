@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import {
   Plus, Pencil, Trash2, Eye, EyeOff, Upload, Save, Youtube, Star, StarOff,
-  Video, Tv, Loader2, Sparkles, CheckCircle2, Clock, DownloadCloud, Flame
+  Video, Tv, Loader2, Sparkles, CheckCircle2, Clock, DownloadCloud, Flame, Play, CheckSquare, Square
 } from "lucide-react";
 import {
   extractYoutubeId,
@@ -22,6 +22,7 @@ import {
   fetchChannelVideos
 } from "@/lib/youtubeMeta";
 import ChannelVideosImportModal from "@/components/dev/ChannelVideosImportModal";
+import ShortsPlayerModal from "@/components/ShortsPlayerModal";
 import { getSetting, setSettings, flushAllPendingSettings } from "@/lib/settingsStore";
 
 export { extractYoutubeId, getThumbnail };
@@ -544,7 +545,11 @@ function ShortsTab() {
   const [fetchingMeta, setFetchingMeta] = useState(false);
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [previewShortIndex, setPreviewShortIndex] = useState(null);
 
   // Channel Shorts Importer state
   const [selectedChannelIdForImport, setSelectedChannelIdForImport] = useState("");
@@ -557,6 +562,8 @@ function ShortsTab() {
   const [form, setForm] = useState({
     title: "",
     youtube_url: "",
+    file_url: "",
+    thumbnail: "",
     channel_id: "",
     channel_name: "",
     category: "عام",
@@ -566,14 +573,17 @@ function ShortsTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [vData, chData] = await Promise.all([
-      base44.entities.Video.list("-created_date", 500),
-      base44.entities.VideoChannel.list("sort_order", 200),
-    ]);
-    const onlyShorts = (vData || []).filter((v) => isShortRecord(v));
-    setShorts(onlyShorts);
-    setChannels(chData || []);
-    setLoading(false);
+    try {
+      const [vData, chData] = await Promise.all([
+        base44.entities.Video.list("-created_date", 500),
+        base44.entities.VideoChannel.list("sort_order", 200),
+      ]);
+      const onlyShorts = (vData || []).filter((v) => isShortRecord(v));
+      setShorts(onlyShorts);
+      setChannels(chData || []);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -581,8 +591,8 @@ function ShortsTab() {
   // Auto-fill Short metadata when pasting URL
   const fetchShortMeta = useCallback(async (urlToFetch) => {
     const videoId = extractYoutubeId(urlToFetch);
-    if (!videoId) return;
-    if (lastFetchedId.current === videoId) return;
+    if (!videoId) return null;
+    if (lastFetchedId.current === videoId && form.title) return null;
     lastFetchedId.current = videoId;
 
     setFetchingMeta(true);
@@ -600,19 +610,22 @@ function ShortsTab() {
         setForm((prev) => ({
           ...prev,
           title: meta.title || prev.title,
+          thumbnail: meta.thumbnail || prev.thumbnail,
           channel_name: matchedChannel?.name || meta.channel_name || prev.channel_name,
           channel_id: matchedChannel ? matchedChannel.id : prev.channel_id,
           category: matchedChannel?.category || prev.category || "عام",
         }));
         setFetchSuccess(true);
         toast.success(`تم جلب اسم المقطع القصير والقناة تلقائياً ✓`);
+        return meta;
       }
     } catch (err) {
       console.warn("Short auto-fetch error:", err);
     } finally {
       setFetchingMeta(false);
     }
-  }, [channels]);
+    return null;
+  }, [channels, form.title]);
 
   useEffect(() => {
     if (!showAddForm || !form.youtube_url) return;
@@ -620,32 +633,94 @@ function ShortsTab() {
     if (!videoId) return;
     const timer = setTimeout(() => {
       fetchShortMeta(form.youtube_url);
-    }, 500);
+    }, 350);
     return () => clearTimeout(timer);
   }, [form.youtube_url, showAddForm, fetchShortMeta]);
 
+  const handleUploadShortFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingVideo(true);
+    try {
+      const res = await base44.integrations.Core.UploadFile({ file });
+      const fileUrl = res?.file_url || URL.createObjectURL(file);
+      const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]+/g, " ");
+      setForm((prev) => ({
+        ...prev,
+        file_url: fileUrl,
+        youtube_url: prev.youtube_url || fileUrl,
+        title: prev.title || cleanName || "مقطع قصير",
+      }));
+      toast.success("تم رفع ملف الشورت بنجاح ✓");
+    } catch (err) {
+      toast.error("تعذر رفع ملف الفيديو: " + (err?.message || ""));
+    } finally {
+      setUploadingVideo(false);
+      e.target.value = "";
+    }
+  };
+
   const handleSaveShort = async () => {
-    if (!form.title || !form.youtube_url) {
-      toast.error("يرجى إدخال رابط الشورت وعنوانه");
+    const rawUrl = (form.youtube_url || form.file_url || "").trim();
+    if (!rawUrl) {
+      toast.error("يرجى إدخال رابط الشورت أو رفع ملف الفيديو");
       return;
     }
     setSaving(true);
-    const thumbnail = getThumbnail(form.youtube_url);
-    const ch = channels.find((c) => c.id === form.channel_id);
-    const payload = {
-      ...form,
-      thumbnail,
-      channel_name: ch?.name || form.channel_name || "",
-      video_type: "short",
-      duration: "0:60",
-      is_featured: false,
-    };
     try {
+      let resolvedTitle = (form.title || "").trim();
+      let resolvedChannelName = (form.channel_name || "").trim();
+      let resolvedChannelId = form.channel_id || "";
+
+      // If user clicked save immediately after pasting before title loaded, try a quick 1.5s metadata fetch
+      const ytId = extractYoutubeId(rawUrl);
+      if (!resolvedTitle && ytId) {
+        try {
+          const meta = await Promise.race([
+            fetchVideoMetadata(rawUrl),
+            new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+          ]);
+          if (meta?.title) resolvedTitle = meta.title.trim();
+          if (meta?.channel_name && !resolvedChannelName) resolvedChannelName = meta.channel_name.trim();
+        } catch {}
+      }
+
+      const ch = channels.find((c) => c.id === resolvedChannelId);
+      if (ch && !resolvedChannelName) resolvedChannelName = ch.name;
+      if (!resolvedTitle) {
+        resolvedTitle = resolvedChannelName
+          ? `مقطع قصير — ${resolvedChannelName}`
+          : ytId
+          ? `مقطع قصير #${ytId.slice(0, 6)}`
+          : "مقطع قصير";
+      }
+
+      const normalizedUrl = ytId && !rawUrl.includes("/shorts/") && !form.file_url
+        ? `https://www.youtube.com/shorts/${ytId}`
+        : rawUrl;
+      const thumbnail = form.thumbnail || (ytId ? getThumbnail(rawUrl) : "");
+
+      const payload = {
+        ...form,
+        title: resolvedTitle,
+        youtube_url: normalizedUrl,
+        file_url: form.file_url || "",
+        thumbnail,
+        channel_name: ch?.name || resolvedChannelName || "",
+        video_type: "short",
+        duration: "0:60",
+        is_featured: false,
+      };
+
       if (editing) {
-        await base44.entities.Video.update(editing.id, payload);
+        const updated = await base44.entities.Video.update(editing.id, payload);
+        setShorts((prev) => prev.map((item) => (item.id === editing.id ? { ...item, ...payload, ...(updated || {}) } : item)));
         toast.success("تم تحديث المقطع القصير (Short) ✓");
       } else {
-        await base44.entities.Video.create(payload);
+        const created = await base44.entities.Video.create(payload);
+        if (created) {
+          setShorts((prev) => [created, ...prev.filter((x) => x.id !== created.id)]);
+        }
         toast.success("تمت إضافة المقطع القصير (Short) بنجاح ✓");
       }
       setShowAddForm(false);
@@ -654,6 +729,8 @@ function ShortsTab() {
       setForm({
         title: "",
         youtube_url: "",
+        file_url: "",
+        thumbnail: "",
         channel_id: "",
         channel_name: "",
         category: "عام",
@@ -666,6 +743,41 @@ function ShortsTab() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleDeleteSingleShort = async (id) => {
+    setConfirmDeleteId(null);
+    // Optimistically remove from state immediately
+    setShorts((prev) => prev.filter((item) => item.id !== id));
+    setSelectedIds((prev) => prev.filter((x) => x !== id));
+    try {
+      await base44.entities.Video.delete(id);
+      toast.success("تم حذف الشورت نهائياً ✓");
+    } catch (err) {
+      toast.error("فشل الحذف: " + (err?.message || ""));
+      await load();
+    }
+  };
+
+  const handleBulkDeleteShorts = async () => {
+    if (selectedIds.length === 0) return;
+    const toDelete = [...selectedIds];
+    setConfirmBulkDelete(false);
+    setSelectedIds([]);
+    setShorts((prev) => prev.filter((item) => !toDelete.includes(item.id)));
+    try {
+      await Promise.all(toDelete.map((id) => base44.entities.Video.delete(id)));
+      toast.success(`تم حذف ${toDelete.length} شورت بنجاح ✓`);
+    } catch {
+      toast.error("حدث خطأ أثناء حذف بعض المقاطع");
+      await load();
+    }
+  };
+
+  const toggleSelectShort = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   };
 
   const handleOpenChannelShortsImporter = async () => {
@@ -707,9 +819,9 @@ function ShortsTab() {
   const filteredShorts = shorts.filter(
     (s) =>
       !search ||
-      s.title?.includes(search) ||
-      s.channel_name?.includes(search) ||
-      s.category?.includes(search)
+      s.title?.toLowerCase().includes(search.toLowerCase()) ||
+      s.channel_name?.toLowerCase().includes(search.toLowerCase()) ||
+      s.category?.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -779,12 +891,58 @@ function ShortsTab() {
         </div>
       </div>
 
-      {/* Toolbar: Search + Add Single Short by Link */}
+      {/* Toolbar: Search + Bulk Actions + Add Single Short */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold flex items-center gap-1.5">
-          <span>🟣 المقاطع القصيرة المضافة ({shorts.length})</span>
-        </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-sm font-bold flex items-center gap-1.5">
+            <span>🟣 المقاطع القصيرة المضافة ({shorts.length})</span>
+          </h3>
+          {filteredShorts.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 px-2"
+              onClick={() => {
+                if (selectedIds.length === filteredShorts.length) {
+                  setSelectedIds([]);
+                } else {
+                  setSelectedIds(filteredShorts.map((s) => s.id));
+                }
+              }}
+            >
+              {selectedIds.length === filteredShorts.length && filteredShorts.length > 0 ? (
+                <CheckSquare className="w-3.5 h-3.5 text-purple-600" />
+              ) : (
+                <Square className="w-3.5 h-3.5" />
+              )}
+              <span>{selectedIds.length === filteredShorts.length ? "إلغاء التحديد" : "تحديد الكل"}</span>
+            </Button>
+          )}
+          {selectedIds.length > 0 && (
+            confirmBulkDelete ? (
+              <div className="flex items-center gap-1 bg-destructive/10 border border-destructive/30 px-2 py-0.5 rounded-lg">
+                <span className="text-[11px] font-bold text-destructive">حذف {selectedIds.length} شورت؟</span>
+                <Button size="sm" variant="destructive" className="h-6 px-2 text-[10px]" onClick={handleBulkDeleteShorts}>
+                  تأكيد الحذف
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setConfirmBulkDelete(false)}>
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-[11px] gap-1 px-2.5"
+                onClick={() => setConfirmBulkDelete(true)}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>حذف المحدد ({selectedIds.length})</span>
+              </Button>
+            )
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
           <Input
             placeholder="بحث في الشورتس..."
             value={search}
@@ -801,6 +959,8 @@ function ShortsTab() {
               setForm({
                 title: "",
                 youtube_url: "",
+                file_url: "",
+                thumbnail: "",
                 channel_id: "",
                 channel_name: "",
                 category: "عام",
@@ -810,7 +970,7 @@ function ShortsTab() {
               setShowAddForm((prev) => !prev);
             }}
           >
-            <Plus className="w-4 h-4" /> إضافة شورت بالرابط
+            <Plus className="w-4 h-4" /> إضافة شورت جديد
           </Button>
         </div>
       </div>
@@ -818,76 +978,91 @@ function ShortsTab() {
       {/* Add / Edit Single Short Form */}
       {showAddForm && (
         <div className="bg-muted/30 border border-purple-500/30 rounded-2xl p-4 space-y-3">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <Label className="text-xs font-bold">رابط المقطع القصير (YouTube Shorts)</Label>
-              <div className="flex items-center gap-1.5 text-[11px]">
-                {fetchingMeta && (
-                  <span className="text-purple-600 flex items-center gap-1 animate-pulse font-medium">
-                    <Loader2 className="w-3 h-3 animate-spin" /> جاري جلب الاسم والقناة تلقائياً...
-                  </span>
-                )}
-                {fetchSuccess && !fetchingMeta && (
-                  <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
-                    <CheckCircle2 className="w-3 h-3" /> تم جلب البيانات تلقائياً
-                  </span>
-                )}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div className="sm:col-span-8">
+              <div className="flex items-center justify-between mb-1">
+                <Label className="text-xs font-bold">رابط المقطع القصير (YouTube Shorts أو أي رابط فيديو)</Label>
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  {fetchingMeta && (
+                    <span className="text-purple-600 flex items-center gap-1 animate-pulse font-medium">
+                      <Loader2 className="w-3 h-3 animate-spin" /> جاري جلب الاسم والقناة تلقائياً...
+                    </span>
+                  )}
+                  {fetchSuccess && !fetchingMeta && (
+                    <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                      <CheckCircle2 className="w-3 h-3" /> تم جلب البيانات تلقائياً
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  value={form.youtube_url}
+                  onChange={(e) => setForm({ ...form, youtube_url: e.target.value })}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData.getData("text");
+                    if (pasted) fetchShortMeta(pasted);
+                  }}
+                  placeholder="https://youtube.com/shorts/..."
+                  className="h-9 text-sm"
+                  dir="ltr"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={fetchingMeta || !form.youtube_url}
+                  onClick={() => fetchShortMeta(form.youtube_url)}
+                  className="shrink-0 h-9 text-xs gap-1"
+                >
+                  {fetchingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-purple-600" />}
+                  جلب الاسم
+                </Button>
               </div>
             </div>
-            <div className="flex gap-2">
-              <Input
-                value={form.youtube_url}
-                onChange={(e) => setForm({ ...form, youtube_url: e.target.value })}
-                onPaste={(e) => {
-                  const pasted = e.clipboardData.getData("text");
-                  if (pasted) fetchShortMeta(pasted);
-                }}
-                placeholder="https://youtube.com/shorts/..."
-                className="h-9 text-sm"
-                dir="ltr"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={fetchingMeta || !form.youtube_url}
-                onClick={() => fetchShortMeta(form.youtube_url)}
-                className="shrink-0 h-9 text-xs gap-1"
-              >
-                {fetchingMeta ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-purple-600" />}
-                جلب الاسم
-              </Button>
+
+            <div className="sm:col-span-4">
+              <Label className="text-xs font-bold mb-1 block">أو رفع ملف فيديو قصير (MP4)</Label>
+              <label className="flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-dashed border-purple-500/40 bg-purple-500/5 hover:bg-purple-500/10 text-purple-700 dark:text-purple-300 text-xs font-bold cursor-pointer transition-colors">
+                {uploadingVideo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                <span>{uploadingVideo ? "جاري رفع الفيديو..." : form.file_url ? "تم رفع ملف الفيديو ✓" : "اختر ملف فيديو MP4"}</span>
+                <input type="file" accept="video/mp4,video/webm,video/quicktime" className="hidden" onChange={handleUploadShortFile} disabled={uploadingVideo} />
+              </label>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
             {/* 9:16 Vertical Preview */}
-            {form.youtube_url && extractYoutubeId(form.youtube_url) && (
+            {(form.youtube_url || form.file_url) && (
               <div className="sm:col-span-3 flex justify-center">
                 <div className="w-28 aspect-[9/16] rounded-xl overflow-hidden bg-black border border-purple-500/30 relative shadow-md">
-                  <img
-                    src={getThumbnail(form.youtube_url)}
-                    alt="Short preview"
-                    className="w-full h-full object-cover"
-                  />
+                  {extractYoutubeId(form.youtube_url) ? (
+                    <img
+                      src={form.thumbnail || getThumbnail(form.youtube_url)}
+                      alt="Short preview"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : form.file_url ? (
+                    <video src={form.file_url} className="w-full h-full object-cover" muted playsInline />
+                  ) : null}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/20" />
                   <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-md bg-purple-600/90 text-white flex items-center justify-center shadow">
                     <Flame className="w-3 h-3 fill-current" />
                   </span>
                   <p className="absolute bottom-2 inset-x-2 text-[10px] font-bold text-white line-clamp-2 text-right">
-                    {form.title || "عنوان المقطع"}
+                    {form.title || "عنوان المقطع التلقائي"}
                   </p>
                 </div>
               </div>
             )}
 
-            <div className={`${form.youtube_url && extractYoutubeId(form.youtube_url) ? "sm:col-span-9" : "sm:col-span-12"} space-y-3`}>
+            <div className={`${(form.youtube_url || form.file_url) ? "sm:col-span-9" : "sm:col-span-12"} space-y-3`}>
               <div>
-                <Label className="text-xs">عنوان المقطع القصير (يُجلب تلقائياً)</Label>
+                <Label className="text-xs">عنوان المقطع القصير (يُجلب تلقائياً أو يُولّد عند الحفظ)</Label>
                 <Input
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  placeholder="عنوان الشورت"
+                  placeholder="اتركه فارغاً ليتم جلبه تلقائياً أو اكتب عنواناً..."
                   className="h-9 text-sm"
                 />
               </div>
@@ -948,7 +1123,7 @@ function ShortsTab() {
                   <Button
                     size="sm"
                     onClick={handleSaveShort}
-                    disabled={saving}
+                    disabled={saving || uploadingVideo}
                     className="bg-purple-600 hover:bg-purple-700 text-white text-xs gap-1.5"
                   >
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -978,118 +1153,164 @@ function ShortsTab() {
           <Flame className="w-8 h-8 text-purple-500 fill-current mx-auto opacity-60" />
           <p className="text-sm font-bold">لا توجد مقاطع قصيرة مضافة بعد</p>
           <p className="text-xs text-muted-foreground">
-            استخدم صندوق السحب التلقائي أعلاه لجلب المقاطع القصيرة من أي قناة دفعة واحدة، أو أضف مقطعاً بالرابط.
+            استخدم صندوق السحب التلقائي أعلاه لجلب المقاطع القصيرة من أي قناة دفعة واحدة، أو أضف مقطعاً بالرابط أو ملف فيديو.
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3.5">
-          {filteredShorts.map((s) => (
-            <div
-              key={s.id}
-              className={`group rounded-2xl overflow-hidden border border-border bg-card flex flex-col justify-between transition-all ${
-                !s.visible ? "opacity-50" : ""
-              }`}
-            >
-              <div className="relative aspect-[9/16] bg-black overflow-hidden">
-                <img
-                  src={s.thumbnail || getThumbnail(s.youtube_url)}
-                  alt={s.title}
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-black/30" />
-                <span className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-purple-600/90 text-white flex items-center justify-center shadow">
-                  <Flame className="w-3.5 h-3.5 fill-current" />
-                </span>
-                <div className="absolute bottom-2.5 inset-x-2.5 text-right space-y-0.5">
-                  <p className="text-xs font-bold text-white line-clamp-2 leading-snug">{s.title}</p>
-                  <p className="text-[10px] text-white/75 truncate">{s.channel_name || "بدون قناة"}</p>
-                </div>
-              </div>
+          {filteredShorts.map((s, idx) => {
+            const isSelected = selectedIds.includes(s.id);
+            return (
+              <div
+                key={s.id}
+                className={`group rounded-2xl overflow-hidden border bg-card flex flex-col justify-between transition-all ${
+                  isSelected ? "border-purple-500 ring-2 ring-purple-500/30" : "border-border"
+                } ${!s.visible ? "opacity-50" : ""}`}
+              >
+                <div
+                  className="relative aspect-[9/16] bg-black overflow-hidden cursor-pointer"
+                  onClick={() => setPreviewShortIndex(idx)}
+                >
+                  {(s.thumbnail || extractYoutubeId(s.youtube_url)) ? (
+                    <img
+                      src={s.thumbnail || getThumbnail(s.youtube_url)}
+                      alt={s.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                  ) : s.file_url ? (
+                    <video src={s.file_url} className="w-full h-full object-cover" muted playsInline />
+                  ) : null}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/15 to-black/30" />
 
-              <div className="p-2 flex items-center justify-between gap-1 bg-card border-t border-border">
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground truncate">
-                  {s.category || "عام"}
-                </span>
-                <div className="flex items-center gap-0.5">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7"
-                    onClick={async () => {
-                      try {
-                        await base44.entities.Video.update(s.id, { visible: !s.visible });
-                        await load();
-                      } catch {
-                        toast.error("فشل التحديث");
-                      }
+                  {/* Select Checkbox */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleSelectShort(s.id);
                     }}
+                    className={`absolute top-2 left-2 w-7 h-7 rounded-lg flex items-center justify-center shadow transition-colors ${
+                      isSelected ? "bg-purple-600 text-white" : "bg-black/60 text-white/80 hover:bg-black/80"
+                    }`}
+                    title="تحديد المقطع"
                   >
-                    {s.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7"
-                    onClick={() => {
-                      setEditing(s);
-                      lastFetchedId.current = extractYoutubeId(s.youtube_url) || "";
-                      setForm({
-                        title: s.title || "",
-                        youtube_url: s.youtube_url || "",
-                        channel_id: s.channel_id || "",
-                        channel_name: s.channel_name || "",
-                        category: s.category || "عام",
-                        visible: s.visible !== false,
-                        sort_order: s.sort_order || 0,
-                      });
-                      setShowAddForm(true);
-                    }}
-                  >
-                    <Pencil className="w-3.5 h-3.5" />
-                  </Button>
-                  {confirmDeleteId === s.id ? (
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="h-6 px-1.5 text-[10px]"
-                        onClick={async () => {
-                          setConfirmDeleteId(null);
-                          try {
-                            await base44.entities.Video.delete(s.id);
-                            toast.success("تم حذف الشورت ✓");
-                            await load();
-                          } catch {
-                            toast.error("فشل الحذف");
-                          }
-                        }}
-                      >
-                        تأكيد
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-1.5 text-[10px]"
-                        onClick={() => setConfirmDeleteId(null)}
-                      >
-                        إلغاء
-                      </Button>
+                    {isSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                  </button>
+
+                  <span className="absolute top-2 right-2 w-7 h-7 rounded-lg bg-purple-600/90 text-white flex items-center justify-center shadow">
+                    <Flame className="w-3.5 h-3.5 fill-current" />
+                  </span>
+
+                  {/* Center Play Overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                    <div className="w-11 h-11 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-lg">
+                      <Play className="w-5 h-5 fill-current ml-0.5" />
                     </div>
-                  ) : (
+                  </div>
+
+                  <div className="absolute bottom-2.5 inset-x-2.5 text-right space-y-0.5">
+                    <p className="text-xs font-bold text-white line-clamp-2 leading-snug">{s.title}</p>
+                    <p className="text-[10px] text-white/75 truncate">{s.channel_name || "بدون قناة"}</p>
+                  </div>
+                </div>
+
+                <div className="p-2 flex items-center justify-between gap-1 bg-card border-t border-border">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground truncate">
+                    {s.category || "عام"}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-purple-600"
+                      title="تشغيل ومعاينة الشورت"
+                      onClick={() => setPreviewShortIndex(idx)}
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
                       className="h-7 w-7"
-                      onClick={() => setConfirmDeleteId(s.id)}
+                      onClick={async () => {
+                        const nextVis = !s.visible;
+                        setShorts((prev) => prev.map((x) => (x.id === s.id ? { ...x, visible: nextVis } : x)));
+                        try {
+                          await base44.entities.Video.update(s.id, { visible: nextVis });
+                        } catch {
+                          toast.error("فشل التحديث");
+                          await load();
+                        }
+                      }}
                     >
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                      {s.visible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
                     </Button>
-                  )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        setEditing(s);
+                        lastFetchedId.current = extractYoutubeId(s.youtube_url) || "";
+                        setForm({
+                          title: s.title || "",
+                          youtube_url: s.youtube_url || "",
+                          file_url: s.file_url || "",
+                          thumbnail: s.thumbnail || "",
+                          channel_id: s.channel_id || "",
+                          channel_name: s.channel_name || "",
+                          category: s.category || "عام",
+                          visible: s.visible !== false,
+                          sort_order: s.sort_order || 0,
+                        });
+                        setShowAddForm(true);
+                      }}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    {confirmDeleteId === s.id ? (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="h-6 px-1.5 text-[10px]"
+                          onClick={() => handleDeleteSingleShort(s.id)}
+                        >
+                          تأكيد
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-1.5 text-[10px]"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          إلغاء
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7"
+                        onClick={() => setConfirmDeleteId(s.id)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+      )}
+
+      {previewShortIndex !== null && filteredShorts[previewShortIndex] && (
+        <ShortsPlayerModal
+          shortsList={filteredShorts}
+          initialIndex={previewShortIndex}
+          onClose={() => setPreviewShortIndex(null)}
+        />
       )}
 
       <ChannelVideosImportModal
@@ -1115,6 +1336,8 @@ function VideosTab() {
   const [fetchSuccess, setFetchSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteVideoId, setConfirmDeleteVideoId] = useState(null);
+  const [selectedVideoIds, setSelectedVideoIds] = useState([]);
+  const [confirmBulkDeleteVideos, setConfirmBulkDeleteVideos] = useState(false);
   const lastFetchedVideoId = useRef("");
 
   const [form, setForm] = useState({
@@ -1133,14 +1356,17 @@ function VideosTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [vData, chData] = await Promise.all([
-      base44.entities.Video.list("-created_date", 500),
-      base44.entities.VideoChannel.list("sort_order", 200),
-    ]);
-    // Keep only non-Short videos in VideosTab so Shorts are managed in ShortsTab
-    setVideos((vData || []).filter((v) => !isShortRecord(v)));
-    setChannels(chData || []);
-    setLoading(false);
+    try {
+      const [vData, chData] = await Promise.all([
+        base44.entities.Video.list("-created_date", 500),
+        base44.entities.VideoChannel.list("sort_order", 200),
+      ]);
+      // Keep only non-Short videos in VideosTab so Shorts are managed in ShortsTab
+      setVideos((vData || []).filter((v) => !isShortRecord(v)));
+      setChannels(chData || []);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -1190,23 +1416,39 @@ function VideosTab() {
 
     const timer = setTimeout(() => {
       fetchVideoData(form.youtube_url);
-    }, 600);
+    }, 400);
 
     return () => clearTimeout(timer);
   }, [form.youtube_url, showForm, fetchVideoData]);
 
   const handleSave = async () => {
-    if (!form.title || !form.youtube_url) { toast.error("أدخل العنوان والرابط"); return; }
+    const rawUrl = (form.youtube_url || "").trim();
+    if (!rawUrl) { toast.error("أدخل رابط الفيديو"); return; }
     setSaving(true);
-    const thumbnail = getThumbnail(form.youtube_url);
-    const ch = channels.find((c) => c.id === form.channel_id);
-    const data = {
-      ...form,
-      thumbnail,
-      channel_name: ch?.name || form.channel_name || "",
-      video_type: form.video_type || "normal",
-    };
     try {
+      let resolvedTitle = (form.title || "").trim();
+      const ytId = extractYoutubeId(rawUrl);
+      if (!resolvedTitle && ytId) {
+        try {
+          const meta = await Promise.race([
+            fetchVideoMetadata(rawUrl),
+            new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+          ]);
+          if (meta?.title) resolvedTitle = meta.title.trim();
+        } catch {}
+      }
+      const ch = channels.find((c) => c.id === form.channel_id);
+      if (!resolvedTitle) {
+        resolvedTitle = ch?.name ? `درس — ${ch.name}` : "درس ومحاضرة علمية";
+      }
+      const thumbnail = getThumbnail(rawUrl);
+      const data = {
+        ...form,
+        title: resolvedTitle,
+        thumbnail,
+        channel_name: ch?.name || form.channel_name || "",
+        video_type: form.video_type || "normal",
+      };
       if (editing) {
         await base44.entities.Video.update(editing.id, data);
         toast.success("تم تحديث الفيديو ✓");
@@ -1238,6 +1480,21 @@ function VideosTab() {
     }
   };
 
+  const handleBulkDeleteVideos = async () => {
+    if (selectedVideoIds.length === 0) return;
+    const toDelete = [...selectedVideoIds];
+    setConfirmBulkDeleteVideos(false);
+    setSelectedVideoIds([]);
+    setVideos((prev) => prev.filter((v) => !toDelete.includes(v.id)));
+    try {
+      await Promise.all(toDelete.map((id) => base44.entities.Video.delete(id)));
+      toast.success(`تم حذف ${toDelete.length} فيديو بنجاح ✓`);
+    } catch {
+      toast.error("حدث خطأ أثناء حذف بعض الفيديوهات");
+      await load();
+    }
+  };
+
   const filtered = videos.filter((v) =>
     !search || v.title?.includes(search) || v.category?.includes(search) || v.channel_name?.includes(search)
   );
@@ -1245,7 +1502,53 @@ function VideosTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-bold">الفيديوهات والمحاضرات ({videos.length})</h3>
+        <div className="flex items-center gap-2 flex-wrap">
+          <h3 className="text-sm font-bold">الفيديوهات والمحاضرات ({videos.length})</h3>
+          {filtered.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] gap-1 px-2"
+              onClick={() => {
+                if (selectedVideoIds.length === filtered.length) {
+                  setSelectedVideoIds([]);
+                } else {
+                  setSelectedVideoIds(filtered.map((v) => v.id));
+                }
+              }}
+            >
+              {selectedVideoIds.length === filtered.length ? (
+                <CheckSquare className="w-3.5 h-3.5 text-primary" />
+              ) : (
+                <Square className="w-3.5 h-3.5" />
+              )}
+              <span>{selectedVideoIds.length === filtered.length ? "إلغاء التحديد" : "تحديد الكل"}</span>
+            </Button>
+          )}
+          {selectedVideoIds.length > 0 && (
+            confirmBulkDeleteVideos ? (
+              <div className="flex items-center gap-1 bg-destructive/10 border border-destructive/30 px-2 py-0.5 rounded-lg">
+                <span className="text-[11px] font-bold text-destructive">حذف {selectedVideoIds.length} فيديو؟</span>
+                <Button size="sm" variant="destructive" className="h-6 px-2 text-[10px]" onClick={handleBulkDeleteVideos}>
+                  تأكيد
+                </Button>
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setConfirmBulkDeleteVideos(false)}>
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-[11px] gap-1 px-2.5"
+                onClick={() => setConfirmBulkDeleteVideos(true)}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>حذف المحدد ({selectedVideoIds.length})</span>
+              </Button>
+            )
+          )}
+        </div>
         <div className="flex flex-wrap gap-2">
           <Input
             placeholder="بحث..."
@@ -1483,88 +1786,112 @@ function VideosTab() {
         <p className="text-center text-sm text-muted-foreground py-8">لا توجد فيديوهات عادية</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filtered.map((v) => (
-            <div key={v.id} className={`bg-card border border-border rounded-xl p-3 ${!v.visible ? "opacity-50" : ""}`}>
-              <div className="flex gap-3">
-                <div className="relative w-28 h-20 rounded-lg overflow-hidden shrink-0 bg-muted">
-                  {v.thumbnail && (
-                    <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
-                  )}
-                  {v.duration && (
-                    <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/85 text-white text-[9px] font-mono flex items-center gap-0.5">
-                      <Clock className="w-2.5 h-2.5" /> {v.duration}
-                    </span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate">{v.title}</p>
-                  <p className="text-xs text-muted-foreground truncate">{v.channel_name || "بدون قناة"}</p>
-                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    {v.is_featured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">مميز</span>}
-                    {v.video_type === "live" && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 font-medium">مباشر</span>}
-                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{v.category}</span>
+          {filtered.map((v) => {
+            const isSelected = selectedVideoIds.includes(v.id);
+            return (
+              <div
+                key={v.id}
+                className={`bg-card border rounded-xl p-3 transition-all ${
+                  isSelected ? "border-primary ring-2 ring-primary/20" : "border-border"
+                } ${!v.visible ? "opacity-50" : ""}`}
+              >
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedVideoIds((prev) =>
+                        prev.includes(v.id) ? prev.filter((x) => x !== v.id) : [...prev, v.id]
+                      )
+                    }
+                    className="self-start mt-1 text-muted-foreground hover:text-primary"
+                  >
+                    {isSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
+                  </button>
+                  <div className="relative w-28 h-20 rounded-lg overflow-hidden shrink-0 bg-muted">
+                    {v.thumbnail && (
+                      <img src={v.thumbnail} alt={v.title} className="w-full h-full object-cover" />
+                    )}
+                    {v.duration && (
+                      <span className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/85 text-white text-[9px] font-mono flex items-center gap-0.5">
+                        <Clock className="w-2.5 h-2.5" /> {v.duration}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold truncate">{v.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{v.channel_name || "بدون قناة"}</p>
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      {v.is_featured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">مميز</span>}
+                      {v.video_type === "live" && <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-600 font-medium">مباشر</span>}
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{v.category}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="flex gap-1 mt-2.5 pt-2 border-t border-border/50 justify-end">
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  try {
-                    await base44.entities.Video.update(v.id, { is_featured: !v.is_featured });
-                    await load();
-                  } catch (err) {
-                    toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
-                  }
-                }}>{v.is_featured ? <Star className="w-3 h-3 text-amber-500 fill-amber-500" /> : <StarOff className="w-3 h-3" />}</Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
-                  try {
-                    await base44.entities.Video.update(v.id, { visible: !v.visible });
-                    await load();
-                  } catch (err) {
-                    toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
-                  }
-                }}>{v.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</Button>
-                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
-                  setEditing(v);
-                  lastFetchedVideoId.current = extractYoutubeId(v.youtube_url) || "";
-                  setForm({
-                    title: v.title,
-                    youtube_url: v.youtube_url,
-                    description: v.description || "",
-                    channel_id: v.channel_id || "",
-                    channel_name: v.channel_name || "",
-                    category: v.category || "عام",
-                    duration: v.duration || "",
-                    video_type: v.video_type || "normal",
-                    is_featured: v.is_featured,
-                    visible: v.visible,
-                    sort_order: v.sort_order || 0
-                  });
-                  setShowForm(true);
-                }}><Pencil className="w-3 h-3" /></Button>
-                {confirmDeleteVideoId === v.id ? (
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={async () => {
-                      setConfirmDeleteVideoId(null);
-                      try {
-                        await base44.entities.Video.delete(v.id);
-                        toast.success("تم حذف الفيديو بنجاح ✓");
-                        await load();
-                      } catch (err) {
-                        toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
-                      }
-                    }}>تأكيد</Button>
-                    <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setConfirmDeleteVideoId(null)}>
-                      إلغاء
+                <div className="flex gap-1 mt-2.5 pt-2 border-t border-border/50 justify-end">
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
+                    const nextFeat = !v.is_featured;
+                    setVideos((prev) => prev.map((x) => (x.id === v.id ? { ...x, is_featured: nextFeat } : x)));
+                    try {
+                      await base44.entities.Video.update(v.id, { is_featured: nextFeat });
+                    } catch (err) {
+                      toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
+                      await load();
+                    }
+                  }}>{v.is_featured ? <Star className="w-3 h-3 text-amber-500 fill-amber-500" /> : <StarOff className="w-3 h-3" />}</Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={async () => {
+                    const nextVis = !v.visible;
+                    setVideos((prev) => prev.map((x) => (x.id === v.id ? { ...x, visible: nextVis } : x)));
+                    try {
+                      await base44.entities.Video.update(v.id, { visible: nextVis });
+                    } catch (err) {
+                      toast.error("فشل التحديث: " + (err?.message || "خطأ غير معروف"));
+                      await load();
+                    }
+                  }}>{v.visible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</Button>
+                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
+                    setEditing(v);
+                    lastFetchedVideoId.current = extractYoutubeId(v.youtube_url) || "";
+                    setForm({
+                      title: v.title,
+                      youtube_url: v.youtube_url,
+                      description: v.description || "",
+                      channel_id: v.channel_id || "",
+                      channel_name: v.channel_name || "",
+                      category: v.category || "عام",
+                      duration: v.duration || "",
+                      video_type: v.video_type || "normal",
+                      is_featured: v.is_featured,
+                      visible: v.visible,
+                      sort_order: v.sort_order || 0
+                    });
+                    setShowForm(true);
+                  }}><Pencil className="w-3 h-3" /></Button>
+                  {confirmDeleteVideoId === v.id ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button size="sm" variant="destructive" className="h-7 px-2 text-[11px]" onClick={async () => {
+                        setConfirmDeleteVideoId(null);
+                        setVideos((prev) => prev.filter((item) => item.id !== v.id));
+                        try {
+                          await base44.entities.Video.delete(v.id);
+                          toast.success("تم حذف الفيديو بنجاح ✓");
+                        } catch (err) {
+                          toast.error("فشل الحذف: " + (err?.message || "خطأ غير معروف"));
+                          await load();
+                        }
+                      }}>تأكيد</Button>
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => setConfirmDeleteVideoId(null)}>
+                        إلغاء
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setConfirmDeleteVideoId(v.id)}>
+                      <Trash2 className="w-3 h-3 text-destructive" />
                     </Button>
-                  </div>
-                ) : (
-                  <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setConfirmDeleteVideoId(v.id)}>
-                    <Trash2 className="w-3 h-3 text-destructive" />
-                  </Button>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

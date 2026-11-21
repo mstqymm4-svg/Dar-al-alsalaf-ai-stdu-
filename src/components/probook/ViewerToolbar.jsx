@@ -1,688 +1,576 @@
-import { useState, useRef } from "react";
+import React, { useState } from "react";
 import {
-  ChevronLeft,
   ChevronRight,
-  Bookmark,
-  BookmarkCheck,
+  ChevronLeft,
   ZoomIn,
   ZoomOut,
-  Moon,
-  Sun,
-  Palette,
+  Bookmark,
   List,
-  Maximize,
-  ChevronDown,
+  Search,
+  Maximize2,
+  Minimize2,
+  ArrowRight,
   PenTool,
   Highlighter,
   Eraser,
   Type,
-  Minus,
-  MoveUpRight,
-  Square,
-  Circle,
-  Hand,
   Undo2,
   Redo2,
   Trash2,
-  X,
+  Minus,
+  Square,
+  Circle,
+  Sparkles,
   Check,
+  X,
+  Volume2,
+  Sun,
+  Eye,
+  EyeOff,
+  Hand,
+  Underline,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
-const PEN_COLORS = [
-  { id: "red", value: "#EF4444", labelKey: "colorRed", fallback: "أحمر" },
-  { id: "amber", value: "#F59E0B", labelKey: "colorAmber", fallback: "ذهبي" },
-  { id: "emerald", value: "#10B981", labelKey: "colorEmerald", fallback: "أخضر" },
-  { id: "blue", value: "#3B82F6", labelKey: "colorBlue", fallback: "أزرق" },
-  { id: "purple", value: "#8B5CF6", labelKey: "colorPurple", fallback: "بنفسجي" },
-  { id: "pink", value: "#EC4899", labelKey: "colorPink", fallback: "وردي" },
-  { id: "cyan", value: "#06B6D4", labelKey: "colorCyan", fallback: "سماوي" },
-  { id: "ink", value: "#111827", labelKey: "colorInk", fallback: "حبر داكن" },
-];
-
-const PEN_SIZES = [
-  { id: "fine", value: 2, px: 5, labelKey: "sizeFine", fallback: "رفيع" },
-  { id: "medium", value: 3.5, px: 8, labelKey: "sizeMedium", fallback: "متوسط" },
-  { id: "bold", value: 6, px: 11, labelKey: "sizeBold", fallback: "عريض" },
-  { id: "xbold", value: 9, px: 14, labelKey: "sizeXBold", fallback: "سميك" },
-];
-
 /**
- * Organized, clutter-free bottom toolbar & 2-row Floating Pen Dock for ProBookViewer.
- * - Zero crowding: Pen Dock is cleanly organized into two compact rows (Row 1: Tools + Actions, Row 2: Color Palette + Stroke Thickness)
- * - Responsive across all devices (phones, tablets, laptops, large screens) without overflowing
- * - Single-tap Night Mode / Comfort button (0ms instant)
- * - Draggable left/right touch progress scrubber bar
+ * 1. الشريط العلوي للعارض (Classic Top Header Bar)
  */
-export default function ViewerToolbar({
+export function TopHeaderBar({
+  title,
+  themeCfg,
   currentPage,
   totalPages,
-  zoom,
-  theme,
-  bookmarks = [],
-  penMode = false,
-  penTool = "pen",
-  penColor = "#EF4444",
-  penSize = 3.5,
-  annotationCount = 0,
-  canRedo = false,
-  onTogglePenMode,
-  onSelectPenTool,
-  onSelectPenColor,
-  onSelectPenSize,
-  onUndoAnnotation,
-  onRedoAnnotation,
-  onClearAnnotations,
-  onNext,
-  onPrev,
-  onZoomIn,
-  onZoomOut,
-  onResetZoom,
-  onToggleComfort,
+  isBookmarked,
+  onBack,
+  onTogglePanel,
   onToggleBookmark,
-  onToggleToc,
-  onToggleGoTo,
-  onSeekProgress,
-  onToggleFullscreen,
-  onHide,
 }) {
   const t = useT();
-  const dark = theme === "dark" || theme === "dusk";
-  const pct = totalPages ? Math.round((currentPage / totalPages) * 100) : 0;
-  const [hoverPage, setHoverPage] = useState(null);
-  const [hoverX, setHoverX] = useState(0);
-  const scrubbingRef = useRef(false);
 
-  const themeIcon =
-    theme === "dark" || theme === "dusk" ? (
-      <Moon className="w-4 h-4 text-amber-400 fill-amber-400/20" />
-    ) : theme === "sepia" ? (
-      <Palette className="w-4 h-4 text-amber-700" />
-    ) : (
-      <Sun className="w-4 h-4" />
-    );
+  return (
+    <header
+      dir={t.dir || "rtl"}
+      className="relative flex items-center justify-between gap-2 px-3 sm:px-5 h-12 border-b z-30 transition-colors select-none shrink-0"
+      style={{
+        backgroundColor: themeCfg?.toolbar || "#FFFFFF",
+        borderColor: themeCfg?.border || "#E2E8F0",
+        color: themeCfg?.text || "#0F172A",
+      }}
+    >
+      {/* Back button + Book Title */}
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+            title={t.backBtn || "رجوع"}
+          >
+            <ArrowRight className="w-5 h-5" />
+          </button>
+        )}
+        <h1 className="font-bold text-sm sm:text-base truncate leading-tight">
+          {title || t.appName || "DAR AL TAWHID"}
+        </h1>
+      </div>
 
-  const isBookmarked = bookmarks.includes(currentPage);
+      {/* Right actions: Page badge + Quick TOC + Bookmark */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        {totalPages > 0 && (
+          <span className="hidden xs:inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-black/[0.04] dark:bg-white/[0.06] tabular-nums">
+            {t.pageNo || "ص"} {currentPage} / {totalPages}
+          </span>
+        )}
 
-  const seekFromClientX = (el, clientX, commit = false) => {
-    if (!totalPages) return;
-    const rect = el.getBoundingClientRect();
-    if (!rect.width) return;
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    setHoverPage(Math.max(1, Math.round(ratio * totalPages)));
-    setHoverX(Math.min(rect.width - 16, Math.max(16, clientX - rect.left)));
-    if (commit && onSeekProgress) {
-      onSeekProgress(ratio);
-    }
-  };
+        <button
+          type="button"
+          onClick={() => onTogglePanel?.("toc")}
+          className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+          title={t.tocAndBookmarks || "الفهرس والعلامات"}
+        >
+          <List className="w-4 h-4" />
+        </button>
 
-  const activeColorPreview =
-    dark && penColor === "#111827" ? "#F9FAFB" : penColor;
+        <button
+          type="button"
+          onClick={onToggleBookmark}
+          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
+            isBookmarked
+              ? "text-amber-500 bg-amber-500/10"
+              : "hover:bg-black/5 dark:hover:bg-white/10"
+          }`}
+          title={t.tbBookmark || "علامة مرجعية"}
+        >
+          <Bookmark className={`w-4 h-4 ${isBookmarked ? "fill-current" : ""}`} />
+        </button>
+      </div>
+    </header>
+  );
+}
 
-  const toolItems = [
-    {
-      id: "pan",
-      icon: Hand,
-      label: t.penPan || "تحريك",
-      tip: t.penPanTip || "تحريك وتصفح الصفحات",
-      activeClass: dark
-        ? "bg-slate-700 text-white shadow-sm ring-1 ring-white/25"
-        : "bg-stone-800 text-white shadow-sm",
-    },
-    {
-      id: "pen",
-      icon: PenTool,
-      label: t.penDraw || "قلم",
-      tip: t.penDrawTip || "قلم كتابة حر",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
-    },
+/**
+ * 2. شريط القلم والتدوين الأصلي (Classic Pen & Annotation Dock)
+ * مربع لكل أداة مع اسمها مترجم بـ 6 لغات + الألوان + السماكة + تراجع + إعادة + مسح + إغلاق
+ */
+export function AnnotationDock({
+  activeTool,
+  onSelectTool,
+  activeColor,
+  onSelectColor,
+  strokeWidth,
+  onChangeStrokeWidth,
+  onUndo,
+  onRedo,
+  canRedo = false,
+  onClearPage,
+  hasAnnotations = false,
+  onClose,
+  themeCfg,
+}) {
+  const t = useT();
+
+  const tools = [
+    { id: "pan", icon: Hand, label: t.penPan || "تحريك", tip: t.penPanTip },
+    { id: "pen", icon: PenTool, label: t.penDraw || "قلم", tip: t.penDrawTip },
     {
       id: "highlighter",
       icon: Highlighter,
       label: t.penHighlight || "تظليل",
-      tip: t.penHighlightTip || "قلم تظليل شفاف",
-      activeClass: "bg-amber-500 text-white shadow-sm ring-1 ring-amber-400/50",
+      tip: t.penHighlightTip,
     },
     {
-      id: "line",
-      icon: Minus,
-      label: t.penLine || "خط",
-      tip: t.penLineTip || "رسم خط مستقيم",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+      id: "underline",
+      icon: Underline,
+      label: t.penUnderline || "تسطير",
+      tip: t.penUnderlineTip,
     },
-    {
-      id: "arrow",
-      icon: MoveUpRight,
-      label: t.penArrow || "سهم",
-      tip: t.penArrowTip || "رسم سهم إشارة وتوضيح",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
-    },
-    {
-      id: "rect",
-      icon: Square,
-      label: t.penRect || "مربع",
-      tip: t.penRectTip || "رسم إطار مستطيل",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
-    },
+    { id: "line", icon: Minus, label: t.penLine || "خط", tip: t.penLineTip },
+    { id: "rect", icon: Square, label: t.penRect || "مربع", tip: t.penRectTip },
     {
       id: "circle",
       icon: Circle,
       label: t.penCircle || "دائرة",
-      tip: t.penCircleTip || "رسم دائرة لتحديد النص",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
+      tip: t.penCircleTip,
     },
-    {
-      id: "text",
-      icon: Type,
-      label: t.penText || "نص",
-      tip: t.penTextTip || "إضافة ملاحظة نصية على الصفحة",
-      activeClass: "bg-primary text-primary-foreground shadow-sm ring-1 ring-primary/50",
-    },
+    { id: "text", icon: Type, label: t.penText || "ملاحظة", tip: t.penTextTip },
     {
       id: "eraser",
       icon: Eraser,
       label: t.penEraser || "ممحاة",
-      tip: t.penEraserTip || "ممحاة (مرّر فوق الرسم لمسحه)",
-      activeClass: "bg-rose-600 text-white shadow-sm ring-1 ring-rose-400/50",
+      tip: t.penEraserTip,
+    },
+    {
+      id: "laser",
+      icon: Sparkles,
+      label: t.penLaser || "ليزر",
+      tip: t.penLaserTip,
     },
   ];
 
-  const showColorAndSizeRow = penTool !== "pan" && penTool !== "eraser";
+  const penColors = [
+    { id: "red", value: "#EF4444", label: t.colorRed || "أحمر" },
+    { id: "amber", value: "#F59E0B", label: t.colorAmber || "ذهبي" },
+    { id: "emerald", value: "#10B981", label: t.colorEmerald || "أخضر" },
+    { id: "blue", value: "#3B82F6", label: t.colorBlue || "أزرق" },
+    { id: "purple", value: "#8B5CF6", label: t.colorPurple || "بنفسجي" },
+    { id: "cyan", value: "#06B6D4", label: t.colorCyan || "سماوي" },
+    { id: "ink", value: "#111827", label: t.colorInk || "حبر داكن" },
+  ];
+
+  const sizes = [
+    { id: "fine", val: 2, dot: "w-1.5 h-1.5", label: t.sizeFine || "رفيع" },
+    { id: "med", val: 4, dot: "w-2.5 h-2.5", label: t.sizeMedium || "متوسط" },
+    { id: "bold", val: 7, dot: "w-3.5 h-3.5", label: t.sizeBold || "عريض" },
+    { id: "xbold", val: 11, dot: "w-4 h-4", label: t.sizeXBold || "سميك" },
+  ];
 
   return (
     <div
       data-viewer-ui
+      dir={t.dir || "rtl"}
       onClick={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
-      onTouchMove={(e) => e.stopPropagation()}
-      className={`relative shrink-0 border-t transition-colors z-20 safe-area-bottom ${
-        theme === "dark"
-          ? "border-slate-800 bg-[#0D1017] text-stone-100"
-          : theme === "dusk"
-          ? "border-slate-700 bg-[#141923] text-slate-100"
-          : theme === "sepia"
-          ? "border-[#CBB994] bg-[#EFE4CE] text-[#3D2E1E]"
-          : "border-stone-300 bg-[#FAF8F5] text-stone-900"
-      }`}
+      className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5 w-[96vw] max-w-2xl"
     >
-      {/* Clean 2-Tier Solid Pen & Annotation Dock (100% Opaque, Zero crowding, fits all devices!) */}
-      {penMode && (
-        <div
-          dir="rtl"
-          className="absolute bottom-full inset-x-0 pb-2 px-2 sm:px-4 z-30 pointer-events-none flex justify-center"
-        >
-          <div
-            style={{
-              backgroundColor:
-                theme === "dark"
-                  ? "#111622"
-                  : theme === "dusk"
-                  ? "#181E2C"
-                  : theme === "sepia"
-                  ? "#F4EAD5"
-                  : "#FFFFFF",
-            }}
-            className={`pointer-events-auto w-full max-w-lg rounded-2xl border-2 p-2.5 space-y-2 transition-colors ${
-              theme === "dark"
-                ? "bg-[#111622] border-slate-700 text-stone-100 shadow-[0_14px_38px_rgba(0,0,0,0.9)]"
-                : theme === "dusk"
-                ? "bg-[#181E2C] border-slate-600 text-slate-100 shadow-[0_14px_38px_rgba(0,0,0,0.85)]"
-                : theme === "sepia"
-                ? "bg-[#F4EAD5] border-[#C4B08B] text-[#3D2E1E] shadow-[0_12px_32px_rgba(61,46,30,0.28)]"
-                : "bg-white border-stone-300 text-stone-900 shadow-[0_12px_32px_rgba(15,23,42,0.22)]"
-            }`}
-          >
-            {/* Row 1: Tools Strip (Left/Right Scrollable on very narrow screens) + Pinned Undo/Redo/Clear/Close */}
-            <div className="flex items-center justify-between gap-1.5">
-              {/* Tools list: shows icon + label ONLY for the active tool on mobile to eliminate crowding */}
-              <div
-                style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
-                className={`flex-1 flex items-center gap-1 p-1 rounded-xl overflow-x-auto scrollbar-none border ${
-                  theme === "dark"
-                    ? "bg-[#1A2130] border-slate-700"
-                    : theme === "dusk"
-                    ? "bg-[#222A3A] border-slate-600"
-                    : theme === "sepia"
-                    ? "bg-[#E6D8BC] border-[#CBB994]"
-                    : "bg-stone-100 border-stone-200"
-                }`}
-              >
-                {toolItems.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = penTool === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => onSelectPenTool?.(item.id)}
-                      title={item.tip}
-                      className={`relative flex items-center justify-center gap-1.5 h-8 rounded-lg text-xs font-bold transition-all whitespace-nowrap shrink-0 ${
-                        isActive
-                          ? `${item.activeClass} px-2.5`
-                          : dark
-                          ? "w-8 text-stone-200 hover:bg-slate-700 hover:text-white"
-                          : "w-8 text-stone-700 hover:bg-stone-200 hover:text-stone-950"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5 shrink-0" />
-                      <span className={isActive ? "inline" : "hidden lg:inline"}>
-                        {item.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Action Buttons (Undo / Redo / Clear / Close) — Always visible & 100% solid */}
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  onClick={onUndoAnnotation}
-                  disabled={annotationCount === 0}
-                  title={t.penUndo || "تراجع"}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-30 transition-colors ${
-                    dark
-                      ? "bg-[#1A2130] hover:bg-slate-700 text-stone-200"
-                      : theme === "sepia"
-                      ? "bg-[#E6D8BC] hover:bg-[#D9C8A7] text-[#3D2E1E]"
-                      : "bg-stone-100 hover:bg-stone-200 text-stone-800"
-                  }`}
-                >
-                  <Undo2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onRedoAnnotation}
-                  disabled={!canRedo}
-                  title={t.penRedo || "إعادة"}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center disabled:opacity-30 transition-colors ${
-                    dark
-                      ? "bg-[#1A2130] hover:bg-slate-700 text-stone-200"
-                      : theme === "sepia"
-                      ? "bg-[#E6D8BC] hover:bg-[#D9C8A7] text-[#3D2E1E]"
-                      : "bg-stone-100 hover:bg-stone-200 text-stone-800"
-                  }`}
-                >
-                  <Redo2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onClearAnnotations}
-                  disabled={annotationCount === 0}
-                  title={t.penClearPage || "مسح جميع رسومات هذه الصفحة"}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center text-rose-600 dark:text-rose-400 disabled:opacity-30 transition-colors ${
-                    dark
-                      ? "bg-[#1A2130] hover:bg-rose-950"
-                      : theme === "sepia"
-                      ? "bg-[#E6D8BC] hover:bg-rose-100"
-                      : "bg-stone-100 hover:bg-rose-100"
-                  }`}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={onTogglePenMode}
-                  title={t.penClose || "إغلاق شريط القلم"}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                    dark
-                      ? "bg-slate-700 hover:bg-slate-600 text-white"
-                      : theme === "sepia"
-                      ? "bg-[#D9C8A7] hover:bg-[#CBB994] text-[#3D2E1E]"
-                      : "bg-stone-200 hover:bg-stone-300 text-stone-900"
-                  }`}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Row 2: Color Swatches & Stroke Thickness (Shown when drawing/highlighting/noting) */}
-            {showColorAndSizeRow && (
-              <div
-                style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
-                className={`flex items-center justify-between gap-2 pt-2 border-t overflow-x-auto scrollbar-none ${
-                  dark
-                    ? "border-slate-700"
-                    : theme === "sepia"
-                    ? "border-[#CBB994]"
-                    : "border-stone-200"
-                }`}
-              >
-                {/* Ink Colors */}
-                <div className="flex items-center gap-1.5 shrink-0 py-0.5 px-0.5">
-                  {PEN_COLORS.map((c) => {
-                    const isSelected = penColor === c.value;
-                    const displayBg =
-                      dark && c.value === "#111827" ? "#F9FAFB" : c.value;
-                    const checkContrast =
-                      dark && c.value === "#111827" ? "#111827" : "#FFFFFF";
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => onSelectPenColor?.(c.value)}
-                        title={t[c.labelKey] || c.fallback}
-                        className={`relative w-6 h-6 rounded-full flex items-center justify-center transition-all shrink-0 ${
-                          isSelected
-                            ? "scale-110 ring-2 ring-primary ring-offset-1 ring-offset-background shadow"
-                            : "hover:scale-105 ring-1 ring-stone-400 dark:ring-slate-500"
-                        }`}
-                        style={{ backgroundColor: displayBg }}
-                      >
-                        {isSelected && (
-                          <Check
-                            className="w-3 h-3 stroke-[3]"
-                            style={{ color: checkContrast }}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Stroke Thickness Selector */}
-                {penTool !== "text" && (
-                  <div
-                    className={`flex items-center gap-1 p-0.5 rounded-xl shrink-0 border ${
-                      theme === "dark"
-                        ? "bg-[#1A2130] border-slate-700"
-                        : theme === "dusk"
-                        ? "bg-[#222A3A] border-slate-600"
-                        : theme === "sepia"
-                        ? "bg-[#E6D8BC] border-[#CBB994]"
-                        : "bg-stone-100 border-stone-200"
-                    }`}
-                  >
-                    {PEN_SIZES.map((sz) => {
-                      const isSelected = penSize === sz.value;
-                      return (
-                        <button
-                          key={sz.id}
-                          type="button"
-                          onClick={() => onSelectPenSize?.(sz.value)}
-                          title={t[sz.labelKey] || sz.fallback}
-                          className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
-                            isSelected
-                              ? dark
-                                ? "bg-slate-700 ring-1 ring-primary text-white shadow-xs"
-                                : "bg-white ring-1 ring-primary text-stone-900 shadow-xs"
-                              : dark
-                              ? "hover:bg-slate-700"
-                              : "hover:bg-stone-200"
-                          }`}
-                        >
-                          <span
-                            className="rounded-full transition-transform"
-                            style={{
-                              width: `${sz.px}px`,
-                              height: `${sz.px}px`,
-                              backgroundColor: activeColorPreview,
-                            }}
-                          />
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Interactive Touch-Draggable Reading Progress Scrubber Bar */}
+      {/* Row 1: Color Swatches & Stroke Sizes + Undo / Redo / Clear / Close */}
       <div
-        dir="ltr"
-        style={{ touchAction: "none" }}
-        className={`h-3 cursor-pointer group relative flex items-center ${
-          theme === "dark"
-            ? "bg-[#181C26]"
-            : theme === "dusk"
-            ? "bg-[#1E2532]"
-            : theme === "sepia"
-            ? "bg-[#DFD0B5]"
-            : "bg-stone-200/90"
-        }`}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          scrubbingRef.current = true;
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {}
-          seekFromClientX(e.currentTarget, e.clientX, true);
-        }}
-        onPointerMove={(e) => {
-          e.stopPropagation();
-          if (scrubbingRef.current) {
-            seekFromClientX(e.currentTarget, e.clientX, true);
-          } else if (e.pointerType === "mouse") {
-            seekFromClientX(e.currentTarget, e.clientX, false);
-          }
-        }}
-        onPointerUp={(e) => {
-          e.stopPropagation();
-          if (scrubbingRef.current) {
-            scrubbingRef.current = false;
-            try {
-              e.currentTarget.releasePointerCapture(e.pointerId);
-            } catch {}
-            seekFromClientX(e.currentTarget, e.clientX, true);
-          }
-          setHoverPage(null);
-        }}
-        onPointerCancel={() => {
-          scrubbingRef.current = false;
-          setHoverPage(null);
-        }}
-        onMouseLeave={() => {
-          if (!scrubbingRef.current) setHoverPage(null);
+        className="w-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-2xl shadow-xl border backdrop-blur-xl"
+        style={{
+          backgroundColor: themeCfg?.toolbar || "#FFFFFF",
+          borderColor: themeCfg?.border || "#E2E8F0",
+          color: themeCfg?.text || "#0F172A",
         }}
       >
-        <div
-          className="h-full bg-primary transition-all duration-75"
-          style={{ width: `${pct}%` }}
-        />
-
-        {/* Draggable Scrubber Thumb Handle */}
-        <div
-          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-primary ring-2 ring-white dark:ring-neutral-900 shadow pointer-events-none"
-          style={{ left: `${pct}%` }}
-        />
-
-        {/* Bookmark ticks on progress bar */}
-        {totalPages > 0 &&
-          bookmarks.map((bmPage) => {
-            const bmPct = Math.min(100, Math.max(0, (bmPage / totalPages) * 100));
+        {/* Colors */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {penColors.map((c) => {
+            const isSelected =
+              String(activeColor || "").toUpperCase() === c.value.toUpperCase();
             return (
-              <span
-                key={bmPage}
-                className="absolute top-0 bottom-0 w-1 bg-amber-500 pointer-events-none"
-                style={{ left: `${bmPct}%` }}
-              />
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onSelectColor?.(c.value)}
+                title={c.label}
+                className={`w-7 h-7 rounded-lg transition-all flex items-center justify-center border ${
+                  isSelected
+                    ? "ring-2 ring-emerald-600 scale-110 border-white"
+                    : "border-black/15 opacity-85 hover:opacity-100"
+                }`}
+                style={{ backgroundColor: c.value }}
+              >
+                {isSelected && (
+                  <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                )}
+              </button>
             );
           })}
+        </div>
 
-        {/* Hover / Drag page tooltip */}
-        {hoverPage !== null && (
-          <div
-            className="absolute -top-8 -translate-x-1/2 px-2 py-0.5 rounded bg-stone-900 text-stone-100 text-[10px] font-mono tabular-nums pointer-events-none shadow-md"
-            style={{ left: `${hoverX}px` }}
+        {/* Stroke Sizes */}
+        <div className="flex items-center gap-1">
+          {sizes.map((s) => {
+            const active = strokeWidth === s.val;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onChangeStrokeWidth?.(s.val)}
+                title={s.label}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                  active
+                    ? "bg-emerald-700 text-white border-emerald-700"
+                    : "border-current/15 hover:bg-black/5 dark:hover:bg-white/10"
+                }`}
+              >
+                <span className={`rounded-full bg-current ${s.dot}`} />
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Actions: Undo, Redo, Clear Page, Close */}
+        <div className="flex items-center gap-1 ms-auto">
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!hasAnnotations}
+            title={t.penUndo || "تراجع"}
+            className="h-8 px-2 rounded-lg border border-current/15 flex items-center gap-1 text-[11px] font-bold hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-35 transition-colors"
           >
-            {t.pageNo || "ص"} {hoverPage}
-          </div>
-        )}
+            <Undo2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{t.penUndo || "تراجع"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            title={t.penRedo || "إعادة"}
+            className="h-8 px-2 rounded-lg border border-current/15 flex items-center gap-1 text-[11px] font-bold hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-35 transition-colors"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{t.penRedo || "إعادة"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onClearPage}
+            disabled={!hasAnnotations}
+            title={t.penClearPage || "مسح"}
+            className="h-8 px-2 rounded-lg border border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400 flex items-center gap-1 text-[11px] font-bold hover:bg-red-500/20 disabled:opacity-35 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onClose}
+            title={t.penClose || "إغلاق"}
+            className="w-8 h-8 rounded-lg border border-current/15 flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Main Bottom Toolbar Controls Row (Fits all devices cleanly & scrolls smoothly if needed) */}
+      {/* Row 2: Tool Square Boxes (Pan, Pen, Highlighter, Underline, Line, Box, Circle, Note, Eraser, Laser) */}
       <div
-        dir="ltr"
-        style={{ touchAction: "pan-x", WebkitOverflowScrolling: "touch" }}
-        className="w-full overflow-x-auto scrollbar-none"
+        className="w-full flex items-center justify-start sm:justify-center gap-1.5 px-2.5 py-2 rounded-2xl shadow-2xl border backdrop-blur-xl overflow-x-auto scrollbar-none"
+        style={{
+          backgroundColor: themeCfg?.toolbar || "#FFFFFF",
+          borderColor: themeCfg?.border || "#E2E8F0",
+          color: themeCfg?.text || "#0F172A",
+        }}
       >
-        <div className="min-w-max max-w-4xl mx-auto flex items-center justify-between px-2.5 sm:px-4 py-1.5 sm:py-2 gap-2 sm:gap-4">
-          {/* Left group: Zoom controls */}
-          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            <ToolBtn onClick={onZoomOut} dark={dark} title={t.tbZoomOut || "تصغير"}>
-              <ZoomOut className="w-4 h-4" />
-            </ToolBtn>
+        {tools.map((tool) => {
+          const Icon = tool.icon;
+          const active = activeTool === tool.id;
+          return (
             <button
+              key={tool.id}
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onResetZoom?.();
-              }}
-              title={t.tbResetZoom || "إعادة ضبط التكبير (100%)"}
-              className={`inline-flex text-[11px] font-mono tabular-nums font-bold px-1.5 sm:px-2 py-1 rounded-md transition-colors ${
-                dark ? "hover:bg-white/10 text-stone-200" : "hover:bg-stone-200/70 text-stone-700"
+              onClick={() => onSelectTool?.(tool.id)}
+              title={tool.tip || tool.label}
+              className={`min-w-[54px] h-12 px-2 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all border cursor-pointer ${
+                active
+                  ? "bg-emerald-700 text-white border-emerald-700 shadow-sm scale-[1.02]"
+                  : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
               }`}
             >
-              {Math.round(zoom * 100)}%
+              <Icon className="w-4 h-4 shrink-0" />
+              <span className="text-[10px] font-bold leading-none truncate max-w-[52px]">
+                {tool.label}
+              </span>
             </button>
-            <ToolBtn onClick={onZoomIn} dark={dark} title={t.tbZoomIn || "تكبير"}>
-              <ZoomIn className="w-4 h-4" />
-            </ToolBtn>
-          </div>
-
-          {/* Center group: Page navigation */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-            <ToolBtn
-              onClick={onPrev}
-              dark={dark}
-              title={t.tbPrev || "الصفحة السابقة"}
-              disabled={currentPage <= 1}
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </ToolBtn>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleGoTo?.();
-              }}
-              title={t.tbGoTo || "انتقال إلى صفحة"}
-              className={`text-xs font-mono tabular-nums font-bold px-2.5 sm:px-3.5 py-1.5 rounded-xl shrink-0 whitespace-nowrap transition-colors ${
-                theme === "dark"
-                  ? "text-stone-100 bg-[#1A1F2B] hover:bg-[#232A3A] ring-1 ring-white/10"
-                  : theme === "dusk"
-                  ? "text-slate-100 bg-[#222938] hover:bg-[#2A3346] ring-1 ring-white/10"
-                  : theme === "sepia"
-                  ? "text-[#3D2E1E] bg-[#E2D4B7] hover:bg-[#D7C6A5]"
-                  : "text-stone-900 bg-stone-200/80 hover:bg-stone-300/80"
-              }`}
-            >
-              {currentPage} / {totalPages}
-            </button>
-
-            <ToolBtn
-              onClick={onNext}
-              dark={dark}
-              title={t.tbNext || "الصفحة التالية"}
-              disabled={currentPage >= totalPages}
-            >
-              <ChevronRight className="w-4 h-4" />
-            </ToolBtn>
-          </div>
-
-          {/* Right group: Reading & Annotation tools */}
-          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            {/* TOC & Bookmarks Drawer */}
-            <ToolBtn
-              onClick={onToggleToc}
-              dark={dark}
-              title={t.tocAndBookmarks || t.idxTitle || "الفهرس والعلامات المرجعية"}
-              badge={bookmarks.length > 0 ? bookmarks.length : null}
-            >
-              <List className="w-4 h-4" />
-            </ToolBtn>
-
-            {/* Precision Pen & Highlighter Tool */}
-            <ToolBtn
-              onClick={onTogglePenMode}
-              dark={dark}
-              title={t.penToolTitle || "قلم الكتابة والتلوين والتظليل"}
-              active={penMode}
-              badge={!penMode && annotationCount > 0 ? annotationCount : null}
-            >
-              <PenTool className="w-4 h-4" />
-            </ToolBtn>
-
-            {/* Bookmark Current Page */}
-            <ToolBtn
-              onClick={onToggleBookmark}
-              dark={dark}
-              title={t.tbBookmark || "حفظ علامة مرجعية"}
-              active={isBookmarked}
-            >
-              {isBookmarked ? (
-                <BookmarkCheck className="w-4 h-4 text-amber-500 fill-amber-500" />
-              ) : (
-                <Bookmark className="w-4 h-4" />
-              )}
-            </ToolBtn>
-
-            {/* Night Mode & Reading Comfort Button */}
-            <ToolBtn
-              onClick={onToggleComfort}
-              dark={dark}
-              title={t.tbComfort || "الوضع الليلي وإعدادات الإضاءة"}
-              active={theme !== "light"}
-            >
-              {themeIcon}
-            </ToolBtn>
-
-            <ToolBtn
-              onClick={onToggleFullscreen}
-              dark={dark}
-              title={t.tbFullscreen || "ملء الشاشة"}
-            >
-              <Maximize className="w-4 h-4" />
-            </ToolBtn>
-
-            <ToolBtn onClick={onHide} dark={dark} title={t.tbHide || "إخفاء الشريط"}>
-              <ChevronDown className="w-4 h-4" />
-            </ToolBtn>
-          </div>
-        </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function ToolBtn({
-  children,
-  onClick,
-  dark,
-  title,
-  active = false,
-  disabled = false,
-  badge = null,
-  className = "",
+/**
+ * 3. الشريط السفلي الأصلي للأزرار + زر واحد فقط للقارئ الذكي
+ * (Classic Bottom Control Bar + ONE Smart Reader Button)
+ */
+export function BottomControlBar({
+  currentPage,
+  totalPages,
+  zoom,
+  themeCfg,
+  isFullscreen = false,
+  isAudioOpen = false,
+  onToggleAudioOpen,
+  onPrevPage,
+  onNextPage,
+  onOpenGoTo,
+  onZoomIn,
+  onZoomOut,
+  onResetZoom,
+  onTogglePanel,
+  activePanel,
+  onToggleBookmark,
+  isBookmarked,
+  onToggleFullscreen,
+  onToggleAnnotation,
+  isAnnotationActive,
+  audioState,
 }) {
+  const t = useT();
+  const [barHidden, setBarHidden] = useState(false);
+  const isPlaying = audioState?.playerState === "playing";
+
+  if (barHidden) {
+    return (
+      <div className="fixed bottom-3 left-3 z-40">
+        <button
+          type="button"
+          onClick={() => setBarHidden(false)}
+          className="h-10 px-3.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-emerald-800 transition-colors"
+          title={t.tbShow || "إظهار الشريط"}
+        >
+          <Eye className="w-4 h-4" />
+          <span>{t.tbShow || "إظهار الشريط"}</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        if (!disabled) onClick?.(e);
+    <footer
+      data-viewer-ui
+      dir={t.dir || "rtl"}
+      className="relative border-t z-30 transition-colors select-none shrink-0"
+      style={{
+        backgroundColor: themeCfg?.toolbar || "#FFFFFF",
+        borderColor: themeCfg?.border || "#E2E8F0",
+        color: themeCfg?.text || "#0F172A",
       }}
-      title={title}
-      disabled={disabled}
-      className={`relative w-8 h-8 sm:w-8.5 sm:h-8.5 rounded-xl flex items-center justify-center transition-colors active:scale-90 shrink-0 disabled:opacity-25 disabled:cursor-default ${
-        active
-          ? "bg-primary text-primary-foreground shadow-sm"
-          : dark
-          ? "hover:bg-white/10 text-stone-200"
-          : "hover:bg-black/5 text-current"
-      } ${className}`}
     >
-      {children}
-      {badge != null && (
-        <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-amber-500 text-white text-[9px] font-mono tabular-nums font-bold flex items-center justify-center">
-          {badge}
-        </span>
-      )}
-    </button>
+      <div className="max-w-5xl mx-auto px-2 sm:px-4 h-14 flex items-center justify-between gap-1.5 overflow-x-auto scrollbar-none">
+        {/* Group 1: Page Navigation (Prev | Page X / Y | Next) */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onPrevPage}
+            disabled={currentPage <= 1}
+            title={t.tbPrev || "السابقة"}
+            className="h-10 px-2.5 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-35 flex items-center gap-1 text-xs font-bold transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+            <span className="hidden md:inline">{t.tbPrev || "السابقة"}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onOpenGoTo}
+            title={t.tbGoTo || "انتقال إلى صفحة"}
+            className="h-10 px-3 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:border-emerald-600 text-xs font-mono font-bold tabular-nums whitespace-nowrap transition-colors"
+          >
+            {currentPage} / {totalPages || 1}
+          </button>
+
+          <button
+            type="button"
+            onClick={onNextPage}
+            disabled={totalPages > 0 && currentPage >= totalPages}
+            title={t.tbNext || "التالية"}
+            className="h-10 px-2.5 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-35 flex items-center gap-1 text-xs font-bold transition-colors"
+          >
+            <span className="hidden md:inline">{t.tbNext || "التالية"}</span>
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Group 2: Zoom Controls (- | 100% | +) */}
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onZoomOut}
+            title={t.tbZoomOut || "تصغير"}
+            className="w-9 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onResetZoom}
+            title={t.tbResetZoom || "إعادة ضبط التكبير (100%)"}
+            className="h-10 px-2 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:border-emerald-600 text-xs font-mono font-bold tabular-nums transition-colors"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+
+          <button
+            type="button"
+            onClick={onZoomIn}
+            title={t.tbZoomIn || "تكبير"}
+            className="w-9 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
+          >
+            <ZoomIn className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Group 3: Classic Viewer Tools + THE SINGLE SMART READER BUTTON */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* ★ الزر الوحيد للقارئ الذكي في شريط الأزرار ★ */}
+          <button
+            type="button"
+            onClick={onToggleAudioOpen}
+            title={t.smartReaderTitle || "القارئ الذكي"}
+            className={`h-10 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
+              isAudioOpen || isPlaying
+                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm"
+                : "border-emerald-600/40 bg-emerald-600/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-600/20"
+            }`}
+          >
+            <Volume2
+              className={`w-4 h-4 shrink-0 ${isPlaying ? "animate-pulse" : ""}`}
+            />
+            <span className="whitespace-nowrap">
+              {t.smartReaderBtn || "القارئ الذكي"}
+            </span>
+          </button>
+
+          {/* زر القلم والتدوين الأصلي */}
+          <button
+            type="button"
+            onClick={onToggleAnnotation}
+            title={t.penToolTitle || "أداة القلم والتظليل"}
+            className={`h-10 px-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              isAnnotationActive
+                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm"
+                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+            }`}
+          >
+            <PenTool className="w-4 h-4 shrink-0" />
+            <span className="hidden sm:inline">{t.penDraw || "قلم"}</span>
+          </button>
+
+          {/* زر الفهرس */}
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("toc")}
+            title={t.tocAndBookmarks || "الفهرس والعلامات"}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+              activePanel === "toc"
+                ? "bg-emerald-700 text-white border-emerald-700"
+                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+            }`}
+          >
+            <List className="w-4 h-4" />
+          </button>
+
+          {/* زر البحث داخل الكتاب */}
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("search")}
+            title={t.tbSearch || "بحث"}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+              activePanel === "search"
+                ? "bg-emerald-700 text-white border-emerald-700"
+                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+            }`}
+          >
+            <Search className="w-4 h-4" />
+          </button>
+
+          {/* زر إعدادات القراءة وراحة العين (الوضع الليلي/ورق تراثي/طريقة العرض) */}
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("settings")}
+            title={t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+              activePanel === "settings"
+                ? "bg-emerald-700 text-white border-emerald-700"
+                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+            }`}
+          >
+            <Sun className="w-4 h-4" />
+          </button>
+
+          {/* زر العلامة المرجعية */}
+          <button
+            type="button"
+            onClick={onToggleBookmark}
+            title={t.tbBookmark || "علامة مرجعية"}
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+              isBookmarked
+                ? "bg-amber-500 text-white border-amber-500"
+                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+            }`}
+          >
+            <Bookmark
+              className={`w-4 h-4 ${isBookmarked ? "fill-current" : ""}`}
+            />
+          </button>
+
+          {/* زر ملء الشاشة */}
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            title={t.tbFullscreen || "ملء الشاشة"}
+            className="hidden sm:flex w-10 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 items-center justify-center transition-colors"
+          >
+            {isFullscreen ? (
+              <Minimize2 className="w-4 h-4" />
+            ) : (
+              <Maximize2 className="w-4 h-4" />
+            )}
+          </button>
+
+          {/* زر إخفاء الشريط */}
+          <button
+            type="button"
+            onClick={() => setBarHidden(true)}
+            title={t.tbHide || "إخفاء الشريط"}
+            className="w-10 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
+          >
+            <EyeOff className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </footer>
   );
 }

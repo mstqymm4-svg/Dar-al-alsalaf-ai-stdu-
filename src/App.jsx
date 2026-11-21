@@ -40,6 +40,7 @@ import About from './pages/About';
 import Contact from './pages/Contact';
 import VerifyEmail from './pages/VerifyEmail';
 import DarAlUloomSplash from './components/splash/DarAlUloomSplash';
+import FloatingBackgroundAudioBar from './components/probook/FloatingBackgroundAudioBar';
 
 // Lazy-load heavy admin / developer tools only
 const Admin = lazy(() => import('./pages/Admin'));
@@ -127,6 +128,7 @@ const AuthenticatedApp = () => {
           <Route path="/admin" element={<Admin />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/dev" element={<DevPanel />} />
+          <Route path="/read" element={<ReadBook />} />
           <Route path="/read/:id" element={<ReadBook />} />
           <Route path="/videos" element={<Videos />} />
           <Route path="/about" element={<About />} />
@@ -137,6 +139,7 @@ const AuthenticatedApp = () => {
           <Route path="*" element={<PageNotFound />} />
         </Route>
       </Routes>
+      <FloatingBackgroundAudioBar />
     </Suspense>
     </>);
 

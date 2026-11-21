@@ -10,10 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { toast } from "sonner";
 import { getSetting } from "@/lib/settingsStore";
 import { deleteCachedBook, deleteCachedPdf } from "@/lib/offlineDB";
+import { inspectPdfFileForBook } from "@/lib/pdfLoader";
 
 
 const DEFAULT_CATS = ["القرآن وعلومه","الحديث الشريف","الفقه الإسلامي","السيرة النبوية","العقيدة","التزكية والرقائق","التاريخ الإسلامي","أخرى"];
-const emptyForm = { title:"", author:"", category:"القرآن وعلومه", description:"", cover_image:"", pages_count:"", language:"العربية", pdf_url:"", is_featured:false, rating:0, status:"published" };
+const emptyForm = { title:"", author:"", category:"القرآن وعلومه", description:"", cover_image:"", pages_count:"", language:"العربية", pdf_url:"", toc:[], is_featured:false, rating:0, status:"published" };
 const STATUS_OPTIONS = [{ value:"published", label:"منشور", color:"text-green-600" },{ value:"draft", label:"مسودة", color:"text-amber-600" },{ value:"hidden", label:"مخفي", color:"text-red-500" }];
 
 // Derive a clean book title from a PDF filename / direct URL (editable manually)
@@ -62,26 +63,59 @@ export default function DevBooks() {
     return matchSearch && matchFilter;
   });
 
+  const parseTocList = (rawToc) => {
+    if (!rawToc) return [];
+    if (Array.isArray(rawToc)) return rawToc.filter((x) => x && !x.isAuto);
+    if (typeof rawToc === "string") {
+      try {
+        const parsed = JSON.parse(rawToc);
+        return Array.isArray(parsed) ? parsed.filter((x) => x && !x.isAuto) : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
   const openAdd = () => { setForm(emptyForm); setEditBook(null); setShowAdd(true); };
   const openEdit = (book) => {
     setEditBook(book);
-    setForm({ title:book.title||"", author:book.author||"", category:book.category||"القرآن وعلومه", description:book.description||"", cover_image:book.cover_image||"", pages_count:book.pages_count||"", language:book.language||"العربية", pdf_url:book.pdf_url||"", is_featured:book.is_featured||false, rating:book.rating||0, status:book.status||"published" });
+    const realToc = parseTocList(book.toc);
+    setForm({ title:book.title||"", author:book.author||"", category:book.category||"القرآن وعلومه", description:book.description||"", cover_image:book.cover_image||"", pages_count:book.pages_count||"", language:book.language||"العربية", pdf_url:book.pdf_url||"", toc:realToc, is_featured:book.is_featured||false, rating:book.rating||0, status:book.status||"published" });
     setShowAdd(true);
   };
 
   const handleSave = async () => {
-    if (!form.title || !form.author) { toast.error("أدخل العنوان والمؤلف"); return; }
+    const cleanTitle = (form.title || titleFromPdfUrl(form.pdf_url) || "").trim();
+    if (!cleanTitle) {
+      toast.error("يرجى إدخال عنوان الكتاب أو رفع ملف PDF");
+      return;
+    }
+    if (pdfUploading || coverUploading) {
+      toast.info("يرجى الانتظار لحظة حتى يكتمل تجهيز الملف...");
+      return;
+    }
+    const cleanAuthor = (form.author || "").trim() || "دار التوحيد";
     setSaving(true);
     try {
-      const data = { ...form, pages_count: form.pages_count ? Number(form.pages_count) : null, rating: Number(form.rating)||0 };
+      const cleanToc = parseTocList(form.toc);
+      const data = {
+        ...form,
+        title: cleanTitle,
+        author: cleanAuthor,
+        category: form.category || categories[0] || "القرآن وعلومه",
+        toc: cleanToc,
+        pages_count: form.pages_count ? Number(form.pages_count) : null,
+        rating: Number(form.rating) || 0,
+      };
       if (editBook) {
         const updated = await base44.entities.Book.update(editBook.id, data);
         setBooks(prev => prev.map(b => b.id === editBook.id ? { ...b, ...updated } : b));
-        toast.success("تم التحديث ✓");
+        toast.success("تم تحديث الكتاب بنجاح ✓");
       } else {
         const created = await base44.entities.Book.create(data);
-        setBooks(prev => [created, ...prev]);
-        toast.success("تمت الإضافة ✓");
+        setBooks(prev => [created, ...prev.filter(b => b.id !== created.id)]);
+        toast.success("تمت إضافة الكتاب بنجاح ✓");
       }
       setShowAdd(false);
       await loadBooks();
@@ -136,19 +170,28 @@ export default function DevBooks() {
   };
 
   const uploadFile = async (e, field, setUploading) => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
     const isPdf = field === "pdf_url";
     if (isPdf) {
       setPdfUploading(true);
-      setPdfProgress(0);
+      setPdfProgress(5);
       setPdfProgressInfo(`${(file.size / (1024 * 1024)).toFixed(1)} MB`);
     } else {
       setUploading(true);
     }
 
     try {
-      const { file_url } = await base44.integrations.Core.UploadFile({
+      const derivedTitle = isPdf
+        ? file.name.replace(/\.pdf$/i, "").replace(/[-_+]+/g, " ").trim()
+        : "";
+      if (isPdf && derivedTitle) {
+        setForm((p) => ({ ...p, title: p.title || derivedTitle }));
+      }
+
+      // 1. Upload & cache the file immediately so form.pdf_url is set right away (<200ms)
+      const uploadRes = await base44.integrations.Core.UploadFile({
         file,
         onProgress: isPdf
           ? ({ percent, speedText }) => {
@@ -157,25 +200,50 @@ export default function DevBooks() {
             }
           : undefined,
       });
-      setForm(p => {
-        const next = { ...p, [field]: file_url };
-        // Auto-fill the title from the PDF filename if the title is still empty
-        if (isPdf && !p.title) {
-          const derived = file.name.replace(/\.pdf$/i, "").replace(/[-_+]+/g, " ").trim();
-          if (derived) next.title = derived;
-        }
-        return next;
-      });
-      if (isPdf && String(file_url || "").startsWith("firestore://book_files/")) {
-        toast.success("تم رفع ملف PDF إلى السحابة ✓ — سيكون متاحاً لجميع المستخدمين فور حفظ الكتاب");
-      } else if (isPdf && String(file_url || "").startsWith("https://local.daraluloom.app/")) {
-        toast.warning("تم حفظ ملف PDF محلياً فقط");
+
+      const file_url = uploadRes?.file_url || uploadRes?.url || "";
+      if (!file_url) {
+        throw new Error("تعذر إنشاء رابط الملف");
+      }
+
+      setForm((p) => ({
+        ...p,
+        [field]: file_url,
+        ...(isPdf && derivedTitle && !p.title ? { title: derivedTitle } : {}),
+      }));
+
+      // Unlock the Save button immediately so the user can save without any delay
+      if (isPdf) {
+        setPdfUploading(false);
+        setPdfProgress(0);
+        setPdfProgressInfo("");
+        setPdfSpeed("");
+        toast.success("تم رفع وتجهيز ملف PDF بنجاح ✓");
+
+        // 2. Extract authentic original embedded TOC (or [] if none) asynchronously without blocking
+        Promise.race([
+          inspectPdfFileForBook(file),
+          new Promise((resolve) => setTimeout(() => resolve({ numPages: 0, outline: [] }), 4500)),
+        ])
+          .then((extractedMeta) => {
+            if (!extractedMeta) return;
+            setForm((p) => ({
+              ...p,
+              toc: Array.isArray(extractedMeta.outline) ? extractedMeta.outline : p.toc || [],
+              pages_count:
+                p.pages_count || (extractedMeta.numPages > 0 ? String(extractedMeta.numPages) : ""),
+            }));
+            if (extractedMeta.outline?.length > 0) {
+              toast.success(`تم استخراج الفهرس الأصلي للكتاب (${extractedMeta.outline.length} قسم) ✓`);
+            }
+          })
+          .catch(() => {});
       } else {
-        toast.success("تم رفع " + (isPdf ? "الملف" : "الغلاف") + " ✓");
+        setUploading(false);
+        toast.success("تم رفع الغلاف ✓");
       }
     } catch (err) {
       toast.error("فشل الرفع: " + (err?.message || "خطأ غير معروف"));
-    } finally {
       if (isPdf) {
         setPdfUploading(false);
         setPdfProgress(0);
@@ -184,6 +252,7 @@ export default function DevBooks() {
       } else {
         setUploading(false);
       }
+    } finally {
       e.target.value = "";
     }
   };
@@ -199,26 +268,35 @@ export default function DevBooks() {
       const blob = await res.blob();
       const filename = url.split("/").pop().split("?")[0] || "book.pdf";
       const file = new File([blob], filename, { type: "application/pdf" });
+      const extractedMeta = await inspectPdfFileForBook(file);
 
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       if (String(file_url || "").startsWith("https://local.daraluloom.app/")) {
         // Keep the shareable HTTPS URL instead of replacing it with a device-only local URL
-        setForm(p => ({ ...p, title: p.title || titleFromPdfUrl(url) }));
-        toast.success("تم تخزين نسخة أوفلاين مع الإبقاء على الرابط السحابي المباشر ✓");
+        setForm(p => ({
+          ...p,
+          title: p.title || titleFromPdfUrl(url),
+          pages_count: p.pages_count || (extractedMeta.numPages > 0 ? String(extractedMeta.numPages) : ""),
+          toc: Array.isArray(extractedMeta.outline) ? extractedMeta.outline : [],
+        }));
+        toast.success("تم تخزين نسخة أوفلاين واستخراج الفهرس الأصلي ✓");
       } else {
         setForm(p => ({
           ...p,
           pdf_url: file_url,
-          title: p.title || titleFromPdfUrl(url)
+          title: p.title || titleFromPdfUrl(url),
+          pages_count: p.pages_count || (extractedMeta.numPages > 0 ? String(extractedMeta.numPages) : ""),
+          toc: Array.isArray(extractedMeta.outline) ? extractedMeta.outline : [],
         }));
-        toast.success("تم جلب ورفع ملف PDF من الرابط ✓");
+        toast.success("تم جلب ورفع ملف PDF واستخراج الفهرس الأصلي ✓");
       }
     } catch (err) {
-      toast.info("تم الإبقاء على الرابط المباشر (الرابط يعمل مباشرة عبر السحابة)");
+      toast.info("تم الإبقاء على الرابط المباشر (سيتم قراءة الفهرس الأصلي عند فتح الكتاب)");
       setForm(p => ({
         ...p,
         pdf_url: url,
-        title: p.title || titleFromPdfUrl(url)
+        title: p.title || titleFromPdfUrl(url),
+        toc: [],
       }));
     } finally {
       setPdfUploading(false);
@@ -416,13 +494,27 @@ export default function DevBooks() {
                   تنبيه: هذا الملف محفوظ محلياً على هذا الجهاز فقط — لمشاركته في جميع الأجهزة والإصدارات ارفع ملف PDF مجدداً أو استخدم رابط PDF مباشر (https://).
                 </p>
               )}
+              {form.pdf_url && (
+                <div className="px-3 py-2 rounded-xl bg-muted/60 border border-border text-[11px] flex items-center justify-between">
+                  <span className="font-semibold text-foreground">فهرس الكتاب الأصلي:</span>
+                  {Array.isArray(form.toc) && form.toc.length > 0 ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                      ✓ تم استخراج الفهرس الأصلي ({form.toc.length} أبواب/فصول)
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      لا يوجد فهرس مدمج في الملف (فارغ)
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
               <Label className="text-sm cursor-pointer">كتاب مميز ⭐</Label>
               <Switch checked={form.is_featured} onCheckedChange={v=>setForm(p=>({...p,is_featured:v}))} />
             </div>
-            <Button onClick={handleSave} disabled={saving} className="w-full rounded-xl h-11 font-bold gap-2">
-              {saving ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>جاري الحفظ...</> : editBook ? "حفظ التعديلات" : "إضافة الكتاب"}
+            <Button onClick={handleSave} disabled={saving || pdfUploading || coverUploading} className="w-full rounded-xl h-11 font-bold gap-2">
+              {saving ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>جاري الحفظ...</> : pdfUploading ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>جاري تجهيز ملف PDF ({pdfProgress}%)...</> : editBook ? "حفظ التعديلات" : "إضافة الكتاب"}
             </Button>
           </div>
         </DialogContent>
