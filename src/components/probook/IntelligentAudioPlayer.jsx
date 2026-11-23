@@ -1,296 +1,464 @@
-/**
- * DAR AL TAWHID — Simple, Clean, Clutter-Free Smart Audio Reader Bar
- *
- * Appears ONLY when the user clicks the single "القارئ الذكي" (Smart Reader) button
- * in the bottom toolbar. Designed to be compact, responsive across all devices,
- * translated into all 6 languages, and 100% functional without covering the book.
- */
-
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Play,
   Pause,
+  Square,
   SkipBack,
   SkipForward,
-  RotateCcw,
-  Loader2,
-  X,
+  RefreshCw,
   Volume2,
+  X,
+  Loader2,
+  AlertCircle,
+  Clock,
 } from "lucide-react";
+import { intelligentAudioEngine } from "@/lib/intelligentReader/audioEngine";
 import {
+  loadReaderSettings,
+  saveReaderSettings,
   PLAYBACK_SPEEDS,
-  URDU_VOICES,
-  ARABIC_VOICES,
-  getHighlightColorConfig,
 } from "@/lib/intelligentReader/readerSettings";
 import { useT } from "@/lib/i18n";
 
+const SEGMENT_BADGE_MAP = {
+  quran: {
+    label: "تلاوة قرآنية مسجلة • الشيخ مشاري العفاسي",
+    cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+  },
+  hadith: {
+    label: "حديث نبوي شريف • صوت رجالي عربي تلقائي",
+    cls: "bg-sky-500/20 text-sky-300 border-sky-500/30",
+  },
+  dua: {
+    label: "دعاء مأثور • صوت رجالي عربي تلقائي",
+    cls: "bg-indigo-500/20 text-indigo-300 border-indigo-500/30",
+  },
+  arabic_quote: {
+    label: "نص عربي • صوت رجالي عربي تلقائي",
+    cls: "bg-teal-500/20 text-teal-300 border-teal-500/30",
+  },
+  heading: {
+    label: "عنوان • صوت رجالي تلقائي",
+    cls: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+  },
+  urdu_body: {
+    label: "نص أردي • صوت رجالي أردي تلقائي (ur-PK)",
+    cls: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+  },
+};
+
+/**
+ * DAR AL TAWHID — Smart Audio Reader Control Bar (100% Zero-Config Automatic Edition)
+ * Automatically uses scholarly male voices:
+ * - Urdu: ur-PK-AsadNeural
+ * - Arabic / Hadith / Dua: ar-SA-HamedNeural
+ * - Verified Quranic verses: Authentic Recorded Recitation (Mishary Alafasy)
+ */
 export default function IntelligentAudioPlayer({
+  isOpen = true,
+  pageData,
   audioState,
-  readerSettings,
-  isOpen = false,
+  readerSettings: readerSettingsProp,
+  isRunningOcr,
+  isExtracting,
+  onRetryExtract,
+  onForceReOcr,
   onClose,
   onPlay,
   onPause,
+  onStop,
   onPrevSentence,
   onNextSentence,
   onChangeSpeed,
   onUpdateSettings,
-  onRetryExtract,
-  isRunningOcr = false,
-  themeCfg,
-  darkMode = false,
 }) {
-  const t = useT();
+  const t = useT() || {};
+  const [snap, setSnap] = useState(
+    () => audioState || intelligentAudioEngine.getSnapshot()
+  );
+  const [settings, setSettings] = useState(
+    () => readerSettingsProp || loadReaderSettings()
+  );
+  const activeWordRef = useRef(null);
+
+  useEffect(() => {
+    if (audioState) {
+      setSnap(audioState);
+    }
+  }, [audioState]);
+
+  useEffect(() => {
+    return intelligentAudioEngine.subscribe((newSnap) => {
+      setSnap(newSnap);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (readerSettingsProp) {
+      setSettings(readerSettingsProp);
+    }
+  }, [readerSettingsProp]);
+
+  useEffect(() => {
+    const onSettingsChanged = (e) => {
+      if (e.detail) setSettings(e.detail);
+    };
+    window.addEventListener("dat:reader-settings-changed", onSettingsChanged);
+    return () =>
+      window.removeEventListener(
+        "dat:reader-settings-changed",
+        onSettingsChanged
+      );
+  }, []);
+
+  // Automatically scroll the currently highlighted word into view inside the sentence container
+  useEffect(() => {
+    if (activeWordRef.current) {
+      try {
+        activeWordRef.current.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+          inline: "nearest",
+        });
+      } catch {}
+    }
+  }, [snap.sentenceIndex, snap.wordIndex, snap.playerState]);
+
   if (!isOpen) return null;
 
-  const {
-    playerState,
-    isExtractingPage = false,
-    currentSentence,
-    sentenceIndex = 0,
-    totalSentencesOnPage = 0,
-    wordIndex = 0,
-    playbackRate = 1,
-    currentSegmentInfo,
-  } = audioState || {};
-
-  const isPlaying = playerState === "playing";
-  const isLoading = playerState === "loading";
-  const isExtracting = Boolean(isRunningOcr || isExtractingPage);
-  const isBusy = Boolean(isLoading || isExtracting);
-
-  const colorCfg = getHighlightColorConfig(
-    readerSettings?.highlightColorId || "cyan"
+  const extracting = Boolean(
+    isRunningOcr || isExtracting || snap.isExtractingPage
   );
+  const handleReExtract = onRetryExtract || onForceReOcr;
 
-  const words = currentSentence?.words || [];
-  const isArabicSegment =
-    currentSegmentInfo?.language?.startsWith("ar") ||
-    currentSentence?.language === "ar";
+  const updateSpeed = (newSpeed) => {
+    const next = saveReaderSettings({ defaultSpeed: newSpeed });
+    setSettings(next);
+    onUpdateSettings?.({ defaultSpeed: newSpeed });
+    intelligentAudioEngine.setPlaybackRate(newSpeed);
+    onChangeSpeed?.(newSpeed);
+  };
 
-  const activeVoiceId = isArabicSegment
-    ? readerSettings?.defaultArabicVoice || "arabic_hadith_charon"
-    : readerSettings?.urduVoiceId ||
-      readerSettings?.defaultUrduVoice ||
-      "pakistani_scholar_charon";
+  const sentences =
+    pageData?.sentences || intelligentAudioEngine.pageData?.sentences || [];
+  const currentSentence =
+    snap.currentSentence || sentences[snap.sentenceIndex] || null;
+  const totalSentenceCount =
+    sentences.length ||
+    snap.totalSentencesOnPage ||
+    (currentSentence ? 1 : 0);
+  const isPlaying = snap.playerState === "playing";
+  const isPaused = snap.playerState === "paused";
+  const isBuffering = snap.playerState === "loading" || extracting;
+  const isError = snap.playerState === "error";
+  const hasSentences = totalSentenceCount > 0 || Boolean(currentSentence);
 
-  const availableVoices = isArabicSegment ? ARABIC_VOICES : URDU_VOICES;
+  const isUrduSentence =
+    currentSentence?.language === "ur" ||
+    (currentSentence?.segmentType === "urdu_body" &&
+      currentSentence?.language !== "ar");
+
+  const activeSpeed =
+    settings.defaultSpeed || settings.playbackSpeed || snap.playbackRate || 1;
+
+  const cycleSpeed = () => {
+    const idx = PLAYBACK_SPEEDS.indexOf(Number(activeSpeed));
+    const nextSpeed =
+      idx >= 0 && idx < PLAYBACK_SPEEDS.length - 1
+        ? PLAYBACK_SPEEDS[idx + 1]
+        : PLAYBACK_SPEEDS[0];
+    updateSpeed(nextSpeed);
+  };
+
+  const segmentBadge =
+    SEGMENT_BADGE_MAP[currentSentence?.segmentType] ||
+    (isUrduSentence
+      ? SEGMENT_BADGE_MAP.urdu_body
+      : SEGMENT_BADGE_MAP.arabic_quote);
+
+  const handleTogglePlay = () => {
+    if (isPlaying) {
+      if (onPause) onPause();
+      else intelligentAudioEngine.pause("immediate");
+      return;
+    }
+    if (!hasSentences && !extracting && handleReExtract) {
+      handleReExtract();
+      return;
+    }
+    const opts = {
+      sentenceIndex: snap.sentenceIndex || 0,
+      wordIndex: snap.wordIndex || 0,
+    };
+    if (onPlay) onPlay(opts);
+    else intelligentAudioEngine.playFrom(opts);
+  };
+
+  const handleStop = () => {
+    if (onStop) onStop();
+    else intelligentAudioEngine.stop();
+  };
+
+  const handlePrev = () => {
+    if (onPrevSentence) onPrevSentence();
+    else intelligentAudioEngine.prevSentence();
+  };
+
+  const handleNext = () => {
+    if (onNextSentence) onNextSentence();
+    else intelligentAudioEngine.nextSentence();
+  };
 
   return (
-    <section
-      data-viewer-ui
+    <div
       dir={t.dir || "rtl"}
-      aria-label={t.smartReaderTitle || "القارئ الصوتي الذكي"}
-      className="w-full border-t z-30 select-none shrink-0 transition-colors shadow-lg"
-      style={{
-        backgroundColor:
-          themeCfg?.toolbar || (darkMode ? "#11151E" : "#FFFFFF"),
-        borderColor: themeCfg?.border || (darkMode ? "#262C3A" : "#E2E8F0"),
-        color: themeCfg?.text || (darkMode ? "#F3F4F6" : "#1C1917"),
-      }}
+      className="w-full z-40 px-2 sm:px-4 pb-1.5 pt-1 select-none shrink-0"
     >
-      <div className="max-w-4xl mx-auto px-3 sm:px-5 py-2 space-y-1.5">
-        {/* Single Compact Spoken Sentence Strip (Only shown when sentences exist) */}
-        {words.length > 0 ? (
-          <div
-            dir="rtl"
-            className="text-xs sm:text-sm leading-relaxed max-h-11 overflow-y-auto px-2.5 py-1 rounded-xl border flex flex-wrap items-center gap-0.5"
-            style={{
-              fontFamily:
-                "'Noto Nastaliq Urdu', 'Amiri', 'Traditional Arabic', serif",
-              backgroundColor: darkMode ? "#181E29" : "#F8FAFC",
-              borderColor: darkMode ? "#2C3548" : "#E2E8F0",
-            }}
-          >
-            {words.map((wObj, idx) => {
-              const isActiveWord =
-                idx === wordIndex && (isPlaying || playerState === "paused");
-              return (
-                <button
-                  key={`w-${idx}`}
-                  type="button"
-                  onClick={() => onPlay?.({ sentenceIndex, wordIndex: idx })}
-                  className={`inline-block px-1 py-0.5 rounded transition-colors cursor-pointer ${
-                    isActiveWord
-                      ? "font-bold text-stone-950"
-                      : "hover:bg-emerald-500/15"
-                  }`}
-                  style={
-                    isActiveWord
-                      ? {
-                          backgroundColor: colorCfg.wordBg,
-                          borderBottom: `2px solid ${colorCfg.wordBorder}`,
-                        }
-                      : undefined
-                  }
+      <div className="mx-auto max-w-3xl rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-amber-500/30 shadow-2xl px-3 py-2 sm:px-4 sm:py-2.5 text-white transition-all">
+        {/* Top Row: Current Sentence Text + Automatic Male Voice Badge + Counter + Close */}
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <div className="flex-1 min-w-0">
+            {extracting ? (
+              <div className="flex items-center gap-2 text-xs text-amber-300 font-medium py-0.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                <span>
+                  {t.smartReaderExtracting || "جاري استخراج النص ومعالجته تلقائياً..."}
+                </span>
+              </div>
+            ) : isError ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-rose-200 bg-rose-500/15 border border-rose-500/30 rounded-lg px-2.5 py-1.5">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                  {snap.errorCode && (
+                    <span className="px-1.5 py-0.5 rounded bg-rose-500/30 text-[10px] font-mono text-rose-200 shrink-0">
+                      {snap.errorCode}
+                    </span>
+                  )}
+                  <span className="truncate">
+                    {snap.errorMessage ||
+                      t.smartReaderAudioError ||
+                      "تعذر تشغيل الصوت، يرجى المحاولة مرة أخرى"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {(snap.errorCode === "TEXT_EXTRACTION_FAILED" ||
+                    snap.errorCode === "INVALID_TEXT" ||
+                    snap.errorCode === "OCR_FAILED") &&
+                    handleReExtract && (
+                      <button
+                        type="button"
+                        onClick={handleReExtract}
+                        className="px-2 py-0.5 rounded bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 font-bold text-[11px] cursor-pointer"
+                      >
+                        تشغيل OCR
+                      </button>
+                    )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      intelligentAudioEngine.playFrom({
+                        sentenceIndex: snap.sentenceIndex || 0,
+                        wordIndex: snap.wordIndex || 0,
+                      })
+                    }
+                    className="px-2 py-0.5 rounded bg-rose-500/30 hover:bg-rose-500/45 text-white font-bold text-[11px] cursor-pointer"
+                  >
+                    {t.readerRetry || "إعادة المحاولة"}
+                  </button>
+                </div>
+              </div>
+            ) : currentSentence ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded-md border text-[10px] font-bold ${segmentBadge.cls}`}
+                  >
+                    {snap.currentSegmentInfo?.badgeLabel || segmentBadge.label}
+                  </span>
+                  {snap.pendingPauseAfterSentence && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold animate-pulse">
+                      <Clock className="w-3 h-3" />
+                      <span>سيتوقف بعد إكمال الجملة...</span>
+                    </span>
+                  )}
+                </div>
+                <div
+                  dir="rtl"
+                  className="text-xs sm:text-sm text-slate-100 leading-relaxed max-h-24 sm:max-h-28 overflow-y-auto pr-1"
+                  style={{
+                    fontFamily: isUrduSentence
+                      ? "'Noto Nastaliq Urdu', 'Amiri', serif"
+                      : "'Amiri', 'Traditional Arabic', serif",
+                  }}
                 >
-                  {wObj.word}
-                </button>
-              );
-            })}
+                  {(currentSentence.words || []).length > 0
+                    ? currentSentence.words.map((wObj, idx) => {
+                        const wordText =
+                          typeof wObj === "string"
+                            ? wObj
+                            : wObj.text || wObj.word || "";
+                        const isActiveWord =
+                          idx === snap.wordIndex && (isPlaying || isPaused);
+                        return (
+                          <span
+                            key={idx}
+                            ref={isActiveWord ? activeWordRef : null}
+                            onClick={() =>
+                              intelligentAudioEngine.playFrom({
+                                sentenceIndex: snap.sentenceIndex,
+                                wordIndex: idx,
+                              })
+                            }
+                            className={`inline-block mx-0.5 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                              isActiveWord
+                                ? "bg-amber-400 text-slate-950 font-bold shadow-sm scale-105"
+                                : "hover:bg-white/10"
+                            }`}
+                          >
+                            {wordText}
+                          </span>
+                        );
+                      })
+                    : currentSentence.originalText || currentSentence.text}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-300 py-0.5">
+                <span>
+                  {t.smartReaderNoText ||
+                    "اضغط تشغيل لقراءة هذه الصفحة تلقائياً بصوت رجالي واضح"}
+                </span>
+                {handleReExtract && (
+                  <button
+                    type="button"
+                    onClick={handleReExtract}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 font-bold text-[11px] shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>{t.smartReaderRetry || "إعادة استخراج النص"}</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] text-xs">
-            <span className="opacity-80 truncate">
-              {isExtracting
-                ? t.smartReaderExtracting || "جاري استخراج النص..."
-                : t.smartReaderNoText ||
-                  "اضغط إعادة استخراج النص لقراءة هذه الصفحة صوتياً"}
-            </span>
-            {!isExtracting && onRetryExtract && (
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {hasSentences && (
+              <span className="px-2 py-0.5 rounded-md bg-white/10 text-[10px] font-bold text-amber-300 tabular-nums">
+                {(snap.sentenceIndex || 0) + 1} / {totalSentenceCount}
+              </span>
+            )}
+            {onClose && (
               <button
                 type="button"
-                onClick={onRetryExtract}
-                className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 hover:bg-emerald-800 shrink-0 cursor-pointer"
+                onClick={() => {
+                  intelligentAudioEngine.pause("immediate");
+                  onClose();
+                }}
+                className="w-6 h-6 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 hover:text-white transition cursor-pointer"
+                title={t.smartReaderClose || "إغلاق القارئ"}
               >
-                <RotateCcw className="w-3 h-3" />
-                <span>{t.smartReaderRetry || "إعادة استخراج النص"}</span>
+                <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
-        )}
+        </div>
 
-        {/* Main Single-Row Controls: Prev | Play/Pause | Next | Sentence Counter | Speed | Voice | Close */}
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          {/* Play / Pause & Sentence Navigation */}
-          <div className="flex items-center gap-1.5">
+        {/* Bottom Row: Simple Automatic Transport Controls */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-white/10">
+          {/* Playback Controls: Prev, Play/Pause, Stop, Next */}
+          <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={onPrevSentence}
-              disabled={isBusy || totalSentencesOnPage === 0}
+              onClick={handlePrev}
+              disabled={!hasSentences}
+              className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-slate-200 disabled:opacity-35 transition cursor-pointer"
               title={t.smartReaderPrev || "الجملة السابقة"}
-              className="w-9 h-9 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 disabled:opacity-35 flex items-center justify-center transition-colors cursor-pointer"
             >
               <SkipForward className="w-4 h-4" />
             </button>
 
             <button
               type="button"
-              onClick={() => (isPlaying ? onPause?.() : onPlay?.())}
-              disabled={isBusy}
+              onClick={handleTogglePlay}
+              disabled={extracting}
+              className="h-8 sm:h-9 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md disabled:opacity-40 transition active:scale-95 cursor-pointer"
               title={
                 isPlaying
                   ? t.smartReaderPause || "إيقاف مؤقت"
                   : t.smartReaderPlay || "تشغيل القراءة"
               }
-              className="h-9 px-4 rounded-xl bg-emerald-700 hover:bg-emerald-800 active:scale-95 disabled:opacity-50 text-white text-xs font-bold shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer"
             >
-              {isBusy ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="hidden xs:inline">
-                    {t.smartReaderExtracting || "جاري التجهيز..."}
-                  </span>
-                </>
+              {isBuffering ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : isPlaying ? (
-                <>
-                  <Pause className="w-4 h-4 fill-current" />
-                  <span>{t.smartReaderPause || "إيقاف مؤقت"}</span>
-                </>
+                <Pause className="w-4 h-4 fill-current" />
               ) : (
-                <>
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>{t.smartReaderPlay || "تشغيل القراءة"}</span>
-                </>
+                <Play className="w-4 h-4 fill-current" />
               )}
+              <span>
+                {isPlaying
+                  ? t.smartReaderPause || "إيقاف"
+                  : isPaused
+                  ? "متابعة"
+                  : t.smartReaderPlay || "تشغيل"}
+              </span>
+            </button>
+
+            {/* Stop Button */}
+            <button
+              type="button"
+              onClick={handleStop}
+              disabled={!isPlaying && !isPaused && !isBuffering}
+              className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-slate-200 disabled:opacity-30 transition cursor-pointer"
+              title="إيقاف كامل وإرجاع لبداية الجملة"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
             </button>
 
             <button
               type="button"
-              onClick={onNextSentence}
-              disabled={isBusy || totalSentencesOnPage === 0}
+              onClick={handleNext}
+              disabled={!hasSentences}
+              className="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center text-slate-200 disabled:opacity-35 transition cursor-pointer"
               title={t.smartReaderNext || "الجملة التالية"}
-              className="w-9 h-9 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 disabled:opacity-35 flex items-center justify-center transition-colors cursor-pointer"
             >
               <SkipBack className="w-4 h-4" />
             </button>
-
-            {totalSentencesOnPage > 0 && (
-              <span className="text-[11px] font-mono font-bold opacity-75 px-1.5 tabular-nums">
-                {sentenceIndex + 1} / {totalSentencesOnPage}
-              </span>
-            )}
           </div>
 
-          {/* Speed + Voice Selector + Re-extract + Close */}
-          <div className="flex items-center gap-1.5 ms-auto">
-            {/* Speed */}
-            <select
-              aria-label={t.smartReaderSpeed || "السرعة"}
-              value={playbackRate}
-              onChange={(e) => onChangeSpeed?.(Number(e.target.value))}
-              className="h-9 px-2 rounded-xl text-xs font-bold tabular-nums border border-current/15 bg-black/[0.03] dark:bg-white/[0.06] focus:outline-none cursor-pointer"
-            >
-              {PLAYBACK_SPEEDS.map((spd) => (
-                <option
-                  key={spd}
-                  value={spd}
-                  className="bg-white text-stone-900 dark:bg-slate-900 dark:text-white"
-                >
-                  {spd}x
-                </option>
-              ))}
-            </select>
-
-            {/* Voice Selector */}
-            <div className="hidden sm:flex items-center gap-1">
-              <Volume2 className="w-3.5 h-3.5 opacity-60" />
-              <select
-                aria-label={t.smartReaderVoice || "الصوت"}
-                value={activeVoiceId}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  if (isArabicSegment) {
-                    onUpdateSettings?.({ defaultArabicVoice: val });
-                  } else {
-                    onUpdateSettings?.({
-                      urduVoiceId: val,
-                      defaultUrduVoice: val,
-                    });
-                  }
-                }}
-                className="h-9 max-w-[165px] truncate px-2 rounded-xl text-xs font-bold border border-current/15 bg-black/[0.03] dark:bg-white/[0.06] focus:outline-none cursor-pointer"
-              >
-                {availableVoices.map((v) => (
-                  <option
-                    key={v.id}
-                    value={v.id}
-                    className="bg-white text-stone-900 dark:bg-slate-900 dark:text-white"
-                  >
-                    {v.label}
-                  </option>
-                ))}
-              </select>
+          {/* Automatic Mode Indicator + One-Tap Speed Cycle + OCR Refresh */}
+          <div className="flex items-center gap-1.5">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>صوت رجالي تلقائي • أردو / عربي / قرآن</span>
             </div>
 
-            {/* Re-extract OCR Button */}
-            {onRetryExtract && (
-              <button
-                type="button"
-                onClick={onRetryExtract}
-                disabled={isBusy}
-                title={t.smartReaderRetry || "إعادة استخراج النص"}
-                className="w-9 h-9 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 disabled:opacity-35 flex items-center justify-center transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={cycleSpeed}
+              title="تغيير سرعة القراءة"
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 text-amber-300 font-bold text-[11px] transition cursor-pointer tabular-nums"
+            >
+              {activeSpeed}x
+            </button>
 
-            {/* Close Smart Reader Bar */}
-            {onClose && (
+            {handleReExtract && (
               <button
                 type="button"
-                onClick={onClose}
-                title={t.smartReaderClose || "إغلاق القارئ"}
-                className="w-9 h-9 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-red-500/15 hover:text-red-500 flex items-center justify-center transition-colors cursor-pointer"
+                onClick={handleReExtract}
+                disabled={extracting}
+                title={t.smartReaderRetry || "إعادة استخراج النص (OCR)"}
+                className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 hover:text-white disabled:opacity-40 transition cursor-pointer"
               >
-                <X className="w-4 h-4" />
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${extracting ? "animate-spin" : ""}`}
+                />
               </button>
             )}
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 }

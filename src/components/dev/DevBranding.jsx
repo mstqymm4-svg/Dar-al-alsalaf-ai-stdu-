@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { uploads } from "@/lib/uploadFacade";
 import { Image, Upload, Check, BookOpen, Youtube, ExternalLink, Sparkles, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,11 @@ export default function DevBranding() {
   const [uploading, setUploading]   = useState(false);
   const [saving, setSaving]         = useState(false);
   const [saved, setSaved]           = useState(false);
+  const isEditingRef                = useRef(false);
 
   useEffect(() => {
     const unsub = subscribeToSettings((s) => {
+      if (isEditingRef.current) return;
       setLogoUrl(s.logo_url || "");
       setAppName(s.app_name ?? "");
       setAppSubtitle(s.app_subtitle ?? "");
@@ -50,6 +52,7 @@ export default function DevBranding() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      isEditingRef.current = false;
       setSettings({
         logo_url: logoUrl,
         app_name: appName,
@@ -103,8 +106,8 @@ export default function DevBranding() {
                   : <><Upload className="w-4 h-4 text-muted-foreground" /><span className="text-sm text-muted-foreground">رفع شعار جديد</span></>}
               </div>
             </label>
-            <Input value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} onBlur={()=>{ setSetting("logo_url",logoUrl); flushAllPendingSettings().catch(()=>{}); }} placeholder="أو أدخل رابط الصورة" className="text-xs h-9" dir="ltr" />
-            {logoUrl && <button onClick={async ()=>{ setLogoUrl(""); setSetting("logo_url",""); await flushAllPendingSettings().catch(()=>{}); toast.success("تم حذف الشعار ✓"); }} className="text-xs text-destructive hover:underline">حذف الشعار</button>}
+            <Input value={logoUrl} onChange={e=>{ isEditingRef.current = true; setLogoUrl(e.target.value); }} onBlur={()=>{ isEditingRef.current = false; setSetting("logo_url",logoUrl); flushAllPendingSettings().catch(()=>{}); }} placeholder="أو أدخل رابط الصورة" className="text-xs h-9" dir="ltr" />
+            {logoUrl && <button onClick={async ()=>{ isEditingRef.current = false; setLogoUrl(""); setSetting("logo_url",""); await flushAllPendingSettings().catch(()=>{}); toast.success("تم حذف الشعار ✓"); }} className="text-xs text-destructive hover:underline">حذف الشعار</button>}
           </div>
         </div>
       </div>
@@ -114,11 +117,23 @@ export default function DevBranding() {
         <h3 className="font-bold text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> اسم التطبيق</h3>
         <div>
           <Label className="text-xs">الاسم الرئيسي</Label>
-          <Input value={appName} onChange={e=>setAppName(e.target.value)} className="mt-1.5" placeholder="المكتبة الدينية" />
+          <Input
+            value={appName}
+            onChange={e => { isEditingRef.current = true; setAppName(e.target.value); setSetting("app_name", e.target.value); }}
+            onBlur={() => { isEditingRef.current = false; flushAllPendingSettings().catch(() => {}); }}
+            className="mt-1.5"
+            placeholder="المكتبة الدينية"
+          />
         </div>
         <div>
           <Label className="text-xs">الوصف الفرعي</Label>
-          <Input value={appSubtitle} onChange={e=>setAppSubtitle(e.target.value)} className="mt-1.5" placeholder="نور العلم والمعرفة" />
+          <Input
+            value={appSubtitle}
+            onChange={e => { isEditingRef.current = true; setAppSubtitle(e.target.value); setSetting("app_subtitle", e.target.value); }}
+            onBlur={() => { isEditingRef.current = false; flushAllPendingSettings().catch(() => {}); }}
+            className="mt-1.5"
+            placeholder="نور العلم والمعرفة"
+          />
         </div>
       </div>
 
@@ -134,12 +149,35 @@ export default function DevBranding() {
           <Label className="text-xs">رابط القناة</Label>
           <div className="relative mt-1.5">
             <Youtube className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500" />
-            <Input value={youtubeUrl} onChange={e=>setYoutubeUrl(e.target.value)} className="pr-9" placeholder="https://youtube.com/@channel" dir="ltr" />
+            <Input
+              value={youtubeUrl}
+              onChange={e => { isEditingRef.current = true; setYoutubeUrl(e.target.value); setSetting("youtube_url", e.target.value); }}
+              onBlur={() => { isEditingRef.current = false; flushAllPendingSettings().catch(() => {}); }}
+              className="pr-9"
+              placeholder="https://youtube.com/@channel"
+              dir="ltr"
+            />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><Label className="text-xs">نص العنوان</Label><Input value={youtubeLabel} onChange={e=>setYoutubeLabel(e.target.value)} className="mt-1.5" /></div>
-          <div><Label className="text-xs">نص الوصف</Label><Input value={youtubeSub} onChange={e=>setYoutubeSub(e.target.value)} className="mt-1.5" /></div>
+          <div>
+            <Label className="text-xs">نص العنوان</Label>
+            <Input
+              value={youtubeLabel}
+              onChange={e => { isEditingRef.current = true; setYoutubeLabel(e.target.value); setSetting("youtube_label", e.target.value); }}
+              onBlur={() => { isEditingRef.current = false; flushAllPendingSettings().catch(() => {}); }}
+              className="mt-1.5"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">نص الوصف</Label>
+            <Input
+              value={youtubeSub}
+              onChange={e => { isEditingRef.current = true; setYoutubeSub(e.target.value); setSetting("youtube_sub", e.target.value); }}
+              onBlur={() => { isEditingRef.current = false; flushAllPendingSettings().catch(() => {}); }}
+              className="mt-1.5"
+            />
+          </div>
         </div>
         {/* Preview */}
         {youtubeUrl && (

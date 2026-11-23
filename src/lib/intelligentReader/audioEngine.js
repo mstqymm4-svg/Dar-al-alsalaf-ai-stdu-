@@ -1,13 +1,15 @@
 /**
  * DAR AL TAWHID — Intelligent Audio Engine & Background Playback Controller
- * (الأقسام: 5، 7، 8، 9، 10، 11، 12، 14)
  *
  * Responsibilities:
- * - Modular TTS Provider Manager (Server-side Gemini 3.8 Neural TTS ur-PK/ar-SA, Google Cloud TTS, Offline Web Speech fallback)
+ * - Single Unified Source of Truth for Page, Text, Audio, Word Highlight, and Reading Position
+ * - Strict Concurrency Lock (_playSessionId) preventing overlapping/duplicate audio playback
+ * - Modular TTS Provider Manager (Server-side Gemini 3.8 Neural TTS ur-PK/ar-SA, Google Cloud TTS, Server Neural Fallback, Offline Web Speech)
  * - Authentic Recorded Quran Recitation Player (Never uses TTS for verified Quranic verses)
- * - Acoustic Word & Sentence Synchronizer (Uses server-computed RMS energy word timings or Web Audio API decoding; never naive duration/wordCount)
+ * - Acoustic Word & Sentence Synchronizer (Uses server-computed RMS energy & phonetic syllable word timings; never naive duration/wordCount)
  * - Pause Mode Controller (Immediate Pause vs. Complete Current Sentence Then Pause)
- * - Background Audio & MediaSession Manager (Lock screen controls, headset buttons, call-interruption auto-pause/resume, continues across routes)
+ * - Structured 10-Category Error Classification & Recovery
+ * - Background Audio & MediaSession Manager
  */
 
 import { getCachedTtsAudio, setCachedTtsAudio } from "./cacheManager";
@@ -16,6 +18,13 @@ import {
   saveReadingPosition,
   computeFileFingerprint,
 } from "./positionManager";
+import {
+  READER_ERROR_CODES,
+  validateUrduArabicText,
+  normalizeUrduTextForPronunciation,
+  detectIsUrduScript,
+  canonicalizeTextForLanguage,
+} from "./textProcessor";
 
 class IntelligentAudioEngine {
   constructor() {
@@ -32,6 +41,8 @@ class IntelligentAudioEngine {
 
     // Playback state
     this.playerState = "idle"; // "idle" | "loading" | "playing" | "paused" | "stopped" | "error"
+    this.errorCode = null;
+    this.errorTitle = "";
     this.errorMessage = "";
     this.sentenceIndex = 0;
     this.wordIndex = 0;
@@ -39,6 +50,9 @@ class IntelligentAudioEngine {
     this.durationSec = 0;
     this.playbackRate = 1;
     this.volume = 1;
+
+    // Restored position target (applied when pageData for that page finishes extracting)
+    this._pendingRestoredPosition = null;
 
     // Pause control ("immediate" | "complete_sentence")
     this.pendingPauseAfterSentence = false;
@@ -53,6 +67,8 @@ class IntelligentAudioEngine {
     this.onEnsurePageExtracted = null;
     this.isExtractingPage = false;
 
+    // Concurrency & lifecycle guards
+    this._playSessionId = 0;
     this._rafId = null;
     this._currentBlobUrl = null;
     this._abortController = null;
@@ -105,7 +121,6 @@ class IntelligentAudioEngine {
 
   _initSystemInterruptionHandlers() {
     if (typeof window === "undefined") return;
-    // Handle audio interruptions and beforeunload position saving
     window.addEventListener("beforeunload", () => {
       this._persistPosition();
     });
@@ -119,6 +134,24 @@ class IntelligentAudioEngine {
         }
       }
     });
+  }
+
+  _setError(codeKey, customDetail = "") {
+    const entry =
+      READER_ERROR_CODES[codeKey] || READER_ERROR_CODES.TTS_FAILED;
+    this.playerState = "error";
+    this.errorCode = entry.code;
+    this.errorTitle = entry.titleAr;
+    this.errorMessage = customDetail
+      ? `${entry.titleAr}: ${customDetail}`
+      : entry.messageAr;
+    this._emit();
+  }
+
+  _clearError() {
+    this.errorCode = null;
+    this.errorTitle = "";
+    this.errorMessage = "";
   }
 
   subscribe(listener) {
@@ -139,8 +172,29 @@ class IntelligentAudioEngine {
   setExtractingPage(isExtracting) {
     this.isExtractingPage = Boolean(isExtracting);
     if (this.isExtractingPage && this.playerState === "error") {
-      this.errorMessage = "";
+      this._clearError();
       this.playerState = "idle";
+    }
+    this._emit();
+  }
+
+  /**
+   * Restore a previously saved reading position for the active book
+   */
+  restoreSavedPosition(savedPos) {
+    if (!savedPos) return;
+    this._pendingRestoredPosition = savedPos;
+    if (typeof savedPos.pageNumber === "number" && savedPos.pageNumber >= 1) {
+      this.pageNumber = savedPos.pageNumber;
+    }
+    if (typeof savedPos.sentenceIndex === "number" && savedPos.sentenceIndex >= 0) {
+      this.sentenceIndex = savedPos.sentenceIndex;
+    }
+    if (typeof savedPos.wordIndex === "number" && savedPos.wordIndex >= 0) {
+      this.wordIndex = savedPos.wordIndex;
+    }
+    if (typeof savedPos.playbackRate === "number" && savedPos.playbackRate > 0) {
+      this.playbackRate = savedPos.playbackRate;
     }
     this._emit();
   }
@@ -161,8 +215,11 @@ class IntelligentAudioEngine {
       totalPages: this.totalPages,
       playerState: this.playerState,
       isExtractingPage: this.isExtractingPage,
+      errorCode: this.errorCode,
+      errorTitle: this.errorTitle,
       errorMessage: this.errorMessage,
       sentenceIndex: this.sentenceIndex,
+      paragraphIndex: currentSentence?.paragraphIndex ?? 0,
       totalSentencesOnPage: sentences.length,
       totalWordsOnPage,
       wordIndex: this.wordIndex,
@@ -170,6 +227,7 @@ class IntelligentAudioEngine {
       currentSentence,
       currentWord: currentWordObj?.word || "",
       currentWordRect: currentWordObj?.rect || null,
+      hasExactWordCoords: Boolean(currentSentence?.hasExactWordCoords),
       currentTimeSec: this.currentTimeSec,
       durationSec: this.durationSec,
       playbackRate: this.playbackRate,
@@ -184,7 +242,7 @@ class IntelligentAudioEngine {
   }
 
   /**
-   * Bind current book and extracted page data
+   * Bind current book and extracted page data (Single Source of Truth sync)
    */
   setContext({
     book,
@@ -195,25 +253,59 @@ class IntelligentAudioEngine {
     onRequestPageTurn,
     onEnsurePageExtracted,
   }) {
+    const incomingBookId = String(book?.id || "");
+    const incomingPageNum = Number(pageNumber || 1);
     const isSameBookAndPage =
-      this.bookId === String(book?.id || "") &&
-      this.pageNumber === Number(pageNumber || 1);
+      this.bookId === incomingBookId && this.pageNumber === incomingPageNum;
 
     this.book = book;
-    this.bookId = String(book?.id || "");
+    this.bookId = incomingBookId;
     this.fileVersion = computeFileFingerprint(book);
-    this.pageNumber = Number(pageNumber || 1);
+    this.pageNumber = incomingPageNum;
     this.totalPages = Math.max(
       1,
       Number(totalPages || book?.pages_count || book?.page_count || 1)
     );
+
     if (pageData !== undefined) {
       this.pageData = pageData;
-      if ((pageData?.sentences || []).length > 0 && this.playerState === "error") {
-        this.errorMessage = "";
+      const sents = pageData?.sentences || [];
+      if (sents.length > 0 && this.playerState === "error") {
+        this._clearError();
         this.playerState = "idle";
       }
+
+      // If we have a restored reading position for this exact book & page, clamp sentenceIndex/wordIndex to valid bounds
+      if (
+        this._pendingRestoredPosition &&
+        String(this._pendingRestoredPosition.bookId) === incomingBookId &&
+        Number(this._pendingRestoredPosition.pageNumber) === incomingPageNum &&
+        sents.length > 0
+      ) {
+        const targetSIdx = Math.max(
+          0,
+          Math.min(
+            sents.length - 1,
+            Number(this._pendingRestoredPosition.sentenceIndex) || 0
+          )
+        );
+        const targetWords = sents[targetSIdx]?.words || [];
+        const targetWIdx = Math.max(
+          0,
+          Math.min(
+            Math.max(0, targetWords.length - 1),
+            Number(this._pendingRestoredPosition.wordIndex) || 0
+          )
+        );
+        this.sentenceIndex = targetSIdx;
+        this.wordIndex = targetWIdx;
+        this._pendingRestoredPosition = null;
+      } else if (sents.length > 0 && this.sentenceIndex >= sents.length) {
+        this.sentenceIndex = 0;
+        this.wordIndex = 0;
+      }
     }
+
     if (isExtractingPage !== undefined) {
       this.isExtractingPage = Boolean(isExtractingPage);
     }
@@ -225,14 +317,21 @@ class IntelligentAudioEngine {
     }
 
     const settings = loadReaderSettings();
-    this.playbackRate = settings.defaultSpeed || 1;
+    if (this.playerState === "idle" || this.playerState === "stopped") {
+      this.playbackRate = settings.defaultSpeed || 1;
+    }
     this.volume = settings.volume ?? 1;
 
     if (!isSameBookAndPage && this.playerState !== "playing") {
-      this.sentenceIndex = 0;
-      this.wordIndex = 0;
-      this.currentTimeSec = 0;
-      this.durationSec = 0;
+      if (
+        !this._pendingRestoredPosition ||
+        Number(this._pendingRestoredPosition.pageNumber) !== incomingPageNum
+      ) {
+        this.sentenceIndex = 0;
+        this.wordIndex = 0;
+        this.currentTimeSec = 0;
+        this.durationSec = 0;
+      }
     }
 
     this._setupMediaSessionMetadata();
@@ -243,12 +342,17 @@ class IntelligentAudioEngine {
    * Start or resume playback from a specific sentence & word index
    */
   async playFrom({ sentenceIndex = null, wordIndex = null } = {}) {
-    this.errorMessage = "";
+    this._clearError();
     this.pendingPauseAfterSentence = false;
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      this._setError("NETWORK_OFFLINE");
+      return;
+    }
 
     let sentences = this.pageData?.sentences || [];
 
-    // If text is not yet extracted or is empty, automatically trigger/await OCR extraction before trying to play!
+    // If text is not yet extracted or is empty, automatically trigger/await extraction before trying to play
     if (
       sentences.length === 0 &&
       typeof this.onEnsurePageExtracted === "function"
@@ -263,16 +367,20 @@ class IntelligentAudioEngine {
           sentences = extractedData.sentences;
         }
       } catch (e) {
-        console.warn("[IntelligentAudioEngine] On-demand OCR failed:", e);
+        console.warn("[IntelligentAudioEngine] On-demand extraction failed:", e);
+        this.isExtractingPage = false;
+        this._setError(
+          e?.code === "OCR_FAILED" ? "OCR_FAILED" : "TEXT_EXTRACTION_FAILED",
+          e?.message || ""
+        );
+        return;
       } finally {
         this.isExtractingPage = false;
       }
     }
 
     if (sentences.length === 0) {
-      this.playerState = "error";
-      this.errorMessage = "لا يوجد نص مستخرج في هذه الصفحة للقراءة الصوتية.";
-      this._emit();
+      this._setError("TEXT_EXTRACTION_FAILED");
       return;
     }
 
@@ -312,7 +420,8 @@ class IntelligentAudioEngine {
       return;
     }
 
-    // Cancel any in-flight request
+    // Increment session ID & stop any current playback to prevent concurrent audio overlap
+    const sessionId = ++this._playSessionId;
     if (this._abortController) {
       try {
         this._abortController.abort();
@@ -320,15 +429,24 @@ class IntelligentAudioEngine {
     }
     this._abortController = new AbortController();
 
+    if (this.audioEl) {
+      this.audioEl.pause();
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+
     this.playerState = "loading";
-    this.errorMessage = "";
+    this._clearError();
     this.wordIndex = startAtWordIndex;
     this._emit();
 
     const settings = loadReaderSettings();
 
     try {
-      // ─── Case 1: Verified Quranic Verse → Play Authentic Recorded Recitation ONLY (القسم 8) ───
+      // ─── Case 1: Verified Quranic Verse → Play Authentic Recorded Recitation ONLY ───
       if (
         sentence.segmentType === "quran" &&
         sentence.quranMeta?.verified &&
@@ -342,39 +460,75 @@ class IntelligentAudioEngine {
           voiceId: settings.quranReciterId || "ar.alafasy",
           quranMeta: sentence.quranMeta,
         };
-        this.currentWordTimings = []; // Recorded Quran plays verse-by-verse with full verse highlight
+        this.currentWordTimings = [];
 
         await this._playAudioSource(
           sentence.quranMeta.audioUrl,
           sentence.quranMeta.directAudioUrl,
           startAtWordIndex,
-          sentence.words || []
+          sentence.words || [],
+          sessionId
         );
-        this._prefetchNextSentence(this.sentenceIndex + 1);
+        if (sessionId === this._playSessionId) {
+          this._prefetchNextSentence(this.sentenceIndex + 1);
+        }
         return;
       }
 
-      // ─── Case 2: Urdu Body, Hadith, Dua, Arabic Quote, or Heading → Neural TTS Engine (الأقسام 5، 6، 9) ───
-      const isArabic =
-        sentence.language === "ar" ||
-        sentence.segmentType === "hadith" ||
-        sentence.segmentType === "dua" ||
-        sentence.segmentType === "arabic_quote";
+      // ─── Case 2: Urdu Body, Hadith, Dua, Arabic Quote, Heading, or Footnote → Neural TTS Engine ───
+      const rawCandidate =
+        sentence.cleanedPronunciationText || sentence.originalText || "";
+      const validation = validateUrduArabicText(rawCandidate);
+      if (!validation.isValid) {
+        this._setError(
+          validation.errorCode || "INVALID_TEXT",
+          validation.reason || ""
+        );
+        return;
+      }
 
+      const baseNormalized = normalizeUrduTextForPronunciation(
+        validation.repairedText
+      );
+
+      // Automatic per-sentence language classification (Arabic vs Urdu)
+      const isUrdu = detectIsUrduScript(baseNormalized);
+      const isArabic = !isUrdu;
+
+      // Canonicalize Unicode codepoints for the target language so Arabic TTS never drops Indo-Pak codepoints
+      // and Urdu TTS always receives canonical Pakistani Urdu codepoints.
+      const spokenText = canonicalizeTextForLanguage(
+        baseNormalized,
+        isArabic ? "ar" : "ur"
+      );
+
+      const sentenceWordList = (sentence.words || [])
+        .map((w) =>
+          canonicalizeTextForLanguage(
+            String(w?.word || w?.text || w || "").trim(),
+            isArabic ? "ar" : "ur"
+          )
+        )
+        .filter(Boolean);
+
+      // Lock automatic optimal male scholarly voices:
+      // - Arabic: ar-SA-HamedNeural ("arabic_hadith_charon")
+      // - Urdu:   ur-PK-AsadNeural  ("pakistani_scholar_charon")
       const voiceId = isArabic
-        ? settings.defaultArabicVoice || "arabic_hadith_charon"
-        : settings.urduVoiceId ||
-          settings.defaultUrduVoice ||
-          "pakistani_scholar_charon";
-
+        ? "arabic_hadith_charon"
+        : "pakistani_scholar_charon";
       const languageCode = isArabic ? "ar-SA" : "ur-PK";
 
       const badgeLabelMap = {
-        hadith: "حديث نبوي شريف • صوت عربي فصيح",
-        dua: "دعاء مأثور • صوت عربي فصيح",
-        arabic_quote: "نص عربي • صوت عربي فصيح",
-        heading: isArabic ? "عنوان • عربي" : "عنوان • أردو (ur-PK)",
-        urdu_body: "نص أردي • صوت رجالي فصيح (ur-PK)",
+        hadith: "حديث نبوي شريف • صوت رجالي عربي تلقائي",
+        dua: "دعاء مأثور • صوت رجالي عربي تلقائي",
+        arabic_quote: "نص عربي • صوت رجالي عربي تلقائي",
+        heading: isArabic
+          ? "عنوان عربي • صوت رجالي تلقائي"
+          : "عنوان أردي • صوت رجالي تلقائي (ur-PK)",
+        urdu_body: isArabic
+          ? "نص عربي • صوت رجالي عربي تلقائي"
+          : "نص أردي • صوت رجالي أردي تلقائي (ur-PK)",
       };
 
       this.currentSegmentInfo = {
@@ -382,13 +536,12 @@ class IntelligentAudioEngine {
         language: languageCode,
         badgeLabel:
           badgeLabelMap[sentence.segmentType] ||
-          "نص أردي • صوت رجالي فصيح (ur-PK)",
-        provider: "gemini-3.8-flash-lite-tts",
+          (isArabic
+            ? "نص عربي • صوت رجالي عربي تلقائي"
+            : "نص أردي • صوت رجالي أردي تلقائي (ur-PK)"),
+        provider: "edge-neural-tts",
         voiceId,
       };
-
-      const spokenText =
-        sentence.cleanedPronunciationText || sentence.originalText;
 
       // Check IndexedDB Audio Cache first
       let ttsPayload = await getCachedTtsAudio(
@@ -396,6 +549,8 @@ class IntelligentAudioEngine {
         voiceId,
         languageCode
       );
+
+      if (sessionId !== this._playSessionId) return;
 
       if (!ttsPayload) {
         const res = await fetch("/api/reader/tts", {
@@ -407,14 +562,19 @@ class IntelligentAudioEngine {
             language: languageCode,
             segmentType: sentence.segmentType,
             voiceId,
+            words: sentenceWordList,
           }),
         });
 
+        if (sessionId !== this._playSessionId) return;
+
         if (!res.ok) {
           const errJson = await res.json().catch(() => ({}));
-          throw new Error(
+          const errObj = new Error(
             errJson.error || `فشل توليد الصوت (HTTP ${res.status})`
           );
+          errObj.code = errJson.errorCode || "TTS_FAILED";
+          throw errObj;
         }
 
         ttsPayload = await res.json();
@@ -428,41 +588,54 @@ class IntelligentAudioEngine {
         }
       }
 
+      if (sessionId !== this._playSessionId) return;
+
       if (!ttsPayload?.audioBase64) {
-        throw new Error("لم يتم استلام بيانات صوتية صالحة من الخادم");
+        const errObj = new Error("لم يتم استلام بيانات صوتية صالحة من الخادم");
+        errObj.code = "TTS_FAILED";
+        throw errObj;
       }
 
       this.currentWordTimings = Array.isArray(ttsPayload.wordTimings)
-        ? ttsPayload.wordTimings
+        ? ttsPayload.wordTimings.map((t) => ({ ...t }))
         : [];
 
       const blobUrl = this._base64ToBlobUrl(
         ttsPayload.audioBase64,
-        ttsPayload.mimeType || "audio/wav"
+        ttsPayload.mimeType || "audio/mpeg"
       );
 
       await this._playAudioSource(
         blobUrl,
         null,
         startAtWordIndex,
-        sentence.words || []
+        sentence.words || [],
+        sessionId
       );
 
-      // Prefetch the next sentence in background so transition between sentences has zero lag
-      this._prefetchNextSentence(this.sentenceIndex + 1);
+      if (sessionId === this._playSessionId) {
+        this._prefetchNextSentence(this.sentenceIndex + 1);
+      }
     } catch (err) {
-      if (err?.name === "AbortError") return;
+      if (err?.name === "AbortError" || sessionId !== this._playSessionId) {
+        return;
+      }
       console.warn("[IntelligentAudioEngine] Fallback/Error:", err);
+
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        this._setError("NETWORK_OFFLINE");
+        return;
+      }
+
       // Try Web Speech API offline fallback if browser supports ur-PK or ar-SA
       const usedOfflineSpeech = this._tryBrowserSpeechFallback(
         sentence,
-        startAtWordIndex
+        startAtWordIndex,
+        sessionId
       );
       if (!usedOfflineSpeech) {
-        this.playerState = "error";
-        this.errorMessage =
-          err?.message || "تعذر تشغيل الصوت لهذه الجملة. يرجى التحقق من الاتصال.";
-        this._emit();
+        const code = err?.code || "TTS_FAILED";
+        this._setError(code, err?.message || "");
       }
     }
   }
@@ -471,16 +644,16 @@ class IntelligentAudioEngine {
     primaryUrl,
     backupUrl = null,
     startAtWordIndex = 0,
-    words = []
+    words = [],
+    sessionId = this._playSessionId
   ) {
-    if (!this.audioEl) return;
+    if (!this.audioEl || sessionId !== this._playSessionId) return;
 
     this.audioEl.pause();
     this.audioEl.src = primaryUrl;
     this.audioEl.playbackRate = this.playbackRate;
     this.audioEl.volume = this.volume;
 
-    // Wait for audio to load enough to seek if startAtWordIndex > 0
     await new Promise((resolve, reject) => {
       const onCanPlay = () => {
         cleanup();
@@ -494,11 +667,17 @@ class IntelligentAudioEngine {
           this.audioEl.addEventListener("canplay", onCanPlay, { once: true });
           this.audioEl.addEventListener(
             "error",
-            () => reject(new Error("تعذر تحميل الملف الصوتي")),
+            () => {
+              const e = new Error("تعذر تحميل الملف الصوتي");
+              e.code = "AUDIO_LOAD_FAILED";
+              reject(e);
+            },
             { once: true }
           );
         } else {
-          reject(new Error("تعذر تحميل الملف الصوتي"));
+          const e = new Error("تعذر تحميل الملف الصوتي");
+          e.code = "AUDIO_LOAD_FAILED";
+          reject(e);
         }
       };
       const cleanup = () => {
@@ -510,24 +689,55 @@ class IntelligentAudioEngine {
       this.audioEl.load();
     });
 
-    // If recorded Quran audio doesn't have precomputed word timings, build acoustic syllable-weighted timings from real duration
+    if (sessionId !== this._playSessionId) return;
+
+    const realDurationMs =
+      Number.isFinite(this.audioEl.duration) && this.audioEl.duration > 0
+        ? this.audioEl.duration * 1000
+        : 0;
+
+    // 1. If no precomputed timings exist, build phonetic syllable-weighted timings from real decoded duration
     if (
       this.currentWordTimings.length === 0 &&
       words.length > 0 &&
-      Number.isFinite(this.audioEl.duration) &&
-      this.audioEl.duration > 0
+      realDurationMs > 0
     ) {
       this.currentWordTimings = this._buildPhoneticTimingsForDuration(
         words,
-        this.audioEl.duration * 1000
+        realDurationMs
       );
+    } else if (
+      this.currentWordTimings.length > 0 &&
+      realDurationMs > 250
+    ) {
+      // 2. Re-calibrate precomputed timings if the server's estimated duration differs from the browser's real decoded duration
+      const lastTiming =
+        this.currentWordTimings[this.currentWordTimings.length - 1];
+      const lastEndMs = Number(lastTiming?.endMs || 0);
+      if (
+        lastEndMs > 100 &&
+        Math.abs(realDurationMs - lastEndMs) / realDurationMs > 0.08
+      ) {
+        const scale = Math.max(
+          0.25,
+          Math.min(3.5, (realDurationMs - 60) / lastEndMs)
+        );
+        this.currentWordTimings = this.currentWordTimings.map((t) => ({
+          ...t,
+          startMs: Math.round(t.startMs * scale),
+          endMs: Math.round(t.endMs * scale),
+        }));
+      }
     }
 
     // If user clicked a specific word inside the sentence, seek directly to that word's onset timestamp
     if (startAtWordIndex > 0 && this.currentWordTimings[startAtWordIndex]) {
       const targetSec =
         this.currentWordTimings[startAtWordIndex].startMs / 1000;
-      if (Number.isFinite(targetSec) && targetSec < (this.audioEl.duration || 9999)) {
+      if (
+        Number.isFinite(targetSec) &&
+        targetSec < (this.audioEl.duration || 9999)
+      ) {
         this.audioEl.currentTime = targetSec;
       }
     }
@@ -566,18 +776,27 @@ class IntelligentAudioEngine {
     const nextSent = sentences[nextIdx];
     if (!nextSent || nextSent.segmentType === "quran") return;
 
-    const settings = loadReaderSettings();
-    const isArabic =
-      nextSent.language === "ar" ||
-      nextSent.segmentType === "hadith" ||
-      nextSent.segmentType === "dua" ||
-      nextSent.segmentType === "arabic_quote";
+    const baseNormalized = normalizeUrduTextForPronunciation(
+      nextSent.cleanedPronunciationText || nextSent.originalText
+    );
+    const isUrdu = detectIsUrduScript(baseNormalized);
+    const isArabic = !isUrdu;
     const voiceId = isArabic
-      ? settings.defaultArabicVoice || "arabic_hadith_charon"
-      : settings.urduVoiceId || "pakistani_scholar_charon";
+      ? "arabic_hadith_charon"
+      : "pakistani_scholar_charon";
     const langCode = isArabic ? "ar-SA" : "ur-PK";
-    const spokenText =
-      nextSent.cleanedPronunciationText || nextSent.originalText;
+    const spokenText = canonicalizeTextForLanguage(
+      baseNormalized,
+      isArabic ? "ar" : "ur"
+    );
+    const nextWordList = (nextSent.words || [])
+      .map((w) =>
+        canonicalizeTextForLanguage(
+          String(w?.word || w?.text || w || "").trim(),
+          isArabic ? "ar" : "ur"
+        )
+      )
+      .filter(Boolean);
 
     const existing = await getCachedTtsAudio(spokenText, voiceId, langCode);
     if (existing) return;
@@ -591,6 +810,7 @@ class IntelligentAudioEngine {
           language: langCode,
           segmentType: nextSent.segmentType,
           voiceId,
+          words: nextWordList,
         }),
       });
       if (res.ok) {
@@ -602,29 +822,34 @@ class IntelligentAudioEngine {
     } catch {}
   }
 
-  _tryBrowserSpeechFallback(sentence, startAtWordIndex = 0) {
+  _tryBrowserSpeechFallback(sentence, startAtWordIndex = 0, sessionId = this._playSessionId) {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
       return false;
     }
     try {
       window.speechSynthesis.cancel();
-      const spokenText =
-        sentence.cleanedPronunciationText || sentence.originalText;
+      const baseNormalized = normalizeUrduTextForPronunciation(
+        sentence.cleanedPronunciationText || sentence.originalText
+      );
+      const isUrdu = detectIsUrduScript(baseNormalized);
+      const isArabic = !isUrdu;
+      const spokenText = canonicalizeTextForLanguage(
+        baseNormalized,
+        isArabic ? "ar" : "ur"
+      );
       const utter = new SpeechSynthesisUtterance(spokenText);
-      const isArabic =
-        sentence.language === "ar" ||
-        sentence.segmentType === "hadith" ||
-        sentence.segmentType === "arabic_quote";
       utter.lang = isArabic ? "ar-SA" : "ur-PK";
       utter.rate = this.playbackRate;
       utter.volume = this.volume;
 
       utter.onstart = () => {
+        if (sessionId !== this._playSessionId) return;
         this.playerState = "playing";
         this.wordIndex = startAtWordIndex;
         this._emit();
       };
       utter.onboundary = (e) => {
+        if (sessionId !== this._playSessionId) return;
         if (e.name === "word") {
           const words = sentence.words || [];
           if (this.wordIndex < words.length - 1) {
@@ -634,12 +859,12 @@ class IntelligentAudioEngine {
         }
       };
       utter.onend = () => {
+        if (sessionId !== this._playSessionId) return;
         this._handleSentenceEnded();
       };
       utter.onerror = () => {
-        this.playerState = "error";
-        this.errorMessage = "تعذر تشغيل محرك النطق المحلي.";
-        this._emit();
+        if (sessionId !== this._playSessionId) return;
+        this._setError("TTS_FAILED", "تعذر تشغيل محرك النطق المحلي.");
       };
 
       window.speechSynthesis.speak(utter);
@@ -689,7 +914,7 @@ class IntelligentAudioEngine {
   _handleSentenceEnded() {
     const sentences = this.pageData?.sentences || [];
 
-    // Check if user requested "Complete current sentence then pause" (القسم 7)
+    // Check if user requested "Complete current sentence then pause" (المشكلة السادسة)
     if (this.pendingPauseAfterSentence) {
       this.pendingPauseAfterSentence = false;
       this.playerState = "paused";
@@ -744,12 +969,20 @@ class IntelligentAudioEngine {
       return;
     }
 
+    this._playSessionId++;
     this.pendingPauseAfterSentence = false;
+    if (this._abortController) {
+      try {
+        this._abortController.abort();
+      } catch {}
+    }
     if (this.audioEl) {
       this.audioEl.pause();
     }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.pause();
+      try {
+        window.speechSynthesis.pause();
+      } catch {}
     }
     this.playerState = "paused";
     this._persistPosition();
@@ -757,6 +990,7 @@ class IntelligentAudioEngine {
   }
 
   stop() {
+    this._playSessionId++;
     this.pendingPauseAfterSentence = false;
     if (this._abortController) {
       try {
@@ -768,7 +1002,9 @@ class IntelligentAudioEngine {
       this.audioEl.currentTime = 0;
     }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
     }
     this.playerState = "stopped";
     this.wordIndex = 0;
@@ -781,7 +1017,10 @@ class IntelligentAudioEngine {
     if (!this.audioEl || !Number.isFinite(this.audioEl.duration)) return;
     const nextTime = Math.max(
       0,
-      Math.min(this.audioEl.duration, (this.audioEl.currentTime || 0) + deltaSec)
+      Math.min(
+        this.audioEl.duration,
+        (this.audioEl.currentTime || 0) + deltaSec
+      )
     );
     this.audioEl.currentTime = nextTime;
     this.currentTimeSec = nextTime;
@@ -865,29 +1104,38 @@ class IntelligentAudioEngine {
 
   _persistPosition() {
     if (!this.bookId) return;
-    const sentences = this.pageData?.sentences || [];
-    const currentSent = sentences[this.sentenceIndex];
-    saveReadingPosition(this.bookId, {
-      bookId: this.bookId,
-      bookTitle: this.book?.title || "",
-      fileVersion: this.fileVersion,
-      pageNumber: this.pageNumber,
-      paragraphIndex: currentSent?.paragraphIndex || 0,
-      sentenceIndex: this.sentenceIndex,
-      wordIndex: this.wordIndex,
-      wordText: currentSent?.words?.[this.wordIndex]?.word || "",
-      sentencePreview: (currentSent?.originalText || "").slice(0, 90),
-      audioTimeSec: Math.round((this.currentTimeSec || 0) * 10) / 10,
-      language: this.currentSegmentInfo?.language || "ur-PK",
-      playbackRate: this.playbackRate,
-      selectedVoice: this.currentSegmentInfo?.voiceId || "pakistani_scholar_charon",
-      playerState: this.playerState,
-    });
+    try {
+      const sentences = this.pageData?.sentences || [];
+      const currentSent = sentences[this.sentenceIndex];
+      const saved = saveReadingPosition(this.bookId, {
+        bookId: this.bookId,
+        bookTitle: this.book?.title || "",
+        fileVersion: this.fileVersion,
+        pageNumber: this.pageNumber,
+        paragraphIndex: currentSent?.paragraphIndex || 0,
+        sentenceIndex: this.sentenceIndex,
+        wordIndex: this.wordIndex,
+        wordText: currentSent?.words?.[this.wordIndex]?.word || "",
+        sentencePreview: (currentSent?.originalText || "").slice(0, 90),
+        audioTimeSec: Math.round((this.currentTimeSec || 0) * 10) / 10,
+        language: this.currentSegmentInfo?.language || "ur-PK",
+        playbackRate: this.playbackRate,
+        selectedVoice:
+          this.currentSegmentInfo?.voiceId || "pakistani_scholar_charon",
+        playerState: this.playerState,
+      });
+      if (!saved && typeof window !== "undefined") {
+        console.warn("[IntelligentAudioEngine] POSITION_SAVE_FAILED");
+      }
+    } catch {
+      console.warn("[IntelligentAudioEngine] POSITION_SAVE_FAILED");
+    }
   }
 
-  // ─── MediaSession Lock-Screen & Headset Controls (القسم 14) ───────────────────
+  // ─── MediaSession Lock-Screen & Headset Controls ─────────────────────────────
   _setupMediaSessionMetadata() {
-    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+      return;
     try {
       const title = this.book?.title || "القارئ الذكي — DAR AL TAWHID";
       const author = this.book?.author || "DAR AL TAWHID";
@@ -903,7 +1151,9 @@ class IntelligentAudioEngine {
       });
 
       navigator.mediaSession.setActionHandler("play", () => this.playFrom());
-      navigator.mediaSession.setActionHandler("pause", () => this.pause("immediate"));
+      navigator.mediaSession.setActionHandler("pause", () =>
+        this.pause("immediate")
+      );
       navigator.mediaSession.setActionHandler("stop", () => this.stop());
       navigator.mediaSession.setActionHandler("seekbackward", () =>
         this.seekBySeconds(-10)
@@ -921,7 +1171,8 @@ class IntelligentAudioEngine {
   }
 
   _updateMediaSessionPlaybackState(state) {
-    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+      return;
     try {
       navigator.mediaSession.playbackState = state;
     } catch {}

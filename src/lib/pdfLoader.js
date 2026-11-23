@@ -121,13 +121,26 @@ export async function loadPdfDocument(rawUrl, _metadata = {}) {
             ? cachedRecord.buffer.slice(0)
             : await cachedRecord.buffer.arrayBuffer?.();
         if (dataBuffer && dataBuffer.byteLength > 0 && isLikelyPdfBuffer(dataBuffer)) {
-          dataBuffer = await repairTruncatedPdfBuffer(dataBuffer);
-          loadedRawBuffer = dataBuffer.slice(0);
-          loadingTask = pdfjsLib.getDocument({
-            data: dataBuffer,
-            ...fontOpts,
-          });
-          source = "cache";
+          const u8 = new Uint8Array(dataBuffer);
+          const tail = new TextDecoder("latin1").decode(u8.subarray(Math.max(0, u8.length - 4096)));
+          const isBlankSinglePageStub =
+            tail.includes("%DAR_REPAIR_START%") &&
+            tail.includes("/MediaBox [0 0 595 842] /Resources << >> >>") &&
+            /\/Count\s+1\s*>>/.test(tail);
+
+          if (!isBlankSinglePageStub) {
+            const repaired = await repairTruncatedPdfBuffer(dataBuffer);
+            if (repaired.byteLength !== dataBuffer.byteLength) {
+              cachePdf(url, repaired, _metadata?.bookId || url, cachedRecord.title || _metadata?.title || "book.pdf").catch(() => {});
+            }
+            dataBuffer = repaired;
+            loadedRawBuffer = dataBuffer.slice(0);
+            loadingTask = pdfjsLib.getDocument({
+              data: dataBuffer,
+              ...fontOpts,
+            });
+            source = "cache";
+          }
         }
       }
     }
@@ -141,13 +154,63 @@ export async function loadPdfDocument(rawUrl, _metadata = {}) {
 
   // 3. Cloud Firestore PDF (uploaded directly without external URL)
   if (!loadingTask && url.startsWith("firestore://book_files/")) {
-    const cloudBuffer = await fetchFirestorePdfBuffer(url, undefined, _metadata);
-    loadedRawBuffer = cloudBuffer.slice(0);
-    loadingTask = pdfjsLib.getDocument({
-      data: cloudBuffer,
-      ...fontOpts,
-    });
-    source = "cloud-firestore";
+    const fileId = url.replace("firestore://book_files/", "").split("/")[0].trim();
+    // 3A. First check local server disk endpoint (/api/book-pdf/:fileId) to bypass Firestore read quota
+    if (fileId) {
+      try {
+        const localResp = await fetch(apiUrl(`/api/book-pdf/${encodeURIComponent(fileId)}`));
+        if (localResp.ok) {
+          const localBuf = await localResp.arrayBuffer();
+          if (localBuf && localBuf.byteLength > 100 && isLikelyPdfBuffer(localBuf)) {
+            const repaired = await repairTruncatedPdfBuffer(localBuf);
+            loadedRawBuffer = repaired.slice(0);
+            loadingTask = pdfjsLib.getDocument({
+              data: repaired,
+              ...fontOpts,
+            });
+            source = "local-server";
+          }
+        }
+      } catch {
+        // Proceed to Firestore fetch
+      }
+    }
+
+    if (!loadingTask) {
+      try {
+        const cloudBuffer = await fetchFirestorePdfBuffer(url, undefined, _metadata);
+        loadedRawBuffer = cloudBuffer.slice(0);
+        loadingTask = pdfjsLib.getDocument({
+          data: cloudBuffer,
+          ...fontOpts,
+        });
+        source = "cloud-firestore";
+      } catch (cloudErr) {
+        const titleStr = String(_metadata?.title || "");
+        const idStr = String(_metadata?.bookId || "");
+        const isWaswasaSample =
+          url.includes("waswasa") ||
+          idStr.includes("waswasa") ||
+          idStr.includes("sample-urdu") ||
+          titleStr.includes("وسوسہ") ||
+          titleStr.includes("وسوسه");
+        if (isWaswasaSample) {
+          const genBuf = await generateWaswasaPdfArrayBuffer();
+          if (genBuf && genBuf.byteLength > 0) {
+            loadedRawBuffer = genBuf.slice(0);
+            loadingTask = pdfjsLib.getDocument({
+              data: genBuf,
+              ...fontOpts,
+            });
+            source = "cache";
+          } else {
+            throw cloudErr;
+          }
+        } else {
+          throw cloudErr;
+        }
+      }
+    }
   }
 
   // 4. Network Load with Progressive Streaming & Range Requests

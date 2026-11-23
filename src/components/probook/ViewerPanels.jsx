@@ -477,6 +477,8 @@ export function ThemeComfortPanel({
   show,
   theme,
   onSelectTheme,
+  viewMode = "vertical",
+  onSelectViewMode,
   fitMode,
   onSelectFitMode,
   brightness,
@@ -596,6 +598,35 @@ export function ThemeComfortPanel({
           })}
         </div>
       </div>
+
+      {/* 1.5 Page View Mode (Vertical Scroll vs Single Page) */}
+      {onSelectViewMode && (
+        <div className="space-y-1.5">
+          <label className={`text-[11px] font-medium ${palette.mutedText}`}>
+            {t.viewModeLabel || "نمط عرض الصفحات"}
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { id: "vertical", label: t.viewModeScroll || "تمرير عمودي" },
+              { id: "single", label: t.viewModeSingle || "صفحة مفردة" },
+            ].map((vm) => {
+              const active = viewMode === vm.id;
+              return (
+                <button
+                  key={vm.id}
+                  type="button"
+                  onClick={() => onSelectViewMode(vm.id)}
+                  className={`py-2 px-3 rounded-xl border text-xs flex items-center justify-center gap-1.5 transition-all ${
+                    active ? palette.cardActive + " font-bold" : palette.cardIdle
+                  }`}
+                >
+                  <span>{vm.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 2. Page Fit Mode */}
       <div className="space-y-1.5">

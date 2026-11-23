@@ -164,13 +164,47 @@ export default function DevBackgroundManager() {
       });
   }, []);
 
+  const persistPatch = useCallback((patch) => {
+    const mapped = {};
+    if ("bgType" in patch) mapped.hero_bg_type = patch.bgType;
+    if ("title" in patch) mapped.hero_title = patch.title;
+    if ("subtitle" in patch) mapped.hero_subtitle = patch.subtitle;
+    if ("btnText" in patch) mapped.hero_btn_text = patch.btnText;
+    if ("btnLink" in patch) mapped.hero_btn_link = patch.btnLink;
+    if ("opacity" in patch) mapped.hero_bg_opacity = patch.opacity;
+    if ("blur" in patch) mapped.hero_bg_blur = patch.blur;
+    if ("brightness" in patch) mapped.hero_bg_brightness = patch.brightness;
+    if ("contrast" in patch) mapped.hero_bg_contrast = patch.contrast;
+    if ("saturation" in patch) mapped.hero_bg_saturation = patch.saturation;
+    if ("overlayColor" in patch) mapped.hero_overlay_color = patch.overlayColor;
+    if ("overlayAlpha" in patch) mapped.hero_overlay_alpha = patch.overlayAlpha;
+    if ("animSpeed" in patch) mapped.hero_anim_speed = patch.animSpeed;
+    if ("zoom" in patch) mapped.hero_zoom = patch.zoom;
+    if ("parallax" in patch) mapped.hero_parallax = patch.parallax;
+    if ("bgUrl" in patch) mapped.hero_bg_url = patch.bgUrl;
+    if ("slideUrls" in patch) mapped.hero_slideshow_urls = JSON.stringify(patch.slideUrls || []);
+    if ("slideTrans" in patch) mapped.hero_slide_transition = patch.slideTrans;
+    if ("slideDur" in patch) mapped.hero_slide_duration = patch.slideDur;
+    if ("autoplay" in patch) mapped.hero_video_autoplay = patch.autoplay;
+    if ("loop" in patch) mapped.hero_video_loop = patch.loop;
+    if ("mute" in patch) mapped.hero_video_mute = patch.mute;
+    if ("videoBright" in patch) mapped.hero_video_brightness = patch.videoBright;
+    if ("videoMobile" in patch) mapped.hero_video_mobile = patch.videoMobile;
+    if ("videoSpeed" in patch) mapped.hero_video_speed = patch.videoSpeed;
+    if ("gradFrom" in patch) mapped.hero_grad_from = patch.gradFrom;
+    if ("gradTo" in patch) mapped.hero_grad_to = patch.gradTo;
+    if ("customHtml" in patch) mapped.hero_custom_html = patch.customHtml;
+    if ("extraLayers" in patch) mapped.hero_extra_layers = JSON.stringify(patch.extraLayers || []);
+    if ("customLayers" in patch) mapped.hero_custom_layers = JSON.stringify(patch.customLayers || []);
+    if (Object.keys(mapped).length > 0) {
+      setSettings(mapped);
+    }
+  }, []);
+
   const update = useCallback((patch) => {
-    setSt(prev => {
-      const next = { ...prev, ...patch };
-      persist(next);
-      return next;
-    });
-  }, [persist]);
+    setSt(prev => ({ ...prev, ...patch }));
+    persistPatch(patch);
+  }, [persistPatch]);
 
   const previewPatch = useCallback((patch) => {
     setSt(prev => ({ ...prev, ...patch }));

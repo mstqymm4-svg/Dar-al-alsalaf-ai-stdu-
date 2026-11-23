@@ -23,9 +23,14 @@ import { PageSpinner } from './components/Skeleton';
 
 // Apply theme immediately from localStorage before any renders
 try {
-  const lsMode = localStorage.getItem("devs_theme_mode") || (localStorage.getItem("devs_dark_mode") === "true" ? "dark" : "light");
-  if (lsMode === "dark") document.documentElement.classList.add("dark");else
-  if (lsMode === "light") document.documentElement.classList.remove("dark");
+  const lsThemeMode = localStorage.getItem("devs_theme_mode");
+  const lsDarkMode = localStorage.getItem("devs_dark_mode");
+  const isLight = lsThemeMode === "light" && lsDarkMode !== "true";
+  if (isLight) {
+    document.documentElement.classList.remove("dark");
+  } else {
+    document.documentElement.classList.add("dark");
+  }
 } catch (e) {}
 
 // Eagerly import core user-facing pages for zero-latency navigation

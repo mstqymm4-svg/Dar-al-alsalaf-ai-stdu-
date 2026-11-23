@@ -99,6 +99,7 @@ export default function ShortsPlayerModal({
   const [showHint, setShowHint] = useState(true);
   const [favIds, setFavIds] = useState(() => getVideoFavIds(getAccountEmail(user)));
   const [offlineBlobUrl, setOfflineBlobUrl] = useState(null);
+  const [serverFallbackStreamUrl, setServerFallbackStreamUrl] = useState(null);
   const [isSavedOffline, setIsSavedOffline] = useState(false);
   const [isDownloadingOffline, setIsDownloadingOffline] = useState(false);
   const [offlineDownloadPct, setOfflineDownloadPct] = useState(0);
@@ -135,7 +136,9 @@ export default function ShortsPlayerModal({
   const rawUrl = currentVideo?.youtube_url || currentVideo?.file_url || "";
   const activeVidId = extractYoutubeId(rawUrl);
   const effectiveDirectUrl =
-    offlineBlobUrl || (!activeVidId && isDirectVideoUrl(rawUrl) ? rawUrl : null);
+    offlineBlobUrl ||
+    serverFallbackStreamUrl ||
+    (!activeVidId && isDirectVideoUrl(rawUrl) ? rawUrl : null);
   const isDirectFile = Boolean(effectiveDirectUrl);
   const activePosterUrl =
     currentVideo?.thumbnail || (activeVidId ? getThumbnail(rawUrl) : "");
@@ -170,6 +173,7 @@ export default function ShortsPlayerModal({
     let active = true;
     let createdBlobUrl = null;
     setOfflineBlobUrl(null);
+    setServerFallbackStreamUrl(null);
     setIsSavedOffline(false);
 
     if (!isOpen || !currentVideo?.id) return;
@@ -217,6 +221,31 @@ export default function ShortsPlayerModal({
       }
     };
   }, [isOpen, currentVideo?.id]);
+
+  // Automatic server-side MP4 stream fallback when YouTube IFrame reports embed error
+  useEffect(() => {
+    if (!isOpen || !activeVidId || !ytEmbedError || offlineBlobUrl) return;
+    let cancelled = false;
+    fetch(`/api/youtube-stream?id=${encodeURIComponent(activeVidId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const resolvedUrl =
+          data?.proxyUrl ||
+          (data?.url
+            ? `/api/youtube-download?url=${encodeURIComponent(data.url)}`
+            : null);
+        if (resolvedUrl) {
+          setServerFallbackStreamUrl(resolvedUrl);
+          setIsSlideReady(true);
+          setIsBuffering(false);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, activeVidId, ytEmbedError, offlineBlobUrl]);
 
   // Hide mobile bottom-nav while ShortsPlayerModal is open, restore on close
   useEffect(() => {
@@ -1170,7 +1199,7 @@ export default function ShortsPlayerModal({
         </div>
 
         {/* Floating Side Action Controls */}
-        <div className="absolute bottom-28 left-3 z-30 flex flex-col items-center gap-3">
+        <div className="absolute bottom-28 end-3 z-30 flex flex-col items-center gap-3">
           {/* Play / Pause Button */}
           <button
             type="button"

@@ -588,4 +588,8 @@ export default {
   smartReaderRetry: "Metni Yeniden Çıkar",
   smartReaderNoText: "Bu sayfayı sesli okumak için Metni Yeniden Çıkar'a dokunun",
   smartReaderClose: "Okuyucuyu Kapat",
+  smartReaderLangAuto: "Otomatik (Arapça + Urduca)",
+  smartReaderLangAr: "Arapça Oku",
+  smartReaderLangUr: "Urduca Oku (اردو)",
+  smartReaderAudioError: "Ses oynatılamadı, lütfen tekrar deneyin",
 };

@@ -84,6 +84,236 @@ async function startServer() {
   app.post('/send-contact-message', handleSendContactMessage);
   app.post('/api/send-contact-message', handleSendContactMessage);
 
+  // ─── Persistent 100% Free Server-Side Database Store ────────────────────────
+  // Ensures Developer Panel edits to app_settings, books, videos, video_channels,
+  // social_channels, and all app collections save permanently on the project disk
+  // (both live_catalog_store.json and data-export/*.json) with zero cost and no limits.
+  const CATALOG_COLLECTIONS = new Set([
+    'app_settings',
+    'books',
+    'videos',
+    'video_channels',
+    'social_channels',
+    'contact_messages',
+    'users',
+    'book_progress',
+    'book_notes',
+    'book_bookmarks',
+    'book_audio_settings',
+    'video_bookmarks',
+    'video_notes',
+    'user_notifications',
+  ]);
+
+  const SEED_FILE_MAP: Record<string, string> = {
+    app_settings: path.join(__dirname, 'data-export', 'AppSettings.json'),
+    books: path.join(__dirname, 'data-export', 'Books.json'),
+    videos: path.join(__dirname, 'data-export', 'Videos.json'),
+    video_channels: path.join(__dirname, 'data-export', 'VideoChannels.json'),
+    social_channels: path.join(__dirname, 'data-export', 'SocialChannels.json'),
+  };
+
+  const primaryCatalogStorePath = path.join(__dirname, 'data-export', 'live_catalog_store.json');
+  const fallbackCatalogStorePath = '/tmp/dar_live_catalog_store.json';
+
+  interface LiveCatalogStore {
+    collections: Record<string, any[]>;
+    deletedIds: string[];
+    updatedAt: string;
+  }
+
+  const readLiveCatalogStore = (): LiveCatalogStore => {
+    for (const filePath of [primaryCatalogStorePath, fallbackCatalogStorePath]) {
+      try {
+        if (fs.existsSync(filePath)) {
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            return {
+              collections: parsed.collections && typeof parsed.collections === 'object' ? parsed.collections : {},
+              deletedIds: Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [],
+              updatedAt: parsed.updatedAt || new Date().toISOString(),
+            };
+          }
+        }
+      } catch {}
+    }
+    return { collections: {}, deletedIds: [], updatedAt: new Date().toISOString() };
+  };
+
+  let liveCatalogCache: LiveCatalogStore = readLiveCatalogStore();
+
+  const syncSeedExportFile = (col: string, store: LiveCatalogStore) => {
+    const seedFilePath = SEED_FILE_MAP[col];
+    if (!seedFilePath) return;
+    try {
+      let existingSeed: any[] = [];
+      if (fs.existsSync(seedFilePath)) {
+        const raw = fs.readFileSync(seedFilePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) existingSeed = parsed;
+      }
+      const deletedSet = new Set<string>(store.deletedIds || []);
+      const liveItems: any[] = Array.isArray(store.collections[col]) ? store.collections[col] : [];
+
+      if (col === 'app_settings') {
+        const byKey = new Map<string, any>();
+        for (const item of existingSeed) {
+          if (!item) continue;
+          const k = String(item.setting_key || item.id || '').trim();
+          if (!k) continue;
+          const prev = byKey.get(k);
+          if (!prev || String(item.updated_date || '') >= String(prev.updated_date || '')) {
+            byKey.set(k, item);
+          }
+        }
+        for (const live of liveItems) {
+          if (!live) continue;
+          const k = String(live.setting_key || live.id || '').trim();
+          if (!k) continue;
+          const prev = byKey.get(k) || {};
+          byKey.set(k, { ...prev, ...live, setting_key: k });
+        }
+        fs.writeFileSync(seedFilePath, JSON.stringify(Array.from(byKey.values()), null, 2), 'utf-8');
+      } else {
+        const byId = new Map<string, any>();
+        for (const item of existingSeed) {
+          if (!item) continue;
+          const id = String(item.id || '').trim();
+          if (!id || deletedSet.has(id)) continue;
+          byId.set(id, item);
+        }
+        for (const live of liveItems) {
+          if (!live) continue;
+          const id = String(live.id || '').trim();
+          if (!id || deletedSet.has(id)) continue;
+          const prev = byId.get(id) || {};
+          byId.set(id, { ...prev, ...live, id });
+        }
+        fs.writeFileSync(seedFilePath, JSON.stringify(Array.from(byId.values()), null, 2), 'utf-8');
+      }
+    } catch {}
+  };
+
+  const writeLiveCatalogStore = (store: LiveCatalogStore, changedCollection?: string) => {
+    store.updatedAt = new Date().toISOString();
+    liveCatalogCache = store;
+    const serialized = JSON.stringify(store, null, 2);
+    try {
+      const dir = path.dirname(primaryCatalogStorePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(primaryCatalogStorePath, serialized, 'utf-8');
+    } catch {
+      try {
+        fs.writeFileSync(fallbackCatalogStorePath, serialized, 'utf-8');
+      } catch {}
+    }
+    if (changedCollection) {
+      syncSeedExportFile(changedCollection, store);
+    }
+  };
+
+  app.get('/api/catalog-store/:collection', (req, res) => {
+    const col = String(req.params.collection || '').trim();
+    if (!CATALOG_COLLECTIONS.has(col)) {
+      return res.status(400).json({ ok: false, error: 'Unsupported collection' });
+    }
+    const items = Array.isArray(liveCatalogCache.collections[col])
+      ? liveCatalogCache.collections[col]
+      : [];
+    return res.json({
+      ok: true,
+      collection: col,
+      items,
+      deletedIds: liveCatalogCache.deletedIds || [],
+      updatedAt: liveCatalogCache.updatedAt,
+    });
+  });
+
+  app.post('/api/catalog-store/:collection', (req, res) => {
+    const col = String(req.params.collection || '').trim();
+    if (!CATALOG_COLLECTIONS.has(col)) {
+      return res.status(400).json({ ok: false, error: 'Unsupported collection' });
+    }
+    const incomingList: any[] = Array.isArray(req.body?.items)
+      ? req.body.items
+      : req.body?.item && typeof req.body.item === 'object'
+      ? [req.body.item]
+      : req.body && typeof req.body === 'object' && (req.body.id || req.body.setting_key)
+      ? [req.body]
+      : [];
+
+    if (incomingList.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No item payload provided' });
+    }
+
+    const currentList: any[] = Array.isArray(liveCatalogCache.collections[col])
+      ? [...liveCatalogCache.collections[col]]
+      : [];
+    const deletedSet = new Set<string>(liveCatalogCache.deletedIds || []);
+
+    for (const rawItem of incomingList) {
+      if (!rawItem || typeof rawItem !== 'object') continue;
+      const itemKey =
+        col === 'app_settings'
+          ? String(rawItem.setting_key || rawItem.id || '').trim()
+          : String(rawItem.id || '').trim();
+      if (!itemKey) continue;
+
+      deletedSet.delete(itemKey);
+      if (rawItem.id) deletedSet.delete(String(rawItem.id));
+
+      const idx = currentList.findIndex((existing) =>
+        col === 'app_settings'
+          ? String(existing?.setting_key || existing?.id || '') === itemKey
+          : String(existing?.id || '') === itemKey
+      );
+      if (idx >= 0) {
+        currentList[idx] = { ...currentList[idx], ...rawItem };
+      } else {
+        currentList.unshift(rawItem);
+      }
+    }
+
+    liveCatalogCache.collections[col] = currentList;
+    liveCatalogCache.deletedIds = Array.from(deletedSet);
+    writeLiveCatalogStore(liveCatalogCache, col);
+
+    return res.json({
+      ok: true,
+      collection: col,
+      count: incomingList.length,
+      updatedAt: liveCatalogCache.updatedAt,
+    });
+  });
+
+  app.delete('/api/catalog-store/:collection/:id', (req, res) => {
+    const col = String(req.params.collection || '').trim();
+    const targetId = String(req.params.id || '').trim();
+    if (!CATALOG_COLLECTIONS.has(col) || !targetId) {
+      return res.status(400).json({ ok: false, error: 'Invalid collection or id' });
+    }
+
+    const currentList: any[] = Array.isArray(liveCatalogCache.collections[col])
+      ? liveCatalogCache.collections[col]
+      : [];
+    liveCatalogCache.collections[col] = currentList.filter((item) => {
+      if (!item) return false;
+      if (String(item.id || '') === targetId) return false;
+      if (col === 'app_settings' && String(item.setting_key || '') === targetId) return false;
+      return true;
+    });
+
+    if (col !== 'app_settings') {
+      const deletedSet = new Set<string>(liveCatalogCache.deletedIds || []);
+      deletedSet.add(targetId);
+      liveCatalogCache.deletedIds = Array.from(deletedSet);
+    }
+    writeLiveCatalogStore(liveCatalogCache, col);
+
+    return res.json({ ok: true, collection: col, deletedId: targetId });
+  });
+
   // YouTube metadata extractor helper functions
   const decodeHtml = (html: string) => {
     return html
@@ -267,6 +497,101 @@ async function startServer() {
     return res.json({ success: false, videoId });
   });
 
+  // SSRF Validator for external URLs passed to proxy endpoints
+  function isSafeExternalUrl(rawUrl: string): boolean {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+      if (
+        host === 'localhost' ||
+        host === '0.0.0.0' ||
+        host === '::1' ||
+        host.endsWith('.local') ||
+        host.endsWith('.internal') ||
+        host === 'metadata.google.internal'
+      ) {
+        return false;
+      }
+      const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+      if (ipv4Match) {
+        const [, a, b] = ipv4Match.map(Number);
+        if (
+          a === 127 ||
+          a === 10 ||
+          a === 0 ||
+          (a === 169 && b === 254) ||
+          (a === 172 && b >= 16 && b <= 31) ||
+          (a === 192 && b === 168)
+        ) {
+          return false;
+        }
+      }
+      if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:')) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Persistent server disk storage for uploaded PDF books inside workspace data-export/books_storage
+  // (survives container restarts and works even when Firestore quota is exceeded)
+  const PRIMARY_BOOKS_STORAGE_DIR = path.join(__dirname, 'data-export', 'books_storage');
+  const FALLBACK_BOOKS_STORAGE_DIR = path.join('/tmp', 'dar_books_storage');
+  let BOOKS_STORAGE_DIR = PRIMARY_BOOKS_STORAGE_DIR;
+  try {
+    if (!fs.existsSync(PRIMARY_BOOKS_STORAGE_DIR)) {
+      fs.mkdirSync(PRIMARY_BOOKS_STORAGE_DIR, { recursive: true });
+    }
+  } catch (e) {
+    BOOKS_STORAGE_DIR = FALLBACK_BOOKS_STORAGE_DIR;
+  }
+  try {
+    if (!fs.existsSync(FALLBACK_BOOKS_STORAGE_DIR)) {
+      fs.mkdirSync(FALLBACK_BOOKS_STORAGE_DIR, { recursive: true });
+    }
+  } catch {}
+
+  app.post('/api/upload-pdf', express.raw({ type: ['application/pdf', 'application/octet-stream'], limit: '80mb' }), (req, res) => {
+    try {
+      const rawId = String(req.query.fileId || `book_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!rawId) return res.status(400).json({ error: 'Invalid fileId' });
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+      if (buf.length < 64) {
+        return res.status(400).json({ error: 'Empty or invalid PDF buffer' });
+      }
+      const targetPath = path.join(BOOKS_STORAGE_DIR, `${rawId}.pdf`);
+      fs.writeFileSync(targetPath, buf);
+      return res.json({ ok: true, fileId: rawId, size: buf.length, url: `/api/book-pdf/${rawId}` });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || 'Failed to store PDF on server' });
+    }
+  });
+
+  app.get('/api/book-pdf/:fileId', (req, res) => {
+    try {
+      const rawId = String(req.params.fileId || '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!rawId) return res.status(400).json({ error: 'Invalid fileId' });
+      const primaryPath = path.join(PRIMARY_BOOKS_STORAGE_DIR, `${rawId}.pdf`);
+      const fallbackPath = path.join(FALLBACK_BOOKS_STORAGE_DIR, `${rawId}.pdf`);
+      const targetPath = fs.existsSync(primaryPath)
+        ? primaryPath
+        : fs.existsSync(fallbackPath)
+        ? fallbackPath
+        : '';
+      if (!targetPath) {
+        return res.status(404).json({ error: 'PDF file not found on local server disk' });
+      }
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return fs.createReadStream(targetPath).pipe(res);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || 'Failed to read PDF' });
+    }
+  });
+
   // Proxy download endpoint for saving videos offline into IndexedDB
   app.get('/api/youtube-download', async (req, res) => {
     const rawId = ((req.query.id as string) || (req.query.url as string) || '').trim();
@@ -275,7 +600,7 @@ async function startServer() {
     let targetStreamUrl = '';
     let mimeType = 'video/mp4';
 
-    if (directUrl && /^https?:\/\//i.test(directUrl)) {
+    if (directUrl && isSafeExternalUrl(directUrl)) {
       targetStreamUrl = directUrl;
     } else {
       const videoId = extractYoutubeVideoId(rawId);
@@ -343,8 +668,8 @@ async function startServer() {
   // API endpoint to proxy image download for automatic logo upload/storage
   app.get('/api/proxy-image', async (req, res) => {
     const imageUrl = (req.query.url as string || '').trim();
-    if (!imageUrl) {
-      return res.status(400).send('Image URL is required');
+    if (!imageUrl || !isSafeExternalUrl(imageUrl)) {
+      return res.status(400).send('Valid external Image URL is required');
     }
     try {
       const response = await fetch(imageUrl, {
@@ -357,6 +682,9 @@ async function startServer() {
         return res.status(response.status).send('Failed to fetch image');
       }
       const contentType = response.headers.get('content-type') || 'image/jpeg';
+      if (!contentType.startsWith('image/') && !contentType.startsWith('application/octet-stream')) {
+        return res.status(400).send('Invalid image content type');
+      }
       res.setHeader('Content-Type', contentType);
       res.setHeader('Cache-Control', 'public, max-age=86400');
       const arrayBuffer = await response.arrayBuffer();

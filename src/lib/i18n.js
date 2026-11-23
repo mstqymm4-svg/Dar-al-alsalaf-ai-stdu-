@@ -592,6 +592,10 @@ export const TRANSLATIONS = {
     smartReaderRetry: "إعادة استخراج النص",
     smartReaderNoText: "اضغط إعادة استخراج النص لقراءة هذه الصفحة صوتياً",
     smartReaderClose: "إغلاق القارئ",
+    smartReaderLangAuto: "تلقائي (عربي + أردو)",
+    smartReaderLangAr: "قراءة بالعربية",
+    smartReaderLangUr: "قراءة بالأردية (اردو)",
+    smartReaderAudioError: "تعذر تشغيل الصوت، يرجى المحاولة مرة أخرى",
   },
   en: {
     dir: "rtl",
@@ -1182,6 +1186,10 @@ export const TRANSLATIONS = {
     smartReaderRetry: "Re-extract Text",
     smartReaderNoText: "Tap Re-extract Text to read this page aloud",
     smartReaderClose: "Close Reader",
+    smartReaderLangAuto: "Auto (Arabic + Urdu)",
+    smartReaderLangAr: "Read in Arabic",
+    smartReaderLangUr: "Read in Urdu (اردو)",
+    smartReaderAudioError: "Unable to play audio, please try again",
   },
   fr: {
     dir: "rtl",
@@ -1772,6 +1780,10 @@ export const TRANSLATIONS = {
     smartReaderRetry: "Réextraire le texte",
     smartReaderNoText: "Appuyez sur Réextraire pour lire cette page",
     smartReaderClose: "Fermer le lecteur",
+    smartReaderLangAuto: "Auto (Arabe + Ourdou)",
+    smartReaderLangAr: "Lecture en Arabe",
+    smartReaderLangUr: "Lecture en Ourdou (اردو)",
+    smartReaderAudioError: "Impossible de lire l'audio, veuillez réessayer",
   },
   ur: {
     dir: "rtl",
@@ -2362,6 +2374,10 @@ export const TRANSLATIONS = {
     smartReaderRetry: "متن دوبارہ نکالیں",
     smartReaderNoText: "اس صفحے کو سننے کے لیے متن دوبارہ نکالیں پر کلک کریں",
     smartReaderClose: "قاری بند کریں",
+    smartReaderLangAuto: "خودکار (عربی + اردو)",
+    smartReaderLangAr: "عربی میں پڑھیں",
+    smartReaderLangUr: "اردو میں پڑھیں",
+    smartReaderAudioError: "آڈیو چلانے میں دشواری، براہ کرم دوبارہ کوشش کریں",
   },
   hi: {
     dir: "rtl",
@@ -2952,6 +2968,10 @@ export const TRANSLATIONS = {
     smartReaderRetry: "टेक्स्ट फिर से निकालें",
     smartReaderNoText: "इस पृष्ठ को सुनने के लिए टेक्स्ट फिर से निकालें दबाएं",
     smartReaderClose: "रीडर बंद करें",
+    smartReaderLangAuto: "स्वचालित (अरबी + उर्दू)",
+    smartReaderLangAr: "अरबी में पढ़ें",
+    smartReaderLangUr: "उर्दू में पढ़ें (اردو)",
+    smartReaderAudioError: "ऑडियो चलाने में असमर्थ, कृपया पुनः प्रयास करें",
   },
   tr,
 };
@@ -2972,13 +2992,19 @@ export const LANG_META = {
 
 export function useT() {
   const [lang, setLang] = useState(() => ls.get("dev_app_lang", "ar"));
+  const [, setSettingsRev] = useState(0);
 
   useEffect(() => {
-    const handler = () => setLang(ls.get("dev_app_lang", "ar"));
+    const handler = () => {
+      setLang(ls.get("dev_app_lang", "ar"));
+      setSettingsRev((n) => n + 1);
+    };
     window.addEventListener("app-lang-change", handler);
+    window.addEventListener("app-settings-changed", handler);
     window.addEventListener("storage", handler);
     return () => {
       window.removeEventListener("app-lang-change", handler);
+      window.removeEventListener("app-settings-changed", handler);
       window.removeEventListener("storage", handler);
     };
   }, []);
@@ -2995,7 +3021,6 @@ export function useT() {
     customName !== "المكتبة الدينية" &&
     customName.toUpperCase() !== "DAR AL ULOOM";
   const useCustomSub =
-    lang === "ar" &&
     customSub &&
     customSub !== "." &&
     customSub !== "نور العلم والمعرفة";

@@ -171,16 +171,99 @@ function isNetworkLikeError(err) {
   return (
     (typeof navigator !== "undefined" && navigator.onLine === false) ||
     code === "unavailable" ||
-    code === "not-found" ||
-    code === "permission-denied" ||
-    code === "unauthenticated" ||
+    code === "deadline-exceeded" ||
     msg.includes("client is offline") ||
     msg.includes("failed to get document because the client is offline") ||
-    msg.includes("permission-denied") ||
-    msg.includes("missing or insufficient permissions") ||
-    msg.includes("not-found") ||
-    msg.includes("network")
+    msg.includes("network") ||
+    msg.includes("timeout")
   );
+}
+
+function nextMonotonicIso(...prevDates) {
+  let maxMs = Date.now();
+  for (const d of prevDates) {
+    if (!d) continue;
+    const parsed = Date.parse(String(d));
+    if (Number.isFinite(parsed) && parsed >= maxMs) {
+      maxMs = parsed + 1;
+    }
+  }
+  return new Date(maxMs).toISOString();
+}
+
+function readLocalDirtySettingsMap() {
+  try {
+    const raw = localStorage.getItem("devs__dirty_keys");
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readLocalSavedSettingsSet() {
+  try {
+    const raw = localStorage.getItem("devs__saved_keys");
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function readLocalSettingValue(key) {
+  try {
+    return localStorage.getItem("devs_" + key);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchServerCatalogStore(collectionName) {
+  try {
+    const res = await Promise.race([
+      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server catalog timeout")), 2500)),
+    ]);
+    if (!res || !res.ok) return { items: [], deletedIds: [] };
+    const data = await res.json();
+    return {
+      items: Array.isArray(data?.items) ? data.items : [],
+      deletedIds: Array.isArray(data?.deletedIds) ? data.deletedIds : [],
+    };
+  } catch {
+    return { items: [], deletedIds: [] };
+  }
+}
+
+async function saveToServerCatalogStore(collectionName, item) {
+  try {
+    const res = await Promise.race([
+      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ item }),
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server save timeout")), 3000)),
+    ]);
+    return Boolean(res && res.ok);
+  } catch {
+    return false;
+  }
+}
+
+async function deleteFromServerCatalogStore(collectionName, docId) {
+  try {
+    const res = await Promise.race([
+      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}`, {
+        method: "DELETE",
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server delete timeout")), 3000)),
+    ]);
+    return Boolean(res && res.ok);
+  } catch {
+    return false;
+  }
 }
 
 function readPendingCatalogOps() {
@@ -204,7 +287,7 @@ function writePendingCatalogOps(ops) {
 }
 
 function enqueueCatalogOp(op) {
-  if (!op || op.collectionName === "app_settings") return;
+  if (!op) return;
   const ops = readPendingCatalogOps().filter(
     (item) => !(item.collectionName === op.collectionName && item.docId === op.docId)
   );
@@ -228,15 +311,20 @@ function applyPendingOpsToCatalogList(collectionName, remoteList, sanitizeFn) {
   if (ops.length === 0) return Array.isArray(remoteList) ? remoteList : [];
   const byId = new Map();
   for (const item of remoteList || []) {
-    if (item?.id) byId.set(item.id, item);
+    const mapKey = collectionName === "app_settings" ? String(item?.setting_key || item?.id || "") : String(item?.id || "");
+    if (mapKey) byId.set(mapKey, item);
   }
   for (const op of ops) {
     if (op.op === "delete") {
       byId.delete(op.docId);
       if (op.cleanId) byId.delete(op.cleanId);
     } else if ((op.op === "create" || op.op === "update") && op.payload) {
-      const clean = sanitizeFn(op.payload, byId.get(op.docId) || {});
-      byId.set(clean.id, clean);
+      const mapKey =
+        collectionName === "app_settings"
+          ? String(op.payload?.setting_key || op.docId || "")
+          : String(op.docId || op.payload?.id || "");
+      const clean = sanitizeFn(op.payload, byId.get(mapKey) || {});
+      byId.set(collectionName === "app_settings" ? String(clean.setting_key || clean.id) : clean.id, clean);
     }
   }
   return Array.from(byId.values());
@@ -459,20 +547,29 @@ function sanitizeAppSetting(raw, existing = {}) {
   };
 }
 
-// Deduplicate exported AppSettings by setting_key (keeping most recent updated_date)
+// Deduplicate exported AppSettings by setting_key (keeping most recent exported entry),
+// then normalize timestamps to a baseline past epoch so seed defaults NEVER beat real edits.
+const SEED_BASELINE_ISO = "2020-01-01T00:00:00.000Z";
 const dedupedSeedSettings = (() => {
   const map = new Map();
   for (const s of seedAppSettings || []) {
     if (!s?.setting_key) continue;
     const prev = map.get(s.setting_key);
     if (!prev || String(s.updated_date || "") > String(prev.updated_date || "")) {
-      map.set(s.setting_key, sanitizeAppSetting({ ...s, id: s.setting_key }));
+      map.set(s.setting_key, s);
     }
   }
-  return Array.from(map.values());
+  return Array.from(map.values()).map((s) =>
+    sanitizeAppSetting({
+      ...s,
+      id: sanitizeId(s.setting_key, "set"),
+      created_date: SEED_BASELINE_ISO,
+      updated_date: SEED_BASELINE_ISO,
+    })
+  );
 })();
 
-// ─── Firestore Public Collection Adapter (with Memory + IndexedDB + Seed Sync) ─
+// ─── Firestore Public Collection Adapter (with Memory + IndexedDB + Server Store + Seed Sync) ─
 function createPublicCatalogEntity({
   collectionName,
   sanitizeFn,
@@ -487,7 +584,7 @@ function createPublicCatalogEntity({
   let inFlightFetch = null;
   let realtimeUnsub = null;
   let lastNetworkFetchAt = 0;
-  const NETWORK_TTL_MS = 25000;
+  const NETWORK_TTL_MS = 300000;
 
   const dispatchChanged = () => {
     try {
@@ -524,7 +621,27 @@ function createPublicCatalogEntity({
   function mergeSeedWithItems(items) {
     if (!seedList || seedList.length === 0) return items || [];
     if (collectionName === "app_settings") {
-      return mergeSettingsWithLocal(items || [], (seedList || []).map((x) => sanitizeFn(x)));
+      // Keep the newest record per setting_key across seedList and local/server items
+      const map = new Map();
+      for (const s of seedList) {
+        const k = String(s?.setting_key || s?.id || "");
+        if (!k) continue;
+        const cleanS = sanitizeFn({ ...s, id: sanitizeId(k, "set"), setting_key: k });
+        const prev = map.get(k);
+        if (!prev || String(cleanS.updated_date || "") >= String(prev.updated_date || "")) {
+          map.set(k, cleanS);
+        }
+      }
+      for (const item of items || []) {
+        const k = String(item?.setting_key || item?.id || "");
+        if (!k) continue;
+        const prev = map.get(k);
+        const normalized = sanitizeFn({ ...item, id: sanitizeId(k, "set"), setting_key: k }, prev || item);
+        if (!prev || String(normalized.updated_date || "") >= String(prev.updated_date || "")) {
+          map.set(k, normalized);
+        }
+      }
+      return Array.from(map.values());
     }
     if (!items || items.length === 0) {
       return (seedList || []).map((x) => sanitizeFn(x));
@@ -546,6 +663,27 @@ function createPublicCatalogEntity({
     return Array.from(byId.values());
   }
 
+  function mergeServerStoreItems(baseItems, serverItems) {
+    if (!Array.isArray(serverItems) || serverItems.length === 0) return baseItems;
+    const map = new Map();
+    for (const item of baseItems || []) {
+      if (!item) continue;
+      const k = collectionName === "app_settings" ? String(item.setting_key || item.id || "") : String(item.id || "");
+      if (k) map.set(k, sanitizeFn(item, item));
+    }
+    for (const srvItem of serverItems) {
+      if (!srvItem) continue;
+      const k = collectionName === "app_settings" ? String(srvItem.setting_key || srvItem.id || "") : String(srvItem.id || "");
+      if (!k) continue;
+      const prev = map.get(k);
+      const cleanSrv = sanitizeFn(srvItem, prev || srvItem);
+      if (!prev || String(cleanSrv.updated_date || "") >= String(prev.updated_date || "")) {
+        map.set(k, cleanSrv);
+      }
+    }
+    return Array.from(map.values());
+  }
+
   async function loadLocalList() {
     if (memCache && memCache.length > 0) {
       const withPending = applyPendingOpsToCatalogList(collectionName, memCache, sanitizeFn);
@@ -559,8 +697,50 @@ function createPublicCatalogEntity({
 
     localLoadPromise = (async () => {
       try {
-        const cached = await getCachedAll().catch(() => []);
-        const base = mergeSeedWithItems(cached);
+        const [cached, serverStore] = await Promise.all([
+          getCachedAll().catch(() => []),
+          fetchServerCatalogStore(collectionName),
+        ]);
+        if (Array.isArray(serverStore.deletedIds)) {
+          for (const delId of serverStore.deletedIds) {
+            markDeletedId(delId);
+          }
+        }
+
+        // Auto-backup any locally cached items (e.g. books or settings saved in browser IndexedDB)
+        // that are not yet present in the server disk store (data-export/live_catalog_store.json)
+        if (Array.isArray(cached) && cached.length > 0) {
+          const serverKeys = new Set(
+            (serverStore.items || []).map((it) =>
+              collectionName === "app_settings"
+                ? String(it?.setting_key || it?.id || "")
+                : String(it?.id || "")
+            )
+          );
+          const deletedSet = getDeletedIds();
+          const missingOnServer = cached.filter((it) => {
+            if (!it) return false;
+            const k =
+              collectionName === "app_settings"
+                ? String(it.setting_key || it.id || "")
+                : String(it.id || "");
+            if (!k || deletedSet.has(k) || deletedSet.has(sanitizeId(k))) return false;
+            if (collectionName === "app_settings" && it.updated_date === SEED_BASELINE_ISO) {
+              return false;
+            }
+            return !serverKeys.has(k);
+          });
+          if (missingOnServer.length > 0) {
+            fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ items: missingOnServer }),
+            }).catch(() => {});
+          }
+        }
+
+        const mergedWithServer = mergeServerStoreItems(cached, serverStore.items);
+        const base = mergeSeedWithItems(mergedWithServer);
         const withPending = applyPendingOpsToCatalogList(collectionName, base, sanitizeFn);
         const cleaned = filterDeleted(withPending);
         memCache = cleaned;
@@ -577,32 +757,124 @@ function createPublicCatalogEntity({
   loadLocalList().catch(() => {});
 
   async function readServerDoc(rawId, cleanId) {
-    try {
-      const snap = await Promise.race([
-        getDoc(doc(db, collectionName, rawId)),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 900)),
-      ]);
-      if (snap?.exists()) return { docId: snap.id, data: snap.data() };
-    } catch {}
-    if (cleanId && cleanId !== rawId) {
+    async function fetchOne(id) {
+      if (!id) return null;
+      const dRef = doc(db, collectionName, id);
       try {
         const snap = await Promise.race([
-          getDoc(doc(db, collectionName, cleanId)),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 900)),
+          getDocFromServer(dRef),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 4000)),
         ]);
         if (snap?.exists()) return { docId: snap.id, data: snap.data() };
-      } catch {}
+      } catch {
+        try {
+          const snap = await Promise.race([
+            getDoc(dRef),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("readServerDoc timeout")), 3000)),
+          ]);
+          if (snap?.exists()) return { docId: snap.id, data: snap.data() };
+        } catch {}
+      }
+      return null;
+    }
+    const first = await fetchOne(rawId);
+    if (first) return first;
+    if (cleanId && cleanId !== rawId) {
+      return await fetchOne(cleanId);
     }
     return null;
   }
 
+  async function writeDocSafelyToFirestore(targetId, rawPayload, localExisting = {}) {
+    const docId =
+      collectionName === "app_settings"
+        ? sanitizeId(rawPayload?.setting_key || targetId, "set")
+        : sanitizeId(targetId);
+
+    const safeUpdatedDate = nextMonotonicIso(
+      rawPayload?.updated_date,
+      localExisting?.updated_date
+    );
+
+    const toWrite = sanitizeFn(
+      {
+        ...localExisting,
+        ...rawPayload,
+        id: docId,
+        ...(collectionName === "app_settings"
+          ? { setting_key: rawPayload?.setting_key || localExisting?.setting_key || docId }
+          : {}),
+        created_date: localExisting?.created_date || rawPayload?.created_date || safeUpdatedDate,
+        updated_date: safeUpdatedDate,
+      },
+      localExisting
+    );
+
+    const ref = doc(db, collectionName, toWrite.id);
+    try {
+      await setDoc(ref, toWrite);
+      return toWrite;
+    } catch (error) {
+      // Fallback 1: books with oversized/invalid toc
+      if (collectionName === "books" && "toc" in toWrite) {
+        try {
+          const { toc: _omitToc, ...withoutToc } = toWrite;
+          await setDoc(ref, withoutToc);
+          return withoutToc;
+        } catch {}
+      }
+      // Fallback 2: if an existing Firestore doc has legacy/mismatched fields that reject update,
+      // either match its server created_date or replace via delete + create.
+      const code = String(error?.code || "").toLowerCase();
+      const msg = String(error?.message || "").toLowerCase();
+      if (code === "permission-denied" || msg.includes("permission-denied") || msg.includes("insufficient permissions")) {
+        try {
+          const serverDoc = await readServerDoc(toWrite.id, docId);
+          if (serverDoc?.data) {
+            const matchedWrite = sanitizeFn(
+              {
+                ...serverDoc.data,
+                ...toWrite,
+                id: toWrite.id,
+                created_date: serverDoc.data.created_date || toWrite.created_date,
+                updated_date: nextMonotonicIso(toWrite.updated_date, serverDoc.data.updated_date),
+              },
+              serverDoc.data
+            );
+            await setDoc(ref, matchedWrite);
+            return matchedWrite;
+          }
+        } catch {}
+        try {
+          await deleteDoc(ref);
+          await setDoc(ref, toWrite);
+          return toWrite;
+        } catch (replaceErr) {
+          throw replaceErr;
+        }
+      }
+      throw error;
+    }
+  }
+
   async function flushPendingForThisCollection() {
-    if (!canAttemptFirestoreWrite()) return;
     const ops = readPendingCatalogOps().filter((op) => op.collectionName === collectionName);
     if (ops.length === 0) return;
 
     for (const op of ops) {
-      if (!canAttemptFirestoreWrite()) break;
+      // Always push pending operations to the 100% free local Express server store first
+      let serverOk = false;
+      if (op.op === "delete") {
+        serverOk = await deleteFromServerCatalogStore(collectionName, op.docId).catch(() => false);
+      } else if ((op.op === "create" || op.op === "update") && op.payload) {
+        serverOk = await saveToServerCatalogStore(collectionName, op.payload).catch(() => false);
+      }
+      if (serverOk && (collectionName === "app_settings" || !canAttemptFirestoreWrite())) {
+        clearPendingCatalogOp(collectionName, op.docId);
+        continue;
+      }
+
+      if (!canAttemptFirestoreWrite() || collectionName === "app_settings") continue;
       try {
         if (op.op === "delete") {
           await deleteDoc(doc(db, collectionName, op.docId)).catch((e) => {
@@ -615,31 +887,13 @@ function createPublicCatalogEntity({
           }
           clearPendingCatalogOp(collectionName, op.docId);
         } else if (op.op === "create" || op.op === "update") {
-          const serverDoc = await readServerDoc(op.docId, op.cleanId);
-          const item = serverDoc
-            ? sanitizeFn(
-                {
-                  ...serverDoc.data,
-                  ...op.payload,
-                  id: collectionName === "app_settings"
-                    ? sanitizeId(op.payload?.setting_key || op.docId, "set")
-                    : serverDoc.docId,
-                  created_date: serverDoc.data.created_date || op.payload?.created_date,
-                  updated_date: op.payload?.updated_date || new Date().toISOString(),
-                },
-                serverDoc.data
-              )
-            : sanitizeFn(op.payload);
-          await setDoc(doc(db, collectionName, item.id), item);
+          await writeDocSafelyToFirestore(op.docId, op.payload || {}, op.payload || {});
           clearPendingCatalogOp(collectionName, op.docId);
         }
       } catch (err) {
         if (isQuotaExceededError(err)) {
           markWriteQuotaExhausted();
           break;
-        }
-        if (!isNetworkLikeError(err)) {
-          clearPendingCatalogOp(collectionName, op.docId);
         }
       }
     }
@@ -661,16 +915,45 @@ function createPublicCatalogEntity({
 
   function mergeSettingsWithLocal(remoteDocs, localDocs) {
     if (collectionName !== "app_settings") return remoteDocs;
+    const dirtyMap = readLocalDirtySettingsMap();
+    const savedKeys = readLocalSavedSettingsSet();
+    const pendingKeys = new Set(
+      readPendingCatalogOps()
+        .filter((op) => op.collectionName === "app_settings")
+        .map((op) => String(op.payload?.setting_key || op.docId || ""))
+    );
+
     const map = new Map();
     for (const item of localDocs || []) {
       const k = String(item?.setting_key || item?.id || "");
       if (!k) continue;
-      map.set(k, sanitizeFn({ ...item, id: k, setting_key: k }, item));
+      map.set(k, sanitizeFn({ ...item, id: sanitizeId(k, "set"), setting_key: k }, item));
     }
     for (const item of remoteDocs || []) {
       const k = String(item?.setting_key || item?.id || "");
       if (!k) continue;
-      const normalized = sanitizeFn({ ...item, id: k, setting_key: k }, item);
+      const normalized = sanitizeFn({ ...item, id: sanitizeId(k, "set"), setting_key: k }, item);
+      // Never let a remote snapshot clobber an unsynced or locally saved developer edit
+      if (k in dirtyMap || pendingKeys.has(k) || savedKeys.has(k)) {
+        const prev = map.get(k);
+        const localVal = k in dirtyMap ? dirtyMap[k] : (readLocalSettingValue(k) ?? prev?.setting_value);
+        if (localVal !== null && localVal !== undefined) {
+          map.set(
+            k,
+            sanitizeFn(
+              {
+                ...(prev || normalized),
+                id: sanitizeId(k, "set"),
+                setting_key: k,
+                setting_value: String(localVal),
+                updated_date: nextMonotonicIso(prev?.updated_date, normalized.updated_date),
+              },
+              prev || normalized
+            )
+          );
+          continue;
+        }
+      }
       const prev = map.get(k);
       if (!prev || String(normalized.updated_date || "") >= String(prev.updated_date || "")) {
         map.set(k, normalized);
@@ -679,37 +962,107 @@ function createPublicCatalogEntity({
     return Array.from(map.values());
   }
 
+  function extractDocsFromSnapshot(snap, deleted) {
+    if (collectionName !== "app_settings") {
+      const list = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        const docId = String(d.id || data?.id);
+        if (
+          data &&
+          !deleted.has(docId) &&
+          !deleted.has(String(data?.id || "")) &&
+          !deleted.has(sanitizeId(docId))
+        ) {
+          list.push(sanitizeFn({ ...data, id: docId }, data));
+        }
+      });
+      return list;
+    }
+
+    // For app_settings: canonical docId === sanitizeId(setting_key, "set") ALWAYS beats legacy random/Mongo doc IDs
+    const byKey = new Map();
+    snap.forEach((d) => {
+      const data = d.data();
+      const docId = String(d.id || data?.id);
+      if (
+        !data ||
+        deleted.has(docId) ||
+        deleted.has(String(data?.id || "")) ||
+        deleted.has(sanitizeId(docId))
+      ) {
+        return;
+      }
+      const key = String(data.setting_key || docId);
+      const canonicalId = sanitizeId(key, "set");
+      const isCanonical = docId === canonicalId || docId === key;
+      const normalized = sanitizeFn({ ...data, id: canonicalId, setting_key: key }, data);
+      const prev = byKey.get(key);
+      if (!prev) {
+        byKey.set(key, { doc: normalized, isCanonical });
+      } else if (isCanonical && !prev.isCanonical) {
+        byKey.set(key, { doc: normalized, isCanonical: true });
+      } else if (isCanonical === prev.isCanonical) {
+        if (String(normalized.updated_date || "") >= String(prev.doc.updated_date || "")) {
+          byKey.set(key, { doc: normalized, isCanonical });
+        }
+      }
+    });
+    return Array.from(byKey.values()).map((entry) => entry.doc);
+  }
+
   async function fetchFromFirestore({ notifyOnDiff = false } = {}) {
     if (inFlightFetch) return inFlightFetch;
 
     inFlightFetch = (async () => {
-      const deleted = getDeletedIds();
       try {
         await flushPendingForThisCollection();
-        const localBefore = await loadLocalList().catch(() => []);
-        const snap = await getDocs(collection(db, collectionName));
-        let docs = [];
-        snap.forEach((d) => {
-          const data = d.data();
-          const docId = String(d.id || data?.id);
-          if (
-            data &&
-            !deleted.has(docId) &&
-            !deleted.has(String(data?.id || "")) &&
-            !deleted.has(sanitizeId(docId))
-          ) {
-            docs.push(sanitizeFn({ ...data, id: docId }, data));
+        const [localBefore, serverStore] = await Promise.all([
+          loadLocalList().catch(() => []),
+          fetchServerCatalogStore(collectionName),
+        ]);
+        if (Array.isArray(serverStore.deletedIds)) {
+          for (const delId of serverStore.deletedIds) {
+            markDeletedId(delId);
           }
-        });
+        }
+        const deleted = getDeletedIds();
 
+        let docs = localBefore;
+        if (canAttemptFirestoreWrite() && collectionName !== "app_settings") {
+          try {
+            const snap = await Promise.race([
+              getDocs(collection(db, collectionName)),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore list timeout")), 4000)),
+            ]);
+            const remoteDocs = extractDocsFromSnapshot(snap, deleted);
+            if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
+              docs = remoteDocs;
+              // Automatically back up any cloud records to the 100% free local server store (data-export/*.json)
+              fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ items: remoteDocs }),
+              }).catch(() => {});
+            }
+          } catch (err) {
+            if (isQuotaExceededError(err)) {
+              markWriteQuotaExhausted();
+            }
+            docs = localBefore;
+          }
+        }
+
+        docs = mergeServerStoreItems(docs, serverStore.items);
         docs = deduplicateSettingsIfNeeded(docs);
 
-        // Merge with local/seed so any setting or catalog item not yet in Firestore is preserved!
+        // Merge with seed defaults (for missing keys) and local pending/newer items
         docs = mergeSeedWithItems(docs);
         docs = applyPendingOpsToCatalogList(collectionName, docs, sanitizeFn);
         if (collectionName === "app_settings") {
           docs = mergeSettingsWithLocal(docs, localBefore);
         }
+        docs = filterDeleted(docs);
 
         lastNetworkFetchAt = Date.now();
         if (typeof localStorage !== "undefined" && docs.length > 0) {
@@ -788,50 +1141,60 @@ function createPublicCatalogEntity({
     },
 
     async create(payload) {
-      const item = sanitizeFn(payload);
+      const existingList = await loadLocalList().catch(() => []);
+      const prevDates = [payload?.updated_date];
+      if (collectionName === "app_settings") {
+        const keyToMatch = payload?.setting_key || payload?.id;
+        for (const row of existingList) {
+          if (row?.setting_key === keyToMatch || row?.id === sanitizeId(keyToMatch, "set")) {
+            prevDates.push(row.updated_date);
+          }
+        }
+      }
+      const item = sanitizeFn({
+        ...payload,
+        updated_date: nextMonotonicIso(...prevDates),
+      });
       unmarkDeletedId(item.id);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
-        // Allow explicit admin create actions to attempt Firestore write even if a previous quota timer was set
-        localStorage.removeItem(WRITE_QUOTA_UNTIL_KEY);
       }
       // Queue as pending first in localStorage so any concurrent snapshot or list() preserves this item
       enqueueCatalogOp({ collectionName, op: "create", docId: item.id, cleanId: item.id, payload: item });
 
-      const existingList = await loadLocalList().catch(() => []);
       memCache = deduplicateSettingsIfNeeded([
         item,
         ...existingList.filter(
           (x) => x.id !== item.id && (collectionName !== "app_settings" || x.setting_key !== item.setting_key)
         ),
       ]);
-      cacheAll([item]).catch(() => {});
+      const [, serverSaved] = await Promise.all([
+        cacheAll([item]).catch(() => false),
+        saveToServerCatalogStore(collectionName, item).catch(() => false),
+      ]);
+      if (serverSaved) {
+        clearPendingCatalogOp(collectionName, item.id);
+      }
       dispatchChanged();
 
-      if (canAttemptFirestoreWrite()) {
-        const syncCreateToCloud = async () => {
-          try {
-            await setDoc(doc(db, collectionName, item.id), item);
+      if (canAttemptFirestoreWrite() && collectionName !== "app_settings") {
+        writeDocSafelyToFirestore(item.id, item, item)
+          .then((saved) => {
             clearPendingCatalogOp(collectionName, item.id);
-          } catch (error) {
-            if (collectionName === "books" && "toc" in item) {
-              try {
-                const { toc: _omitToc, ...withoutToc } = item;
-                await setDoc(doc(db, collectionName, item.id), withoutToc);
-                clearPendingCatalogOp(collectionName, item.id);
-                return;
-              } catch {}
+            if (saved && saved.updated_date !== item.updated_date) {
+              memCache = deduplicateSettingsIfNeeded([
+                saved,
+                ...(memCache || []).filter(
+                  (x) => x.id !== saved.id && (collectionName !== "app_settings" || x.setting_key !== saved.setting_key)
+                ),
+              ]);
+              cacheAll([saved]).catch(() => {});
+              saveToServerCatalogStore(collectionName, saved).catch(() => {});
             }
-            if (!isNetworkLikeError(error)) {
-              console.warn(`Cloud sync deferred for ${collectionName}/${item.id}:`, error?.message || error);
-            }
-          }
-        };
-        // Wait at most 1100ms for immediate cloud confirmation; otherwise finish in background so UI never hangs
-        await Promise.race([
-          syncCreateToCloud(),
-          new Promise((resolve) => setTimeout(resolve, 1100)),
-        ]);
+          })
+          .catch((error) => {
+            if (isQuotaExceededError(error)) markWriteQuotaExhausted();
+          });
       }
       return item;
     },
@@ -839,11 +1202,32 @@ function createPublicCatalogEntity({
     async update(id, payload) {
       const rawId = String(id);
       const cleanId = sanitizeId(id);
-      let existing = (await this.get(id)) || { id: cleanId };
+      const existingList = await loadLocalList().catch(() => []);
+      const existing =
+        existingList.find((x) => x.id === rawId || x.id === cleanId || (collectionName === "app_settings" && x.setting_key === id)) ||
+        (await this.get(id)) ||
+        { id: cleanId };
 
       const targetId = collectionName === "app_settings"
         ? sanitizeId(payload?.setting_key || existing.setting_key || cleanId, "set")
         : (existing.id || cleanId);
+
+      // Ensure updated_date is strictly newer than any existing/duplicate local record
+      const prevDates = [existing.updated_date, payload?.updated_date];
+      if (collectionName === "app_settings") {
+        const keyToMatch = payload?.setting_key || existing.setting_key || rawId;
+        for (const row of existingList) {
+          if (row?.setting_key === keyToMatch || row?.id === targetId) {
+            prevDates.push(row.updated_date);
+          }
+        }
+      } else {
+        for (const row of existingList) {
+          if (row?.id === targetId || row?.id === rawId || row?.id === cleanId) {
+            prevDates.push(row.updated_date);
+          }
+        }
+      }
 
       const updated = sanitizeFn(
         {
@@ -853,18 +1237,16 @@ function createPublicCatalogEntity({
           ...(existing.setting_key ? { setting_key: existing.setting_key } : {}),
           ...(payload?.setting_key ? { setting_key: payload.setting_key } : {}),
           created_date: existing.created_date || new Date().toISOString(),
-          updated_date: new Date().toISOString(),
+          updated_date: nextMonotonicIso(...prevDates),
         },
         existing
       );
       unmarkDeletedId(updated.id);
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(`dau_${collectionName}_initialized`, "true");
-        localStorage.removeItem(WRITE_QUOTA_UNTIL_KEY);
       }
       enqueueCatalogOp({ collectionName, op: "update", docId: updated.id, cleanId: updated.id, payload: updated });
 
-      const existingList = await loadLocalList().catch(() => []);
       const filtered = existingList.filter(
         (x) =>
           x.id !== updated.id &&
@@ -873,32 +1255,35 @@ function createPublicCatalogEntity({
           (collectionName !== "app_settings" || x.setting_key !== updated.setting_key)
       );
       memCache = [updated, ...filtered];
-      cacheAll([updated]).catch(() => {});
+      const [, serverSaved] = await Promise.all([
+        cacheAll([updated]).catch(() => false),
+        saveToServerCatalogStore(collectionName, updated).catch(() => false),
+      ]);
+      if (serverSaved) {
+        clearPendingCatalogOp(collectionName, updated.id);
+      }
       dispatchChanged();
 
-      if (canAttemptFirestoreWrite()) {
-        const syncUpdateToCloud = async () => {
-          try {
-            await setDoc(doc(db, collectionName, updated.id), updated);
+      if (canAttemptFirestoreWrite() && collectionName !== "app_settings") {
+        writeDocSafelyToFirestore(updated.id, updated, existing)
+          .then((saved) => {
             clearPendingCatalogOp(collectionName, updated.id);
-          } catch (error) {
-            if (collectionName === "books" && "toc" in updated) {
-              try {
-                const { toc: _omitToc, ...withoutToc } = updated;
-                await setDoc(doc(db, collectionName, updated.id), withoutToc);
-                clearPendingCatalogOp(collectionName, updated.id);
-                return;
-              } catch {}
+            if (saved && (saved.updated_date !== updated.updated_date || saved.created_date !== updated.created_date)) {
+              memCache = [
+                saved,
+                ...(memCache || []).filter(
+                  (x) =>
+                    x.id !== saved.id &&
+                    (collectionName !== "app_settings" || x.setting_key !== saved.setting_key)
+                ),
+              ];
+              cacheAll([saved]).catch(() => {});
+              saveToServerCatalogStore(collectionName, saved).catch(() => {});
             }
-            if (!isNetworkLikeError(error)) {
-              console.warn(`Cloud update deferred for ${collectionName}/${updated.id}:`, error?.message || error);
-            }
-          }
-        };
-        await Promise.race([
-          syncUpdateToCloud(),
-          new Promise((resolve) => setTimeout(resolve, 1100)),
-        ]);
+          })
+          .catch((error) => {
+            if (isQuotaExceededError(error)) markWriteQuotaExhausted();
+          });
       }
       return updated;
     },
@@ -915,14 +1300,19 @@ function createPublicCatalogEntity({
         memCache = memCache.filter((x) => x.id !== rawId && x.id !== cleanId);
       }
       enqueueCatalogOp({ collectionName, op: "delete", docId: rawId, cleanId });
-      if (deleteCached) {
-        deleteCached(rawId).catch(() => {});
-        if (cleanId !== rawId) deleteCached(cleanId).catch(() => {});
+      const [, , serverDelOk] = await Promise.all([
+        deleteCached ? deleteCached(rawId).catch(() => false) : Promise.resolve(true),
+        deleteCached && cleanId !== rawId ? deleteCached(cleanId).catch(() => false) : Promise.resolve(true),
+        deleteFromServerCatalogStore(collectionName, rawId).catch(() => false),
+        cleanId !== rawId ? deleteFromServerCatalogStore(collectionName, cleanId).catch(() => false) : Promise.resolve(true),
+      ]);
+      if (serverDelOk) {
+        clearPendingCatalogOp(collectionName, rawId);
       }
       dispatchChanged();
 
-      if (canAttemptFirestoreWrite()) {
-        const syncDeleteToCloud = async () => {
+      if (canAttemptFirestoreWrite() && collectionName !== "app_settings") {
+        (async () => {
           let lastErr = null;
           try {
             await deleteDoc(doc(db, collectionName, rawId));
@@ -939,86 +1329,26 @@ function createPublicCatalogEntity({
           }
           if (!lastErr) {
             clearPendingCatalogOp(collectionName, rawId);
-          } else if (!isNetworkLikeError(lastErr)) {
-            console.warn(`Cloud delete deferred for ${collectionName}/${rawId}:`, lastErr?.message || lastErr);
+          } else if (isQuotaExceededError(lastErr)) {
+            markWriteQuotaExhausted();
           }
-        };
-        await Promise.race([
-          syncDeleteToCloud(),
-          new Promise((resolve) => setTimeout(resolve, 1100)),
-        ]);
+        })();
       }
       return { id: rawId, deleted: true };
     },
     flushPending: flushPendingForThisCollection,
     syncFromServer: () => fetchFromFirestore({ notifyOnDiff: true }),
     subscribeRealtime() {
+      // Poll the 100% free local server catalog store instead of opening costly Firestore collection onSnapshot listeners
       if (realtimeUnsub) return realtimeUnsub;
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return () => {};
-      try {
-        realtimeUnsub = onSnapshot(
-          collection(db, collectionName),
-          async (snap) => {
-            const deleted = getDeletedIds();
-            let docs = [];
-            snap.forEach((d) => {
-              const data = d.data();
-              const docId = String(d.id || data?.id);
-              if (
-                data &&
-                !deleted.has(docId) &&
-                !deleted.has(String(data?.id || "")) &&
-                !deleted.has(sanitizeId(docId))
-              ) {
-                docs.push(sanitizeFn({ ...data, id: docId }, data));
-              }
-            });
-
-            if (docs.length === 0 && readPendingCatalogOps().filter((op) => op.collectionName === collectionName).length === 0) {
-              return;
-            }
-
-            docs = deduplicateSettingsIfNeeded(docs);
-            docs = mergeSeedWithItems(docs);
-            docs = applyPendingOpsToCatalogList(collectionName, docs, sanitizeFn);
-            if (collectionName === "app_settings") {
-              const localBefore = await loadLocalList().catch(() => []);
-              docs = mergeSettingsWithLocal(docs, localBefore);
-            }
-
-            lastNetworkFetchAt = Date.now();
-            if (typeof localStorage !== "undefined") {
-              localStorage.setItem(`dau_${collectionName}_initialized`, "true");
-            }
-
-            const prev = memCache;
-            const changed = hasListChanged(prev, docs);
-            memCache = docs;
-
-            if (changed) {
-              if (typeof replaceCachedAll === "function") {
-                replaceCachedAll(docs).catch(() => {});
-              } else if (docs.length > 0) {
-                cacheAll(docs).catch(() => {});
-              }
-              if (prev !== null) {
-                dispatchChanged();
-              }
-            }
-          },
-          () => {
-            // Ignore transient offline/snapshot errors
-          }
-        );
-      } catch {
+      const timer = setInterval(() => {
+        fetchFromFirestore({ notifyOnDiff: true }).catch(() => {});
+      }, 60000);
+      realtimeUnsub = () => {
+        clearInterval(timer);
         realtimeUnsub = null;
-      }
-      return () => {
-        if (realtimeUnsub) {
-          try { realtimeUnsub(); } catch {}
-          realtimeUnsub = null;
-        }
       };
+      return realtimeUnsub;
     },
   };
 }
@@ -1568,6 +1898,19 @@ export async function fetchFirestorePdfBuffer(pdfUrl, onProgress, metadata = {})
     throw new Error("Invalid cloud PDF reference");
   }
 
+  const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
+
+  // Helper to check if a cached PDF buffer is an old 1-page repair that needs re-repairing
+  const needsMultiPageReRepair = (buf) => {
+    try {
+      const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+      const tail = new TextDecoder("latin1").decode(u8.subarray(Math.max(0, u8.length - 4096)));
+      return tail.includes("%DAR_REPAIR_START%") && /\/Count\s+1\s*>>/.test(tail);
+    } catch {
+      return false;
+    }
+  };
+
   // 1. Check local IndexedDB cache first (by exact url, bookId, or normalized title)
   try {
     const matched = await offlineDB.findCachedPdfForBook({
@@ -1576,20 +1919,47 @@ export async function fetchFirestorePdfBuffer(pdfUrl, onProgress, metadata = {})
       title: metadata?.title,
     });
     if (matched?.buffer && matched.buffer.byteLength > 0) {
-      const repairedCached = await repairTruncatedPdfBuffer(matched.buffer);
-      if (repairedCached.byteLength !== matched.buffer.byteLength) {
+      const forceReRepair = needsMultiPageReRepair(matched.buffer);
+      const repairedCached = await repairTruncatedPdfBuffer(matched.buffer, { force: forceReRepair });
+      if (forceReRepair || repairedCached.byteLength !== matched.buffer.byteLength) {
         await offlineDB.cachePdf(pdfUrl, repairedCached, metadata?.bookId || pdfUrl, matched.title || metadata?.title || "book.pdf").catch(() => {});
       }
-      return repairedCached;
+      // If cached buffer is a real multi-page PDF (or > 1 page), return it immediately
+      if (!needsMultiPageReRepair(repairedCached)) {
+        return repairedCached;
+      }
     }
   } catch {}
 
-  const fileId = sanitizeId(String(pdfUrl).slice(FIRESTORE_PDF_PREFIX.length), "pdf");
+  // 2. Check local Express server disk storage (/api/book-pdf/:fileId)
+  try {
+    const diskRes = await fetch(`/api/book-pdf/${encodeURIComponent(fileId)}`);
+    if (diskRes.ok) {
+      const diskBuf = await diskRes.arrayBuffer();
+      if (diskBuf && diskBuf.byteLength > 100) {
+        const repairedDisk = await repairTruncatedPdfBuffer(diskBuf);
+        await offlineDB.cachePdf(pdfUrl, repairedDisk, metadata?.bookId || pdfUrl, metadata?.title || "book.pdf").catch(() => {});
+        return repairedDisk;
+      }
+    }
+  } catch {}
+
   let snap;
   try {
     const q = query(collection(db, "book_files"), where("file_id", "==", fileId));
     snap = await getDocs(q);
   } catch (err) {
+    // If Firestore quota is exceeded, check if we had a cached buffer (even 1-page) in IndexedDB before throwing
+    try {
+      const fallbackCached = await offlineDB.findCachedPdfForBook({
+        url: pdfUrl,
+        bookId: metadata?.bookId,
+        title: metadata?.title,
+      });
+      if (fallbackCached?.buffer && fallbackCached.buffer.byteLength > 0) {
+        return await repairTruncatedPdfBuffer(fallbackCached.buffer, { force: true });
+      }
+    } catch {}
     if (isQuotaExceededError(err)) {
       throw new Error("تعذر تحميل ملف PDF من السحابة بسبب تجاوز حصة القراءة اليومية المجانية لـ Firestore. يرجى فتح الكتاب من المتصفح الذي تم رفع الملف منه أو إعادة المحاولة بعد تجدد الحصة.");
     }
@@ -1716,6 +2086,43 @@ async function decompressFlateBytes(compressedUint8) {
   return null;
 }
 
+function unfilterPngPredictor(rawBytes, columns) {
+  if (!rawBytes || !columns || columns <= 0) return rawBytes;
+  const rowWidth = columns + 1;
+  const numRows = Math.floor(rawBytes.length / rowWidth);
+  if (numRows <= 0) return rawBytes;
+  const out = new Uint8Array(numRows * columns);
+  for (let r = 0; r < numRows; r++) {
+    const filterType = rawBytes[r * rowWidth];
+    const rowInOffset = r * rowWidth + 1;
+    const rowOutOffset = r * columns;
+    const prevRowOutOffset = (r - 1) * columns;
+    for (let c = 0; c < columns; c++) {
+      const raw = rawBytes[rowInOffset + c];
+      const left = c > 0 ? out[rowOutOffset + c - 1] : 0;
+      const up = r > 0 ? out[prevRowOutOffset + c] : 0;
+      const upLeft = r > 0 && c > 0 ? out[prevRowOutOffset + c - 1] : 0;
+      let val = raw;
+      if (filterType === 1) {
+        val = (raw + left) & 0xff;
+      } else if (filterType === 2) {
+        val = (raw + up) & 0xff;
+      } else if (filterType === 3) {
+        val = (raw + Math.floor((left + up) / 2)) & 0xff;
+      } else if (filterType === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - upLeft);
+        const pr = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+        val = (raw + pr) & 0xff;
+      }
+      out[rowOutOffset + c] = val;
+    }
+  }
+  return out;
+}
+
 export async function repairTruncatedPdfBuffer(input, options = {}) {
   const isArrayBuffer = input instanceof ArrayBuffer;
   const uint8 = isArrayBuffer
@@ -1734,17 +2141,19 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
       return isArrayBuffer ? uint8.buffer : uint8;
     }
 
-    const tailStr = decoder.decode(uint8.subarray(Math.max(0, uint8.length - 2048)));
+    const tailStr = decoder.decode(uint8.subarray(Math.max(0, uint8.length - 4096)));
+    const isOldSinglePageRepair =
+      tailStr.includes("%DAR_REPAIR_START%") && /\/Count\s+1\s*>>/.test(tailStr);
     const hasValidEof =
       tailStr.includes("%%EOF") &&
       tailStr.includes("startxref") &&
       !tailStr.includes("DAR_REPAIRED_EOF");
-    if (hasValidEof && !options.force) {
+    if (hasValidEof && !options.force && !isOldSinglePageRepair) {
       return isArrayBuffer ? uint8.buffer : uint8;
     }
 
     let fullText = decoder.decode(uint8);
-    // Strip any older repair suffix if force-repairing
+    // Strip any older repair suffix if re-repairing
     const prevRepairMarker = fullText.indexOf("%DAR_REPAIR_START%");
     if (prevRepairMarker > 0) {
       fullText = fullText.slice(0, prevRepairMarker);
@@ -1757,10 +2166,7 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
     const prefixBytes = uint8.slice(0, cleanByteLen);
     let cleanText = fullText.slice(0, cleanByteLen);
 
-    // CRITICAL FIX 1: PDF.js checks the first 1024 bytes for `/Linearized` and jumps to the broken
-    // first-page xref instead of reading `startxref` at the end of the file!
-    // Replacing `/Linearized` -> `/Linearize_` (11 bytes -> 11 bytes) and `/XRef` -> `/XRe_` (5 bytes -> 5 bytes)
-    // preserves 100% of byte offsets while forcing PDF.js to use our reconstructed xref table at the end.
+    // Neutralize /Linearized -> /Linearize_ and /XRef -> /XRe_ so PDF.js uses our reconstructed multi-page xref
     const linRegex = /\/Linearized\b/g;
     let lm;
     while ((lm = linRegex.exec(cleanText)) !== null) {
@@ -1789,9 +2195,20 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
 
     const pageIds = [];
     const pageIdSet = new Set();
+    const referencedObjIds = new Set();
     const imageObjs = [];
     const objStmEntries = [];
+    const candidateContentStreams = [];
+    const fontObjIds = [];
     let maxObjId = 1;
+
+    const recordReferencesFromPageDict = (dictStr) => {
+      const refRe = /(\d+)\s+0\s+R\b/g;
+      let rm;
+      while ((rm = refRe.exec(dictStr)) !== null) {
+        referencedObjIds.add(Number(rm[1]));
+      }
+    };
 
     for (let i = 0; i < objStarts.length; i++) {
       const { id, pos } = objStarts[i];
@@ -1801,15 +2218,22 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
       const streamIdx = objSlice.indexOf("stream");
       const dictText = streamIdx > 0 ? objSlice.slice(0, streamIdx) : objSlice;
 
+      if (/\/Type\s*\/Font\b/i.test(dictText)) {
+        fontObjIds.push(id);
+      }
+
       if (/\/Type\s*\/Page\b(?![a-zA-Z])/i.test(dictText)) {
         if (!pageIdSet.has(id)) {
           pageIdSet.add(id);
           pageIds.push(id);
+          recordReferencesFromPageDict(dictText);
         }
       } else if (/\/Type\s*\/ObjStm\b/i.test(dictText) && streamIdx > 0) {
         const firstMatch = dictText.match(/\/First\s+(\d+)/);
         if (firstMatch) {
           const firstOffset = Number(firstMatch[1]);
+          const predMatch = dictText.match(/\/Predictor\s+(\d+)/);
+          const colMatch = dictText.match(/\/Columns\s+(\d+)/);
           let dataStart = pos + streamIdx + 6;
           if (prefixBytes[dataStart] === 0x0d && prefixBytes[dataStart + 1] === 0x0a) dataStart += 2;
           else if (prefixBytes[dataStart] === 0x0a || prefixBytes[dataStart] === 0x0d) dataStart += 1;
@@ -1825,6 +2249,8 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
             objStmEntries.push({
               id,
               firstOffset,
+              predictor: predMatch ? Number(predMatch[1]) : 1,
+              columns: colMatch ? Number(colMatch[1]) : 0,
               isFlate: /\/FlateDecode\b/i.test(dictText),
               bytes: prefixBytes.subarray(dataStart, dataEnd),
             });
@@ -1833,19 +2259,46 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
       } else if (/\/Subtype\s*\/Image\b/i.test(dictText)) {
         const wMatch = dictText.match(/\/Width\s+(\d+)/);
         const hMatch = dictText.match(/\/Height\s+(\d+)/);
-        imageObjs.push({
-          id,
-          width: wMatch ? Number(wMatch[1]) : 595,
-          height: hMatch ? Number(hMatch[1]) : 842,
-        });
+        const w = wMatch ? Number(wMatch[1]) : 595;
+        const h = hMatch ? Number(hMatch[1]) : 842;
+        if (w >= 200 && h >= 250) {
+          imageObjs.push({ id, width: w, height: h });
+        }
+      } else if (
+        streamIdx > 0 &&
+        !/\/Type\s*\/(XRef|XRe_|ObjStm|Metadata|FontDescriptor)\b/i.test(dictText) &&
+        !/\/Subtype\s*\/(Image|Form|Type1C|CIDFontType0C|OpenType|XML)\b/i.test(dictText) &&
+        !/\/(Length1|Length2|Length3|N\s+\d+|First\s+\d+)\b/i.test(dictText)
+      ) {
+        let dataStart = pos + streamIdx + 6;
+        if (prefixBytes[dataStart] === 0x0d && prefixBytes[dataStart + 1] === 0x0a) dataStart += 2;
+        else if (prefixBytes[dataStart] === 0x0a || prefixBytes[dataStart] === 0x0d) dataStart += 1;
+        const endStreamIdx = objSlice.indexOf("endstream", streamIdx + 6);
+        if (endStreamIdx > 0) {
+          let dataEnd = pos + endStreamIdx;
+          while (
+            dataEnd > dataStart &&
+            (prefixBytes[dataEnd - 1] === 0x0a || prefixBytes[dataEnd - 1] === 0x0d)
+          ) {
+            dataEnd--;
+          }
+          candidateContentStreams.push({
+            id,
+            isFlate: /\/FlateDecode\b/i.test(dictText),
+            bytes: prefixBytes.subarray(dataStart, dataEnd),
+          });
+        }
       }
     }
 
-    // CRITICAL FIX 2: Unpack compressed Object Streams (/Type /ObjStm) so compressed /Type /Page objects become accessible
+    // Unpack compressed Object Streams (/Type /ObjStm) so compressed /Type /Page objects become accessible
     let extraObjsStr = "\n%DAR_REPAIR_START%\n";
     if (objStmEntries.length > 0) {
       for (const stm of objStmEntries) {
-        const rawBytes = stm.isFlate ? await decompressFlateBytes(stm.bytes) : stm.bytes;
+        let rawBytes = stm.isFlate ? await decompressFlateBytes(stm.bytes) : stm.bytes;
+        if (rawBytes && stm.predictor >= 10 && stm.columns > 0) {
+          rawBytes = unfilterPngPredictor(rawBytes, stm.columns);
+        }
         if (!rawBytes || rawBytes.length <= stm.firstOffset) continue;
         const stmText = decoder.decode(rawBytes);
         const headerPart = stmText.slice(0, stm.firstOffset).trim();
@@ -1870,18 +2323,30 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
           extraObjsStr += unwrappedObj;
           objOffsets.set(objId, thisObjOffset);
 
+          if (/\/Type\s*\/Font\b/i.test(objContent)) {
+            fontObjIds.push(objId);
+          }
+
           if (/\/Type\s*\/Page\b(?![a-zA-Z])/i.test(objContent) && !pageIdSet.has(objId)) {
             pageIdSet.add(objId);
             pageIds.push(objId);
+            recordReferencesFromPageDict(objContent);
           }
         }
       }
     }
 
-    // CRITICAL FIX 3: If the PDF is a scanned book where all /Type /Page dictionaries were at the truncated end
-    // of the file, synthesize a valid /Type /Page for each complete scanned page image (/Subtype /Image) found!
-    if (pageIds.length === 0 && imageObjs.length > 0) {
+    // CRITICAL FIX: In linearized scanned PDFs, Page 1 has an explicit /Type /Page in the header
+    // (pageIds.length === 1), while Pages 2..N had their /Type /Page dicts at the truncated end of the file!
+    // Synthesize a valid /Type /Page for EVERY page-sized /Subtype /Image that is not yet referenced by an existing page!
+    if (imageObjs.length > pageIds.length) {
       for (const img of imageObjs) {
+        if (referencedObjIds.has(img.id)) continue;
+        // Skip the very first image if pageIdsalready has Page 1 and img is the first image
+        if (pageIds.length === 1 && img === imageObjs[0] && imageObjs.length > 1) {
+          referencedObjIds.add(img.id);
+          continue;
+        }
         const contentObjId = ++maxObjId;
         const pageObjId = ++maxObjId;
         const pageW = 595;
@@ -1901,7 +2366,32 @@ export async function repairTruncatedPdfBuffer(input, options = {}) {
       }
     }
 
-    // CRITICAL FIX 4: If still 0 pages exist, synthesize 1 valid fallback page so PDF.js never throws InvalidPDFException
+    // CRITICAL FIX: For text/vector linearized PDFs where /Type /Page dictionaries for Pages 2..N were at the end,
+    // recover unreferenced page content streams that contain PDF text/drawing operators (BT ... ET / Do / Tj / TJ)
+    if (pageIds.length <= 1 && candidateContentStreams.length > 1) {
+      const fontMapEntries = fontObjIds.map((fid, idx) => `/F${idx + 1} ${fid} 0 R /F${fid} ${fid} 0 R`).join(" ");
+      const xobjEntries = imageObjs.map((im) => `/Im${im.id} ${im.id} 0 R /X${im.id} ${im.id} 0 R`).join(" ");
+      for (const cStm of candidateContentStreams) {
+        if (referencedObjIds.has(cStm.id)) continue;
+        const raw = cStm.isFlate ? await decompressFlateBytes(cStm.bytes) : cStm.bytes;
+        if (!raw || raw.length < 32) continue;
+        const sample = decoder.decode(raw.subarray(0, Math.min(2048, raw.length)));
+        const looksLikePageContent =
+          (/\bBT\b/.test(sample) && /\b(ET|Tf|Tj|TJ|Td|TD|Tm)\b/.test(sample)) ||
+          (/\bq\b/.test(sample) && /\b(cm|Do|re|rg|RG)\b/.test(sample));
+        if (!looksLikePageContent) continue;
+
+        const pageObjId = ++maxObjId;
+        const pageOffset = cleanByteLen + extraObjsStr.length;
+        const pageObj = `${pageObjId} 0 obj\n<< /Type /Page /MediaBox [0 0 595 842] /Resources << /Font << ${fontMapEntries} >> /XObject << ${xobjEntries} >> >> /Contents ${cStm.id} 0 R >>\nendobj\n`;
+        extraObjsStr += pageObj;
+        objOffsets.set(pageObjId, pageOffset);
+        pageIds.push(pageObjId);
+        referencedObjIds.add(cStm.id);
+      }
+    }
+
+    // If still 0 pages exist, synthesize 1 valid fallback page so PDF.js never throws InvalidPDFException
     if (pageIds.length === 0) {
       const pageObjId = ++maxObjId;
       const pageOffset = cleanByteLen + extraObjsStr.length;
@@ -1965,7 +2455,7 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
   if (!file) throw new Error("لم يتم اختيار ملف");
 
   // PDF files: chunk and upload to Firestore (book_files) so ALL users can read the book anywhere,
-  // and also cache locally in IndexedDB for instant offline playback on this device.
+  // and also cache locally in IndexedDB and on the Express server disk for instant playback.
   if (file.type === "application/pdf" || file.name?.toLowerCase().endsWith(".pdf")) {
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
@@ -1985,6 +2475,13 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
 
     // 1. Store immediately in local IndexedDB so the book is 100% ready to save & read right away
     await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
+
+    // 2. Also persist complete PDF on the server disk (/api/upload-pdf) so it works with zero Firestore quota
+    fetch(`/api/upload-pdf?fileId=${encodeURIComponent(fileId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/pdf" },
+      body: buffer,
+    }).catch(() => {});
 
     onProgress?.({ percent: 100, loaded: bytes.length, total: bytes.length, speedText: "جاهز ✓" });
 

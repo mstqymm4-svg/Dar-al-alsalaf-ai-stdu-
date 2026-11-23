@@ -134,6 +134,12 @@ export default function DevPanel() {
     setSyncingCloud(true);
     try {
       const settingsRes = await flushAllPendingSettings();
+      await Promise.allSettled([
+        base44.entities.Book.flushPending?.(),
+        base44.entities.Video.flushPending?.(),
+        base44.entities.VideoChannel.flushPending?.(),
+        base44.entities.SocialChannel.flushPending?.(),
+      ]);
       await forceSyncNow();
       if (settingsRes?.ok === false) {
         toast.warning("تعذر حفظ بعض الإعدادات سحابياً — تحقق من اتصال الإنترنت");

@@ -43,27 +43,31 @@ export default function VerticalPageStream({
   );
   const isProgrammaticScroll = useRef(false);
 
-  // Scroll to target page when triggered by toolbar/TOC/search
+  // Scroll to target page when triggered by toolbar/TOC/search/prev/next
   useEffect(() => {
-    if (!scrollTriggerPage || !pageRefs.current[scrollTriggerPage]) return;
-    const targetEl = pageRefs.current[scrollTriggerPage];
+    const targetPage =
+      typeof scrollTriggerPage === "object"
+        ? Number(scrollTriggerPage?.page || 0)
+        : Number(scrollTriggerPage || 0);
+    if (!targetPage || !pageRefs.current[targetPage]) return;
+    const targetEl = pageRefs.current[targetPage];
     if (targetEl && containerRef.current) {
       isProgrammaticScroll.current = true;
-      targetEl.scrollIntoView({ behavior: "auto", block: "start" });
+      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
       setVisibleSet((prev) => {
         const next = new Set(prev);
-        next.add(scrollTriggerPage);
-        if (scrollTriggerPage > 1) next.add(scrollTriggerPage - 1);
-        if (scrollTriggerPage < totalPages) next.add(scrollTriggerPage + 1);
+        next.add(targetPage);
+        if (targetPage > 1) next.add(targetPage - 1);
+        if (targetPage < totalPages) next.add(targetPage + 1);
         return next;
       });
       setTimeout(() => {
         isProgrammaticScroll.current = false;
-      }, 250);
+      }, 450);
     }
   }, [scrollTriggerPage, totalPages]);
 
-  // IntersectionObserver to lazy-load canvases & update current page number
+  // IntersectionObserver + scroll tracking to lazy-load canvases & update current page number
   useEffect(() => {
     const root = containerRef.current;
     if (!root || !totalPages) return;
@@ -78,7 +82,7 @@ export default function VerticalPageStream({
           entries.forEach((entry) => {
             const p = Number(entry.target.getAttribute("data-page-num"));
             if (!p) return;
-            ratios.set(p, entry.intersectionRatio);
+            ratios.set(p, entry.isIntersecting ? entry.intersectionRatio : 0);
             if (entry.isIntersecting) {
               if (!next.has(p)) {
                 next.add(p);
@@ -106,15 +110,15 @@ export default function VerticalPageStream({
               bestPage = p;
             }
           });
-          if (bestPage && bestRatio > 0.2) {
+          if (bestPage && bestRatio > 0.15) {
             onVisiblePageChange?.(bestPage);
           }
         }
       },
       {
         root,
-        rootMargin: "400px 0px",
-        threshold: [0.05, 0.25, 0.5, 0.75],
+        rootMargin: "450px 0px",
+        threshold: [0.05, 0.2, 0.4, 0.6, 0.8],
       }
     );
 
@@ -122,7 +126,39 @@ export default function VerticalPageStream({
       if (el) observer.observe(el);
     });
 
-    return () => observer.disconnect();
+    const handleScroll = () => {
+      if (isProgrammaticScroll.current || !root) return;
+      const rootRect = root.getBoundingClientRect();
+      const targetY = rootRect.top + rootRect.height * 0.38;
+      let closestPage = null;
+      let minDist = Infinity;
+
+      for (let p = 1; p <= totalPages; p++) {
+        const el = pageRefs.current[p];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.top <= targetY && rect.bottom >= targetY) {
+          closestPage = p;
+          break;
+        }
+        const centerDist = Math.abs((rect.top + rect.bottom) / 2 - targetY);
+        if (centerDist < minDist) {
+          minDist = centerDist;
+          closestPage = p;
+        }
+      }
+
+      if (closestPage) {
+        onVisiblePageChange?.(closestPage);
+      }
+    };
+
+    root.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      root.removeEventListener("scroll", handleScroll);
+    };
   }, [totalPages, onVisiblePageChange]);
 
   const pages = Array.from({ length: totalPages || 0 }, (_, idx) => idx + 1);
@@ -135,7 +171,7 @@ export default function VerticalPageStream({
   return (
     <div
       ref={containerRef}
-      className="flex-1 w-full h-full overflow-y-auto overflow-x-auto px-2 sm:px-4 py-3 sm:py-5 space-y-4 select-none"
+      className="flex-1 w-full h-full overflow-y-auto overflow-x-auto px-2 sm:px-4 pt-3 sm:pt-5 pb-28 space-y-4 select-none scroll-smooth"
     >
       {pages.map((p) => {
         const shouldRender = visibleSet.has(p) || Math.abs(p - currentPage) <= 1;

@@ -33,6 +33,7 @@ function getSystemIsDark() {
 function resolveIsDark(mode) {
   if (mode === "dark")  return true;
   if (mode === "light") return false;
+  if (getSetting("dark_mode") === "true") return true;
   return getSystemIsDark(); // auto
 }
 
@@ -59,14 +60,24 @@ export function initThemeEngine() {
   setupMediaQuery();
 
   // Read from settingsStore (already loaded from DB by loadSettings)
-  const rawMode = getSetting("theme_mode") || (getSetting("dark_mode") === "true" ? "dark" : "light");
+  const storedDark = getSetting("dark_mode") === "true";
+  const storedMode = getSetting("theme_mode");
+  const rawMode =
+    storedMode === "dark" || (storedDark && storedMode !== "light")
+      ? "dark"
+      : storedMode || "dark";
   _currentMode = rawMode;
   const isDark = resolveIsDark(rawMode);
   applyTheme(isDark);
 
   // Subscribe to remote changes (e.g. another tab)
   subscribeToSettings((s) => {
-    const newMode = s.theme_mode || (s.dark_mode === "true" ? "dark" : "light");
+    const sDark = s.dark_mode === "true";
+    const sMode = s.theme_mode;
+    const newMode =
+      sMode === "dark" || (sDark && sMode !== "light")
+        ? "dark"
+        : sMode || "dark";
     if (newMode !== _currentMode) {
       _currentMode = newMode;
       const dark = resolveIsDark(newMode);
@@ -87,7 +98,7 @@ export function getIsDark() { return resolveIsDark(_currentMode); }
 /** Set theme mode: 'light' | 'dark' | 'auto' */
 export function setThemeMode(mode) {
   _currentMode = mode;
-  const isDark = resolveIsDark(mode);
+  const isDark = mode === "dark" ? true : mode === "light" ? false : getSystemIsDark();
   applyTheme(isDark);
   notifyListeners(mode, isDark);
 

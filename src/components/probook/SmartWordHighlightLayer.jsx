@@ -81,9 +81,10 @@ export default function SmartWordHighlightLayer({
               )}
             </div>
 
-            {/* Active Word Highlight Box (when word coordinates exist and wordHighlightEnabled is true) */}
+            {/* Active Word Highlight Box (ONLY when reliable PDF word coordinates exist; otherwise sentence highlight is used) */}
             {isCurrentSentence &&
               wordHighlightEnabled &&
+              sent.hasExactWordCoords !== false &&
               Array.isArray(sent.words) &&
               sent.words.map((wObj, wIdx) => {
                 if (!wObj?.rect) return null;

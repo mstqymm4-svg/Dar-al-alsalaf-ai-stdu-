@@ -2,5 +2,6 @@
   "name": "DAR AL TAWHID",
   "description": "DAR AL TAWHID — مكتبة إسلامية شاملة ونظام القارئ الذكي والصوتي المتكامل للكتب",
   "permissions": [],
-  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,15 +1,19 @@
 import React, { useState } from "react";
 import {
-  ChevronRight,
-  ChevronLeft,
+  ArrowRight,
+  Search,
+  Bookmark,
+  BookmarkCheck,
   ZoomIn,
   ZoomOut,
-  Bookmark,
-  List,
-  Search,
+  ChevronRight,
+  ChevronLeft,
   Maximize2,
   Minimize2,
-  ArrowRight,
+  Sun,
+  EyeOff,
+  Eye,
+  BookMarked,
   PenTool,
   Highlighter,
   Eraser,
@@ -17,23 +21,35 @@ import {
   Undo2,
   Redo2,
   Trash2,
-  Minus,
-  Square,
-  Circle,
-  Sparkles,
-  Check,
+  MousePointer,
   X,
   Volume2,
-  Sun,
-  Eye,
-  EyeOff,
-  Hand,
-  Underline,
+  Sparkles,
+  ScrollText,
+  FileText,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
+const PEN_COLORS = [
+  { id: "red", value: "#EF4444", key: "colorRed", fallback: "أحمر" },
+  { id: "amber", value: "#F59E0B", key: "colorAmber", fallback: "ذهبي" },
+  { id: "emerald", value: "#10B981", key: "colorEmerald", fallback: "أخضر" },
+  { id: "blue", value: "#3B82F6", key: "colorBlue", fallback: "أزرق" },
+  { id: "purple", value: "#8B5CF6", key: "colorPurple", fallback: "بنفسجي" },
+  { id: "pink", value: "#EC4899", key: "colorPink", fallback: "وردي" },
+  { id: "cyan", value: "#06B6D4", key: "colorCyan", fallback: "سماوي" },
+  { id: "ink", value: "#1E293B", key: "colorInk", fallback: "حبر داكن" },
+];
+
+const PEN_STROKE_WIDTHS = [
+  { width: 2, key: "sizeFine", fallback: "رفيع", dot: 5 },
+  { width: 4, key: "sizeMedium", fallback: "متوسط", dot: 8 },
+  { width: 7, key: "sizeBold", fallback: "عريض", dot: 11 },
+  { width: 12, key: "sizeXBold", fallback: "سميك جداً", dot: 14 },
+];
+
 /**
- * 1. الشريط العلوي للعارض (Classic Top Header Bar)
+ * Top Header Bar — Book title, quick actions, and progress indicator
  */
 export function TopHeaderBar({
   title,
@@ -41,304 +57,329 @@ export function TopHeaderBar({
   currentPage,
   totalPages,
   isBookmarked,
+  viewMode = "vertical",
+  onToggleViewMode,
   onBack,
   onTogglePanel,
   onToggleBookmark,
 }) {
-  const t = useT();
+  const t = useT() || {};
+
+  const progressPct =
+    totalPages > 0 ? Math.min(100, Math.round((currentPage / totalPages) * 100)) : 0;
 
   return (
     <header
-      dir={t.dir || "rtl"}
-      className="relative flex items-center justify-between gap-2 px-3 sm:px-5 h-12 border-b z-30 transition-colors select-none shrink-0"
+      className="sticky top-0 z-30 border-b backdrop-blur-xl transition-colors duration-200 select-none"
       style={{
         backgroundColor: themeCfg?.toolbar || "#FFFFFF",
         borderColor: themeCfg?.border || "#E2E8F0",
         color: themeCfg?.text || "#0F172A",
       }}
     >
-      {/* Back button + Book Title */}
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        {onBack && (
+      <div className="max-w-7xl mx-auto px-2.5 sm:px-5 h-12 sm:h-13 flex items-center justify-between gap-2">
+        {/* Right side: Back + TOC + Book Title */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
-            className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
-            title={t.backBtn || "رجوع"}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-current/15 hover:bg-current/5 text-xs font-bold transition active:scale-95 shrink-0 cursor-pointer"
+            title={t.backToLib || "رجوع"}
           >
-            <ArrowRight className="w-5 h-5" />
+            <ArrowRight className="w-4 h-4" />
+            <span className="hidden sm:inline">{t.backBtn || "رجوع"}</span>
           </button>
-        )}
-        <h1 className="font-bold text-sm sm:text-base truncate leading-tight">
-          {title || t.appName || "DAR AL TAWHID"}
-        </h1>
+
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("toc")}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 border border-emerald-600/20 text-xs font-bold transition shrink-0 cursor-pointer"
+            title={t.idxTitle || "الفهرس"}
+          >
+            <BookMarked className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">{t.idxTitle || "الفهرس"}</span>
+          </button>
+
+          <h1 className="text-xs sm:text-sm md:text-base font-bold truncate leading-tight">
+            {title}
+          </h1>
+        </div>
+
+        {/* Left side: Quick Actions (View Mode, Search, Bookmark, Eye Comfort) */}
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          {onToggleViewMode && (
+            <button
+              type="button"
+              onClick={onToggleViewMode}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-current/15 hover:bg-current/5 text-[11px] font-bold transition cursor-pointer"
+              title={
+                viewMode === "vertical"
+                  ? t.viewModeScroll || "تمرير عمودي"
+                  : t.viewModeSingle || "صفحة مفردة"
+              }
+            >
+              {viewMode === "vertical" ? (
+                <ScrollText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              )}
+              <span className="hidden md:inline">
+                {viewMode === "vertical"
+                  ? t.viewModeScroll || "تمرير عمودي"
+                  : t.viewModeSingle || "صفحة مفردة"}
+              </span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("search")}
+            className="w-8 h-8 rounded-xl hover:bg-current/10 flex items-center justify-center transition cursor-pointer"
+            title={t.tbSearch || "بحث"}
+          >
+            <Search className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleBookmark}
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
+              isBookmarked
+                ? "bg-amber-500/20 text-amber-500 border border-amber-500/30"
+                : "hover:bg-current/10"
+            }`}
+            title={t.tbBookmark || "علامة مرجعية"}
+          >
+            {isBookmarked ? (
+              <BookmarkCheck className="w-4 h-4 fill-amber-500 text-amber-500" />
+            ) : (
+              <Bookmark className="w-4 h-4" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onTogglePanel?.("settings")}
+            className="w-8 h-8 rounded-xl hover:bg-current/10 flex items-center justify-center transition text-amber-500 cursor-pointer"
+            title={t.tbTheme || "إعدادات القراءة"}
+          >
+            <Sun className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      {/* Right actions: Page badge + Quick TOC + Bookmark */}
-      <div className="flex items-center gap-1.5 shrink-0">
-        {totalPages > 0 && (
-          <span className="hidden xs:inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-black/[0.04] dark:bg-white/[0.06] tabular-nums">
-            {t.pageNo || "ص"} {currentPage} / {totalPages}
-          </span>
-        )}
-
-        <button
-          type="button"
-          onClick={() => onTogglePanel?.("toc")}
-          className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-          title={t.tocAndBookmarks || "الفهرس والعلامات"}
-        >
-          <List className="w-4 h-4" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleBookmark}
-          className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors ${
-            isBookmarked
-              ? "text-amber-500 bg-amber-500/10"
-              : "hover:bg-black/5 dark:hover:bg-white/10"
-          }`}
-          title={t.tbBookmark || "علامة مرجعية"}
-        >
-          <Bookmark className={`w-4 h-4 ${isBookmarked ? "fill-current" : ""}`} />
-        </button>
+      {/* Slim Reading Progress Bar */}
+      <div className="h-0.5 w-full bg-current/10 overflow-hidden">
+        <div
+          className="h-full bg-emerald-600 transition-all duration-300"
+          style={{ width: `${progressPct}%` }}
+        />
       </div>
     </header>
   );
 }
 
 /**
- * 2. شريط القلم والتدوين الأصلي (Classic Pen & Annotation Dock)
- * مربع لكل أداة مع اسمها مترجم بـ 6 لغات + الألوان + السماكة + تراجع + إعادة + مسح + إغلاق
+ * Floating Pen, Highlighter & Notes Dock (Clean, shape-free annotation bar)
+ * Geometric shapes (line, rect, circle, underline) have been completely removed.
  */
 export function AnnotationDock({
+  isOpen = true,
   activeTool,
   onSelectTool,
   activeColor,
   onSelectColor,
-  strokeWidth,
+  strokeWidth = 4,
   onChangeStrokeWidth,
   onUndo,
   onRedo,
   canRedo = false,
-  onClearPage,
   hasAnnotations = false,
+  onClearPage,
   onClose,
-  themeCfg,
 }) {
-  const t = useT();
+  const t = useT() || {};
+  if (!isOpen) return null;
 
+  // Only essential writing/annotation tools — NO geometric shapes
   const tools = [
-    { id: "pan", icon: Hand, label: t.penPan || "تحريك", tip: t.penPanTip },
-    { id: "pen", icon: PenTool, label: t.penDraw || "قلم", tip: t.penDrawTip },
+    {
+      id: "pan",
+      icon: MousePointer,
+      label: t.penPan || "تحريك",
+      tip: t.penPanTip || "تحريك وتصفح الصفحات",
+    },
+    {
+      id: "pen",
+      icon: PenTool,
+      label: t.penDraw || "قلم",
+      tip: t.penDrawTip || "قلم كتابة حر",
+    },
     {
       id: "highlighter",
       icon: Highlighter,
       label: t.penHighlight || "تظليل",
-      tip: t.penHighlightTip,
+      tip: t.penHighlightTip || "قلم تظليل شفاف",
     },
     {
-      id: "underline",
-      icon: Underline,
-      label: t.penUnderline || "تسطير",
-      tip: t.penUnderlineTip,
+      id: "text",
+      icon: Type,
+      label: t.penText || "ملاحظة",
+      tip: t.penTextTip || "إضافة ملاحظة نصية على الصفحة",
     },
-    { id: "line", icon: Minus, label: t.penLine || "خط", tip: t.penLineTip },
-    { id: "rect", icon: Square, label: t.penRect || "مربع", tip: t.penRectTip },
-    {
-      id: "circle",
-      icon: Circle,
-      label: t.penCircle || "دائرة",
-      tip: t.penCircleTip,
-    },
-    { id: "text", icon: Type, label: t.penText || "ملاحظة", tip: t.penTextTip },
     {
       id: "eraser",
       icon: Eraser,
       label: t.penEraser || "ممحاة",
-      tip: t.penEraserTip,
+      tip: t.penEraserTip || "ممحاة (مرّر فوق الرسم لمسحه)",
     },
     {
       id: "laser",
       icon: Sparkles,
       label: t.penLaser || "ليزر",
-      tip: t.penLaserTip,
+      tip: t.penLaserTip || "مؤشر ليزر للشرح يختفي تلقائياً",
     },
-  ];
-
-  const penColors = [
-    { id: "red", value: "#EF4444", label: t.colorRed || "أحمر" },
-    { id: "amber", value: "#F59E0B", label: t.colorAmber || "ذهبي" },
-    { id: "emerald", value: "#10B981", label: t.colorEmerald || "أخضر" },
-    { id: "blue", value: "#3B82F6", label: t.colorBlue || "أزرق" },
-    { id: "purple", value: "#8B5CF6", label: t.colorPurple || "بنفسجي" },
-    { id: "cyan", value: "#06B6D4", label: t.colorCyan || "سماوي" },
-    { id: "ink", value: "#111827", label: t.colorInk || "حبر داكن" },
-  ];
-
-  const sizes = [
-    { id: "fine", val: 2, dot: "w-1.5 h-1.5", label: t.sizeFine || "رفيع" },
-    { id: "med", val: 4, dot: "w-2.5 h-2.5", label: t.sizeMedium || "متوسط" },
-    { id: "bold", val: 7, dot: "w-3.5 h-3.5", label: t.sizeBold || "عريض" },
-    { id: "xbold", val: 11, dot: "w-4 h-4", label: t.sizeXBold || "سميك" },
   ];
 
   return (
     <div
-      data-viewer-ui
-      dir={t.dir || "rtl"}
-      onClick={(e) => e.stopPropagation()}
-      className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5 w-[96vw] max-w-2xl"
+      dir="rtl"
+      className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] sm:bottom-18 inset-x-0 z-40 flex justify-center px-2.5 sm:px-4 pointer-events-none select-none"
     >
-      {/* Row 1: Color Swatches & Stroke Sizes + Undo / Redo / Clear / Close */}
-      <div
-        className="w-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-2xl shadow-xl border backdrop-blur-xl"
-        style={{
-          backgroundColor: themeCfg?.toolbar || "#FFFFFF",
-          borderColor: themeCfg?.border || "#E2E8F0",
-          color: themeCfg?.text || "#0F172A",
-        }}
-      >
-        {/* Colors */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {penColors.map((c) => {
-            const isSelected =
-              String(activeColor || "").toUpperCase() === c.value.toUpperCase();
+      <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 px-3 py-2 rounded-2xl bg-slate-900/95 text-white border border-emerald-500/30 shadow-2xl backdrop-blur-xl max-w-full overflow-x-auto">
+        {/* Writing & Highlighting Tools (Shape-free) */}
+        <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl">
+          {tools.map((tool) => {
+            const Icon = tool.icon;
+            const active = activeTool === tool.id;
             return (
               <button
-                key={c.id}
+                key={tool.id}
                 type="button"
-                onClick={() => onSelectColor?.(c.value)}
-                title={c.label}
-                className={`w-7 h-7 rounded-lg transition-all flex items-center justify-center border ${
-                  isSelected
-                    ? "ring-2 ring-emerald-600 scale-110 border-white"
-                    : "border-black/15 opacity-85 hover:opacity-100"
-                }`}
-                style={{ backgroundColor: c.value }}
-              >
-                {isSelected && (
-                  <Check className="w-3.5 h-3.5 text-white drop-shadow" />
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Stroke Sizes */}
-        <div className="flex items-center gap-1">
-          {sizes.map((s) => {
-            const active = strokeWidth === s.val;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => onChangeStrokeWidth?.(s.val)}
-                title={s.label}
-                className={`w-7 h-7 rounded-lg flex items-center justify-center border transition-all ${
+                onClick={() => onSelectTool?.(tool.id)}
+                title={tool.tip}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                   active
-                    ? "bg-emerald-700 text-white border-emerald-700"
-                    : "border-current/15 hover:bg-black/5 dark:hover:bg-white/10"
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "hover:bg-white/10 text-slate-200"
                 }`}
               >
-                <span className={`rounded-full bg-current ${s.dot}`} />
+                <Icon className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{tool.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Actions: Undo, Redo, Clear Page, Close */}
-        <div className="flex items-center gap-1 ms-auto">
+        {/* Color Swatches */}
+        {activeTool !== "pan" && activeTool !== "eraser" && (
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-xl">
+            {PEN_COLORS.map((c) => {
+              const selected =
+                String(activeColor || "").toLowerCase() === c.value.toLowerCase();
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onSelectColor?.(c.value)}
+                  title={t[c.key] || c.fallback}
+                  className={`w-5 h-5 rounded-full transition-transform cursor-pointer ${
+                    selected
+                      ? "scale-125 ring-2 ring-white ring-offset-1 ring-offset-slate-900"
+                      : "opacity-80 hover:opacity-100 hover:scale-110"
+                  }`}
+                  style={{ backgroundColor: c.value }}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {/* Stroke Widths */}
+        {activeTool !== "pan" && activeTool !== "text" && (
+          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl">
+            {PEN_STROKE_WIDTHS.map((sw) => {
+              const selected = Number(strokeWidth) === sw.width;
+              return (
+                <button
+                  key={sw.width}
+                  type="button"
+                  onClick={() => onChangeStrokeWidth?.(sw.width)}
+                  title={t[sw.key] || sw.fallback}
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center transition cursor-pointer ${
+                    selected
+                      ? "bg-emerald-500/25 ring-1 ring-emerald-400"
+                      : "hover:bg-white/10"
+                  }`}
+                >
+                  <span
+                    className="rounded-full"
+                    style={{
+                      width: `${sw.dot}px`,
+                      height: `${sw.dot}px`,
+                      backgroundColor: activeColor || "#10B981",
+                    }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Undo / Redo / Clear Page / Close */}
+        <div className="flex items-center gap-1 border-r border-white/15 pr-1.5">
           <button
             type="button"
             onClick={onUndo}
             disabled={!hasAnnotations}
             title={t.penUndo || "تراجع"}
-            className="h-8 px-2 rounded-lg border border-current/15 flex items-center gap-1 text-[11px] font-bold hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-35 transition-colors"
+            className="w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
           >
             <Undo2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{t.penUndo || "تراجع"}</span>
           </button>
-
           <button
             type="button"
             onClick={onRedo}
             disabled={!canRedo}
             title={t.penRedo || "إعادة"}
-            className="h-8 px-2 rounded-lg border border-current/15 flex items-center gap-1 text-[11px] font-bold hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-35 transition-colors"
+            className="w-7 h-7 rounded-lg hover:bg-white/10 flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
           >
             <Redo2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{t.penRedo || "إعادة"}</span>
           </button>
-
           <button
             type="button"
             onClick={onClearPage}
             disabled={!hasAnnotations}
-            title={t.penClearPage || "مسح"}
-            className="h-8 px-2 rounded-lg border border-red-500/25 bg-red-500/10 text-red-600 dark:text-red-400 flex items-center gap-1 text-[11px] font-bold hover:bg-red-500/20 disabled:opacity-35 transition-colors"
+            title={t.penClearPage || "مسح جميع رسومات هذه الصفحة"}
+            className="w-7 h-7 rounded-lg hover:bg-rose-500/20 text-rose-400 flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-
           <button
             type="button"
             onClick={onClose}
-            title={t.penClose || "إغلاق"}
-            className="w-8 h-8 rounded-lg border border-current/15 flex items-center justify-center hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            title={t.penClose || "إغلاق شريط القلم"}
+            className="w-7 h-7 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 transition cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
-      </div>
-
-      {/* Row 2: Tool Square Boxes (Pan, Pen, Highlighter, Underline, Line, Box, Circle, Note, Eraser, Laser) */}
-      <div
-        className="w-full flex items-center justify-start sm:justify-center gap-1.5 px-2.5 py-2 rounded-2xl shadow-2xl border backdrop-blur-xl overflow-x-auto scrollbar-none"
-        style={{
-          backgroundColor: themeCfg?.toolbar || "#FFFFFF",
-          borderColor: themeCfg?.border || "#E2E8F0",
-          color: themeCfg?.text || "#0F172A",
-        }}
-      >
-        {tools.map((tool) => {
-          const Icon = tool.icon;
-          const active = activeTool === tool.id;
-          return (
-            <button
-              key={tool.id}
-              type="button"
-              onClick={() => onSelectTool?.(tool.id)}
-              title={tool.tip || tool.label}
-              className={`min-w-[54px] h-12 px-2 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 transition-all border cursor-pointer ${
-                active
-                  ? "bg-emerald-700 text-white border-emerald-700 shadow-sm scale-[1.02]"
-                  : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
-              }`}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              <span className="text-[10px] font-bold leading-none truncate max-w-[52px]">
-                {tool.label}
-              </span>
-            </button>
-          );
-        })}
       </div>
     </div>
   );
 }
 
 /**
- * 3. الشريط السفلي الأصلي للأزرار + زر واحد فقط للقارئ الذكي
- * (Classic Bottom Control Bar + ONE Smart Reader Button)
+ * Polished, Responsive Bottom Control Bar — Compatible with all devices (phones, tablets, desktop)
  */
 export function BottomControlBar({
   currentPage,
   totalPages,
-  zoom,
+  zoom = 1,
   themeCfg,
   isFullscreen = false,
+  viewMode = "vertical",
+  onToggleViewMode,
   isAudioOpen = false,
   onToggleAudioOpen,
   onPrevPage,
@@ -350,94 +391,123 @@ export function BottomControlBar({
   onTogglePanel,
   activePanel,
   onToggleBookmark,
-  isBookmarked,
+  isBookmarked = false,
   onToggleFullscreen,
   onToggleAnnotation,
-  isAnnotationActive,
+  isAnnotationActive = false,
   audioState,
 }) {
-  const t = useT();
-  const [barHidden, setBarHidden] = useState(false);
-  const isPlaying = audioState?.playerState === "playing";
+  const t = useT() || {};
+  const [isHidden, setIsHidden] = useState(false);
 
-  if (barHidden) {
+  const isAudioPlaying = audioState?.playerState === "playing";
+
+  if (isHidden) {
     return (
-      <div className="fixed bottom-3 left-3 z-40">
-        <button
-          type="button"
-          onClick={() => setBarHidden(false)}
-          className="h-10 px-3.5 rounded-xl bg-emerald-700 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 hover:bg-emerald-800 transition-colors"
-          title={t.tbShow || "إظهار الشريط"}
-        >
-          <Eye className="w-4 h-4" />
-          <span>{t.tbShow || "إظهار الشريط"}</span>
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setIsHidden(false)}
+        className="fixed bottom-[calc(0.85rem+env(safe-area-inset-bottom,0px))] left-4 z-40 px-3.5 py-2 rounded-full border shadow-xl backdrop-blur-md flex items-center gap-2 text-xs font-bold transition hover:scale-105 active:scale-95 cursor-pointer"
+        style={{
+          backgroundColor: themeCfg?.toolbar || "#FFFFFF",
+          borderColor: themeCfg?.border || "#E2E8F0",
+          color: themeCfg?.text || "#0F172A",
+        }}
+        title={t.tbShow || "إظهار الشريط"}
+      >
+        <Eye className="w-4 h-4 text-emerald-600" />
+        <span className="tabular-nums">
+          {currentPage} / {totalPages || 1}
+        </span>
+      </button>
     );
   }
 
   return (
     <footer
-      data-viewer-ui
-      dir={t.dir || "rtl"}
-      className="relative border-t z-30 transition-colors select-none shrink-0"
+      dir="rtl"
+      className="sticky bottom-0 z-30 border-t px-2 sm:px-4 pt-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] backdrop-blur-xl transition-colors select-none"
       style={{
         backgroundColor: themeCfg?.toolbar || "#FFFFFF",
         borderColor: themeCfg?.border || "#E2E8F0",
         color: themeCfg?.text || "#0F172A",
       }}
     >
-      <div className="max-w-5xl mx-auto px-2 sm:px-4 h-14 flex items-center justify-between gap-1.5 overflow-x-auto scrollbar-none">
-        {/* Group 1: Page Navigation (Prev | Page X / Y | Next) */}
-        <div className="flex items-center gap-1 shrink-0">
+      <div className="max-w-5xl mx-auto flex items-center justify-between gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+        {/* 1. Page Navigation Group */}
+        <div className="flex items-center gap-1 bg-current/5 px-1 py-0.5 rounded-xl shrink-0">
           <button
             type="button"
             onClick={onPrevPage}
             disabled={currentPage <= 1}
-            title={t.tbPrev || "السابقة"}
-            className="h-10 px-2.5 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-35 flex items-center gap-1 text-xs font-bold transition-colors"
+            className="w-8 h-8 rounded-lg hover:bg-current/10 flex items-center justify-center disabled:opacity-30 transition active:scale-95 cursor-pointer"
+            title={t.tbPrev || "الصفحة السابقة"}
           >
             <ChevronRight className="w-4 h-4" />
-            <span className="hidden md:inline">{t.tbPrev || "السابقة"}</span>
           </button>
 
           <button
             type="button"
             onClick={onOpenGoTo}
-            title={t.tbGoTo || "انتقال إلى صفحة"}
-            className="h-10 px-3 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:border-emerald-600 text-xs font-mono font-bold tabular-nums whitespace-nowrap transition-colors"
+            className="px-2.5 py-1 rounded-lg bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-700 dark:text-emerald-300 border border-emerald-600/25 text-xs font-bold tabular-nums transition min-w-[66px] text-center cursor-pointer"
+            title={t.tbGoTo || "الانتقال إلى صفحة"}
           >
-            {currentPage} / {totalPages || 1}
+            {currentPage} <span className="opacity-50">/</span> {totalPages || 1}
           </button>
 
           <button
             type="button"
             onClick={onNextPage}
             disabled={totalPages > 0 && currentPage >= totalPages}
-            title={t.tbNext || "التالية"}
-            className="h-10 px-2.5 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 disabled:opacity-35 flex items-center gap-1 text-xs font-bold transition-colors"
+            className="w-8 h-8 rounded-lg hover:bg-current/10 flex items-center justify-center disabled:opacity-30 transition active:scale-95 cursor-pointer"
+            title={t.tbNext || "الصفحة التالية"}
           >
-            <span className="hidden md:inline">{t.tbNext || "التالية"}</span>
             <ChevronLeft className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Group 2: Zoom Controls (- | 100% | +) */}
-        <div className="flex items-center gap-1 shrink-0">
+        {/* 2. View Mode Toggle (Scroll vs Single Page) */}
+        {onToggleViewMode && (
+          <button
+            type="button"
+            onClick={onToggleViewMode}
+            className="h-8 px-2.5 rounded-xl bg-current/5 hover:bg-current/10 border border-current/10 flex items-center justify-center gap-1 text-xs font-bold transition shrink-0 cursor-pointer"
+            title={
+              viewMode === "vertical"
+                ? t.viewModeScroll || "تمرير عمودي"
+                : t.viewModeSingle || "صفحة مفردة"
+            }
+          >
+            {viewMode === "vertical" ? (
+              <ScrollText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <FileText className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            )}
+            <span className="hidden md:inline text-[11px]">
+              {viewMode === "vertical"
+                ? t.viewModeScroll || "تمرير عمودي"
+                : t.viewModeSingle || "صفحة مفردة"}
+            </span>
+          </button>
+        )}
+
+        {/* 3. Zoom Controls */}
+        <div className="flex items-center gap-0.5 bg-current/5 px-1 py-0.5 rounded-xl shrink-0">
           <button
             type="button"
             onClick={onZoomOut}
+            disabled={zoom <= 0.6}
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg hover:bg-current/10 flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
             title={t.tbZoomOut || "تصغير"}
-            className="w-9 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
           >
-            <ZoomOut className="w-4 h-4" />
+            <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
 
           <button
             type="button"
             onClick={onResetZoom}
-            title={t.tbResetZoom || "إعادة ضبط التكبير (100%)"}
-            className="h-10 px-2 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:border-emerald-600 text-xs font-mono font-bold tabular-nums transition-colors"
+            className="px-1.5 py-1 rounded-lg hover:bg-current/10 text-[11px] font-bold tabular-nums min-w-[42px] text-center transition cursor-pointer"
+            title={t.tbResetZoom || "100%"}
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -445,113 +515,108 @@ export function BottomControlBar({
           <button
             type="button"
             onClick={onZoomIn}
+            disabled={zoom >= 2.5}
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg hover:bg-current/10 flex items-center justify-center disabled:opacity-30 transition cursor-pointer"
             title={t.tbZoomIn || "تكبير"}
-            className="w-9 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
           >
-            <ZoomIn className="w-4 h-4" />
+            <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
         </div>
 
-        {/* Group 3: Classic Viewer Tools + THE SINGLE SMART READER BUTTON */}
+        {/* 4. Single Smart Reader Button + Pen Button */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* ★ الزر الوحيد للقارئ الذكي في شريط الأزرار ★ */}
           <button
             type="button"
             onClick={onToggleAudioOpen}
-            title={t.smartReaderTitle || "القارئ الذكي"}
-            className={`h-10 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
-              isAudioOpen || isPlaying
-                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm"
-                : "border-emerald-600/40 bg-emerald-600/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-600/20"
+            className={`h-8 px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition shadow-xs cursor-pointer ${
+              isAudioOpen || isAudioPlaying
+                ? "bg-emerald-600 text-white shadow-emerald-600/25"
+                : "bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-700 dark:text-emerald-300 border border-emerald-600/25"
             }`}
+            title={t.smartReaderTitle || "القارئ الصوتي الذكي"}
           >
-            <Volume2
-              className={`w-4 h-4 shrink-0 ${isPlaying ? "animate-pulse" : ""}`}
-            />
-            <span className="whitespace-nowrap">
-              {t.smartReaderBtn || "القارئ الذكي"}
-            </span>
+            <Volume2 className={`w-4 h-4 ${isAudioPlaying ? "animate-pulse" : ""}`} />
+            <span className="text-[11px]">{t.smartReaderBtn || "القارئ الذكي"}</span>
           </button>
 
-          {/* زر القلم والتدوين الأصلي */}
           <button
             type="button"
             onClick={onToggleAnnotation}
-            title={t.penToolTitle || "أداة القلم والتظليل"}
-            className={`h-10 px-2.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+            className={`h-8 px-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold transition cursor-pointer ${
               isAnnotationActive
-                ? "bg-emerald-700 text-white border-emerald-700 shadow-sm"
-                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+                ? "bg-amber-500 text-slate-950 shadow-sm"
+                : "bg-current/5 hover:bg-current/10 border border-current/10"
             }`}
+            title={t.penToolTitle || "قلم الكتابة والتظليل"}
           >
-            <PenTool className="w-4 h-4 shrink-0" />
-            <span className="hidden sm:inline">{t.penDraw || "قلم"}</span>
+            <PenTool className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-[11px]">{t.penDraw || "قلم"}</span>
           </button>
+        </div>
 
-          {/* زر الفهرس */}
+        {/* 5. Secondary Tools: TOC, Search, Eye Comfort, Bookmark, Fullscreen, Hide */}
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
             onClick={() => onTogglePanel?.("toc")}
-            title={t.tocAndBookmarks || "الفهرس والعلامات"}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
               activePanel === "toc"
-                ? "bg-emerald-700 text-white border-emerald-700"
-                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+                ? "bg-emerald-600 text-white"
+                : "hover:bg-current/10"
             }`}
+            title={t.idxTitle || "الفهرس"}
           >
-            <List className="w-4 h-4" />
+            <BookMarked className="w-4 h-4" />
           </button>
 
-          {/* زر البحث داخل الكتاب */}
           <button
             type="button"
             onClick={() => onTogglePanel?.("search")}
-            title={t.tbSearch || "بحث"}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
               activePanel === "search"
-                ? "bg-emerald-700 text-white border-emerald-700"
-                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+                ? "bg-emerald-600 text-white"
+                : "hover:bg-current/10"
             }`}
+            title={t.tbSearch || "بحث"}
           >
             <Search className="w-4 h-4" />
           </button>
 
-          {/* زر إعدادات القراءة وراحة العين (الوضع الليلي/ورق تراثي/طريقة العرض) */}
           <button
             type="button"
             onClick={() => onTogglePanel?.("settings")}
-            title={t.readingSettingsTitle || "إعدادات القراءة وراحة العين"}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+            className={`w-8 h-8 rounded-xl flex items-center justify-center transition cursor-pointer ${
               activePanel === "settings"
-                ? "bg-emerald-700 text-white border-emerald-700"
-                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+                ? "bg-emerald-600 text-white"
+                : "hover:bg-current/10 text-amber-500"
             }`}
+            title={t.tbTheme || "راحة العين"}
           >
             <Sun className="w-4 h-4" />
           </button>
 
-          {/* زر العلامة المرجعية */}
           <button
             type="button"
             onClick={onToggleBookmark}
-            title={t.tbBookmark || "علامة مرجعية"}
-            className={`w-10 h-10 rounded-xl border flex items-center justify-center transition-colors ${
+            className={`w-8 h-8 rounded-xl hidden sm:flex items-center justify-center transition cursor-pointer ${
               isBookmarked
-                ? "bg-amber-500 text-white border-amber-500"
-                : "border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10"
+                ? "bg-amber-500/20 text-amber-500"
+                : "hover:bg-current/10"
             }`}
+            title={t.tbBookmark || "علامة"}
           >
-            <Bookmark
-              className={`w-4 h-4 ${isBookmarked ? "fill-current" : ""}`}
-            />
+            {isBookmarked ? (
+              <BookmarkCheck className="w-4 h-4 fill-amber-500" />
+            ) : (
+              <Bookmark className="w-4 h-4" />
+            )}
           </button>
 
-          {/* زر ملء الشاشة */}
           <button
             type="button"
             onClick={onToggleFullscreen}
+            className="w-8 h-8 rounded-xl hover:bg-current/10 hidden sm:flex items-center justify-center transition cursor-pointer"
             title={t.tbFullscreen || "ملء الشاشة"}
-            className="hidden sm:flex w-10 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 items-center justify-center transition-colors"
           >
             {isFullscreen ? (
               <Minimize2 className="w-4 h-4" />
@@ -560,12 +625,11 @@ export function BottomControlBar({
             )}
           </button>
 
-          {/* زر إخفاء الشريط */}
           <button
             type="button"
-            onClick={() => setBarHidden(true)}
+            onClick={() => setIsHidden(true)}
+            className="w-8 h-8 rounded-xl hover:bg-current/10 flex items-center justify-center opacity-70 hover:opacity-100 transition cursor-pointer"
             title={t.tbHide || "إخفاء الشريط"}
-            className="w-10 h-10 rounded-xl border border-current/15 bg-black/[0.03] dark:bg-white/[0.04] hover:bg-black/10 dark:hover:bg-white/10 flex items-center justify-center transition-colors"
           >
             <EyeOff className="w-4 h-4" />
           </button>

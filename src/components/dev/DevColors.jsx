@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { getSetting, setSettings, subscribeToSettings, flushAllPendingSettings } from "@/lib/settingsStore";
-import { getThemeState } from "@/lib/themeEngine";
+import { getThemeState, setThemeMode } from "@/lib/themeEngine";
 
 // HSL ↔ HEX helpers
 function hslToHex(h, s, l) {
@@ -83,7 +83,8 @@ export default function DevColors() {
     };
     setColors(prev => ({ ...prev, ...c }));
     setActivePreset(preset.name);
-    setSettings(c);
+    setThemeMode(mode);
+    setSettings({ ...c, theme_mode: mode, dark_mode: String(mode === "dark") });
     const res = await flushAllPendingSettings();
     if (res.ok) toast.success(`تم تطبيق ثيم "${preset.name}" ✓`);
     else toast.warning(`تم تطبيق "${preset.name}" محلياً — تعذر الحفظ السحابي`);
@@ -92,7 +93,8 @@ export default function DevColors() {
   const handleColorChange = (key, hexVal) => {
     const hsl = hexToHsl(hexVal);
     setColors(prev => ({ ...prev, [key]: hsl }));
-    setSettings({ [key]: hsl });
+    setThemeMode(mode);
+    setSettings({ [key]: hsl, theme_mode: mode, dark_mode: String(mode === "dark") });
   };
 
   const handleReset = async () => {
@@ -161,11 +163,11 @@ export default function DevColors() {
       {/* Mode switch */}
       <div className="bg-card border border-border rounded-2xl p-4">
         <div className="flex items-center gap-2">
-          <button onClick={() => setMode("light")}
+          <button onClick={() => { setMode("light"); setThemeMode("light"); }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${mode === "light" ? "bg-primary text-primary-foreground shadow-md shadow-primary/20" : "bg-muted hover:bg-muted/70"}`}>
             <Sun className="w-4 h-4" /> الوضع النهاري
           </button>
-          <button onClick={() => setMode("dark")}
+          <button onClick={() => { setMode("dark"); setThemeMode("dark"); }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${mode === "dark" ? "bg-primary text-primary-foreground shadow-md shadow-primary/20" : "bg-muted hover:bg-muted/70"}`}>
             <Moon className="w-4 h-4" /> الوضع الليلي
           </button>

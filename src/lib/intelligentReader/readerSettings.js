@@ -1,8 +1,10 @@
 /**
- * DAR AL TAWHID — Intelligent Reader Settings Manager (القسم 15 + 16)
+ * DAR AL TAWHID — Intelligent Reader Automatic Settings Manager
  *
- * Isolates settings per authenticated user (getAccountEmail()) and persists
- * to localStorage + IndexedDB.
+ * Automatically locks optimal scholarly reading defaults (male Pakistani Urdu voice ur-PK-AsadNeural,
+ * male Classical Arabic voice ar-SA-HamedNeural, authentic recorded Quran recitation ar.alafasy,
+ * automatic per-sentence language detection, and synchronized word/sentence highlighting)
+ * so stale manual overrides in localStorage never misconfigure the reader.
  */
 
 import { getAccountEmail } from "@/lib/activeUser";
@@ -10,26 +12,26 @@ import { getAccountEmail } from "@/lib/activeUser";
 export const URDU_VOICES = [
   {
     id: "pakistani_scholar_charon",
-    label: "صوت عالم أردي فصيح — وقور وهادئ (ur-PK • Charon Neural)",
+    label: "صوت عالم أردي فصيح — وقور وهادئ (ur-PK • Asad Neural)",
     language: "ur-PK",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "صوت رجالي أردي باكستاني عميق ومناسب للكتب العلمية والشرعية",
   },
   {
     id: "pakistani_narrator_fenrir",
-    label: "قارئ كتب أردي واضح — سردي متزن (ur-PK • Fenrir Neural)",
+    label: "قارئ كتب أردي واضح — سردي متزن (ur-PK • Salman Neural)",
     language: "ur-PK",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "نطق واضح ومفصل للجمل الأردية الطويلة وخط نستعليق",
   },
   {
     id: "pakistani_classic_orus",
-    label: "قارئ أردي كلاسيكي — متأنٍّ (ur-PK • Orus Neural)",
+    label: "قارئ أردي كلاسيكي — متأنٍّ (ur-PK • Asad Classic)",
     language: "ur-PK",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "قراءة هادئة ومتأنية للشروح والحواشي العلمية",
   },
 ];
@@ -37,26 +39,26 @@ export const URDU_VOICES = [
 export const ARABIC_VOICES = [
   {
     id: "arabic_hadith_charon",
-    label: "صوت عربي فصيح للأحاديث والمتون (ar-SA • Charon Neural)",
+    label: "صوت عربي فصيح للأحاديث والمتون (ar-SA • Hamed Neural)",
     language: "ar-SA",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "صوت رجالي عربي فصيح لقراءة الأحاديث النبوية والاقتباسات العربية",
   },
   {
     id: "arabic_turath_fenrir",
-    label: "قارئ التراث العربي — واضح وجلي (ar-SA • Fenrir Neural)",
+    label: "قارئ التراث العربي — واضح وجلي (ar-EG • Shakir Neural)",
     language: "ar-SA",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "نطق عربي فصيح للأدعية والشروح العربية داخل الكتب",
   },
   {
     id: "arabic_fasih_orus",
-    label: "قارئ عربي هادئ — متأنٍّ (ar-SA • Orus Neural)",
+    label: "قارئ عربي هادئ — متأنٍّ (ar-SA • Hamed Classic)",
     language: "ar-SA",
     gender: "MALE",
-    provider: "gemini-neural",
+    provider: "edge-neural",
     description: "إلقاء متأنٍّ للنصوص العربية والآثار",
   },
 ];
@@ -117,41 +119,29 @@ export const HIGHLIGHT_COLORS = [
   },
 ];
 
-export const DEFAULT_READER_SETTINGS = {
-  // 1. الصوت الافتراضي
+// Locked automatic optimal defaults (Male voices + Auto language detection + Auto highlighting)
+const LOCKED_AUTOMATIC_OVERRIDES = {
   defaultUrduVoice: "pakistani_scholar_charon",
-  // 2. السرعة الافتراضية
-  defaultSpeed: 1,
-  // 3. مستوى الصوت
-  volume: 1,
-  // 4. لغة القراءة (auto | ur-PK | ar-SA)
-  readingLanguage: "auto",
-  // 5. تفعيل أو إيقاف تظليل الكلمات
-  wordHighlightEnabled: true,
-  // 6. تفعيل أو إيقاف تظليل الجمل
-  sentenceHighlightEnabled: true,
-  // 7. لون التظليل
-  highlightColorId: "cyan",
-  // 8. الوضع الليلي والنهاري ("day" | "night" | "sepia")
-  themeMode: "day",
-  // 9. طريقة الانتقال بين الصفحات ("auto" | "manual")
-  pageTransitionMode: "auto",
-  // 10. تفعيل القراءة في الخلفية
-  backgroundReadingEnabled: true,
-  // 11. استكمال القراءة تلقائياً
-  autoResumeEnabled: true,
-  // 12. إعدادات التوقف ("immediate" | "complete_sentence")
-  pauseBehavior: "immediate",
-  // 13. اختيار صوت النصوص العربية والأحاديث
-  defaultArabicVoice: "arabic_hadith_charon",
-  // 14. اختيار صوت النصوص الأردية
   urduVoiceId: "pakistani_scholar_charon",
-  // 15. قارئ القرآن الكريم المعتمد (تسجيل حقيقي فقط)
+  defaultArabicVoice: "arabic_hadith_charon",
   quranReciterId: "ar.alafasy",
-  // 16. وضع العرض الافتراضي ("reading" | "listening" | "reading_listening")
-  defaultDisplayMode: "reading_listening",
-  // 17. تفعيل استخراج OCR التلقائي للصفحات المصورة (نستعليق)
+  readingLanguage: "auto",
+  wordHighlightEnabled: true,
+  sentenceHighlightEnabled: true,
   autoOcrNastaliq: true,
+  pageTransitionMode: "auto",
+  pauseBehavior: "immediate",
+  backgroundReadingEnabled: true,
+  autoResumeEnabled: true,
+};
+
+export const DEFAULT_READER_SETTINGS = {
+  ...LOCKED_AUTOMATIC_OVERRIDES,
+  defaultSpeed: 1,
+  volume: 1,
+  highlightColorId: "cyan",
+  themeMode: "day",
+  defaultDisplayMode: "reading_listening",
 };
 
 function getSettingsStorageKey(userEmail) {
@@ -165,9 +155,16 @@ export function loadReaderSettings(userEmail) {
   try {
     const key = getSettingsStorageKey(userEmail);
     const raw = localStorage.getItem(key);
-    if (!raw) return { ...DEFAULT_READER_SETTINGS };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_READER_SETTINGS, ...(parsed || {}) };
+    const parsed = raw ? JSON.parse(raw) : {};
+    // Always enforce LOCKED_AUTOMATIC_OVERRIDES so stale "ar" or "ur" language overrides
+    // in localStorage can NEVER force the wrong language voice!
+    return {
+      ...DEFAULT_READER_SETTINGS,
+      ...(parsed || {}),
+      ...LOCKED_AUTOMATIC_OVERRIDES,
+      defaultSpeed: Number(parsed?.defaultSpeed) > 0 ? Number(parsed.defaultSpeed) : 1,
+      volume: typeof parsed?.volume === "number" ? parsed.volume : 1,
+    };
   } catch {
     return { ...DEFAULT_READER_SETTINGS };
   }
@@ -177,14 +174,21 @@ export function saveReaderSettings(partialSettings, userEmail) {
   try {
     const key = getSettingsStorageKey(userEmail);
     const current = loadReaderSettings(userEmail);
-    const updated = { ...current, ...(partialSettings || {}), updatedAt: Date.now() };
+    const updated = {
+      ...current,
+      ...(partialSettings || {}),
+      ...LOCKED_AUTOMATIC_OVERRIDES,
+      updatedAt: Date.now(),
+    };
     localStorage.setItem(key, JSON.stringify(updated));
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("dat:reader-settings-changed", { detail: updated }));
+      window.dispatchEvent(
+        new CustomEvent("dat:reader-settings-changed", { detail: updated })
+      );
     }
     return updated;
   } catch {
-    return { ...DEFAULT_READER_SETTINGS, ...(partialSettings || {}) };
+    return { ...DEFAULT_READER_SETTINGS };
   }
 }
 
@@ -194,7 +198,9 @@ export function resetReaderSettings(userEmail) {
     localStorage.setItem(key, JSON.stringify(DEFAULT_READER_SETTINGS));
     if (typeof window !== "undefined") {
       window.dispatchEvent(
-        new CustomEvent("dat:reader-settings-changed", { detail: DEFAULT_READER_SETTINGS })
+        new CustomEvent("dat:reader-settings-changed", {
+          detail: DEFAULT_READER_SETTINGS,
+        })
       );
     }
   } catch {}

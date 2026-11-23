@@ -1,18 +1,38 @@
 /**
- * DAR AL TAWHID — Intelligent Reader Audio & OCR Cache Manager (القسم 16)
+ * DAR AL TAWHID — Intelligent Reader Audio & OCR Cache Manager (v4)
  *
- * Uses a dedicated IndexedDB database (`dat_intelligent_reader_cache_v1`) to store:
+ * Uses a dedicated IndexedDB database (`dat_intelligent_reader_cache_v4`) to store:
  * 1. `page_ocr`: Structured OCR & Nastaliq extraction results per `bookId::pageNumber`
- * 2. `tts_audio`: Synthesized WAV audio + word boundary timings per `hash(text + voiceId + language)`
+ * 2. `tts_audio`: Synthesized neural audio + word boundary timings per `hash(version + text + voiceId + language)`
  * 3. `quran_meta`: Verified Quran verse metadata & audio URLs
  */
 
-const CACHE_DB_NAME = "dat_intelligent_reader_cache_v1";
+const CACHE_DB_NAME = "dat_intelligent_reader_cache_v4";
 const CACHE_DB_VERSION = 1;
+export const PIPELINE_CACHE_VERSION = "v4";
+
+const LEGACY_DB_NAMES = [
+  "dat_intelligent_reader_cache_v1",
+  "dat_intelligent_reader_cache_v2",
+  "dat_intelligent_reader_cache_v3",
+  "dar_al_tawhid_intelligent_reader_v1",
+];
 
 let _cacheDb = null;
+let _legacyCleaned = false;
+
+function cleanupLegacyCachesOnce() {
+  if (_legacyCleaned || typeof indexedDB === "undefined") return;
+  _legacyCleaned = true;
+  for (const oldName of LEGACY_DB_NAMES) {
+    try {
+      indexedDB.deleteDatabase(oldName);
+    } catch {}
+  }
+}
 
 function openCacheDb() {
+  cleanupLegacyCachesOnce();
   if (_cacheDb) return Promise.resolve(_cacheDb);
   return new Promise((resolve, reject) => {
     try {
@@ -59,7 +79,7 @@ export function hashString(str) {
 
 // ─── Page OCR Cache ───────────────────────────────────────────────────────────
 export async function getCachedPageOcr(bookId, pageNumber) {
-  const cacheKey = `${String(bookId || "book")}::p${Number(pageNumber || 1)}`;
+  const cacheKey = `${PIPELINE_CACHE_VERSION}::${String(bookId || "book")}::p${Number(pageNumber || 1)}`;
   if (_memOcr.has(cacheKey)) return _memOcr.get(cacheKey);
   try {
     const db = await openCacheDb();
@@ -67,8 +87,12 @@ export async function getCachedPageOcr(bookId, pageNumber) {
       const tx = db.transaction("page_ocr", "readonly");
       const req = tx.objectStore("page_ocr").get(cacheKey);
       req.onsuccess = () => {
-        if (req.result) _memOcr.set(cacheKey, req.result);
-        resolve(req.result || null);
+        if (req.result && req.result?.data?.pipelineVersion === 4) {
+          _memOcr.set(cacheKey, req.result);
+          resolve(req.result);
+        } else {
+          resolve(null);
+        }
       };
       req.onerror = () => resolve(null);
     });
@@ -78,12 +102,12 @@ export async function getCachedPageOcr(bookId, pageNumber) {
 }
 
 export async function setCachedPageOcr(bookId, pageNumber, data) {
-  const cacheKey = `${String(bookId || "book")}::p${Number(pageNumber || 1)}`;
+  const cacheKey = `${PIPELINE_CACHE_VERSION}::${String(bookId || "book")}::p${Number(pageNumber || 1)}`;
   const record = {
     cacheKey,
     bookId: String(bookId || "book"),
     pageNumber: Number(pageNumber || 1),
-    data,
+    data: { ...data, pipelineVersion: 4 },
     sizeBytes: JSON.stringify(data || {}).length,
     updatedAt: Date.now(),
   };
@@ -102,7 +126,7 @@ export async function setCachedPageOcr(bookId, pageNumber, data) {
 
 // ─── TTS Audio Cache ──────────────────────────────────────────────────────────
 export function makeTtsCacheKey(text, voiceId, language) {
-  return `tts::${voiceId}::${language}::${hashString(text)}`;
+  return `tts::${PIPELINE_CACHE_VERSION}::${voiceId}::${language}::${hashString(text)}`;
 }
 
 export async function getCachedTtsAudio(text, voiceId, language) {
@@ -114,8 +138,12 @@ export async function getCachedTtsAudio(text, voiceId, language) {
       const tx = db.transaction("tts_audio", "readonly");
       const req = tx.objectStore("tts_audio").get(cacheKey);
       req.onsuccess = () => {
-        if (req.result) _memTts.set(cacheKey, req.result);
-        resolve(req.result || null);
+        if (req.result && req.result.pipelineVersion === 4) {
+          _memTts.set(cacheKey, req.result);
+          resolve(req.result);
+        } else {
+          resolve(null);
+        }
       };
       req.onerror = () => resolve(null);
     });
@@ -128,6 +156,7 @@ export async function setCachedTtsAudio(text, voiceId, language, payload) {
   const cacheKey = makeTtsCacheKey(text, voiceId, language);
   const record = {
     cacheKey,
+    pipelineVersion: 4,
     voiceId,
     language,
     ...payload,
@@ -149,7 +178,7 @@ export async function setCachedTtsAudio(text, voiceId, language, payload) {
 
 // ─── Quran Verification Cache ─────────────────────────────────────────────────
 export async function getCachedQuranVerification(text, reciterId) {
-  const cacheKey = `quran::${reciterId}::${hashString(text)}`;
+  const cacheKey = `quran::${PIPELINE_CACHE_VERSION}::${reciterId}::${hashString(text)}`;
   if (_memQuran.has(cacheKey)) return _memQuran.get(cacheKey);
   try {
     const db = await openCacheDb();
@@ -168,7 +197,7 @@ export async function getCachedQuranVerification(text, reciterId) {
 }
 
 export async function setCachedQuranVerification(text, reciterId, result) {
-  const cacheKey = `quran::${reciterId}::${hashString(text)}`;
+  const cacheKey = `quran::${PIPELINE_CACHE_VERSION}::${reciterId}::${hashString(text)}`;
   const record = { cacheKey, reciterId, ...result, updatedAt: Date.now() };
   _memQuran.set(cacheKey, record);
   try {

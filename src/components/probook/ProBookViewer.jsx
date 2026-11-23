@@ -33,6 +33,7 @@ import {
   saveReaderSettings,
 } from "@/lib/intelligentReader/readerSettings";
 import {
+  loadReadingPosition,
   saveReadingPosition,
   computeFileFingerprint,
 } from "@/lib/intelligentReader/positionManager";
@@ -143,7 +144,13 @@ export default function ProBookViewer({
       return "width";
     }
   });
-  const [viewMode] = useState("single");
+  const [viewMode, setViewModeState] = useState(() => {
+    try {
+      return localStorage.getItem("dau_reader_viewmode") || "vertical";
+    } catch {
+      return "vertical";
+    }
+  });
   const [brightness, setBrightness] = useState(100);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -227,9 +234,21 @@ export default function ProBookViewer({
         effectiveBook?.page_count ||
         1;
       setTotalPages(count);
-      const validInit = Math.min(Math.max(1, initialPage || 1), count);
+      const savedPos = loadReadingPosition(
+        bookId,
+        computeFileFingerprint(effectiveBook)
+      );
+      const targetStartPage =
+        initialPage && Number(initialPage) > 1
+          ? Number(initialPage)
+          : savedPos?.pageNumber || Number(initialPage) || 1;
+      const validInit = Math.min(Math.max(1, targetStartPage), count);
       setCurrentPage(validInit);
-      setScrollTriggerPage(validInit);
+      setScrollTriggerPage({ page: validInit, seq: Date.now() });
+
+      if (savedPos && Number(savedPos.pageNumber) === validInit) {
+        intelligentAudioEngine.restoreSavedPosition(savedPos);
+      }
 
       extractRealPdfOutline(doc)
         .then((outline) => {
@@ -239,7 +258,11 @@ export default function ProBookViewer({
         })
         .catch(() => {});
     } catch (err) {
-      setError(err?.message || t.readerLoadError || "تعذر فتح ملف الكتاب.");
+      setError(
+        err?.message ||
+          t.readerLoadError ||
+          "فشل تحميل PDF: تعذر فتح ملف الكتاب."
+      );
     } finally {
       setLoading(false);
     }
@@ -301,7 +324,7 @@ export default function ProBookViewer({
         const maxPage = totalPages > 0 ? totalPages : 999999;
         const clamped = Math.min(Math.max(1, Number(nextPage) || 1), maxPage);
         if (shouldScrollStream) {
-          setScrollTriggerPage(clamped);
+          setScrollTriggerPage({ page: clamped, seq: Date.now() });
         }
         if (clamped !== prevPage) {
           onPageChange?.(clamped);
@@ -323,14 +346,19 @@ export default function ProBookViewer({
     [updateCurrentPage]
   );
 
-  // Extract & process current page text when Smart Reader is opened or playing
-  useEffect(() => {
-    if (!pdfDoc && !effectiveBook?.structured_pages) return;
-    const isAudioPlayingOrOpen =
+  const shouldExtractCurrentPage = Boolean(
+    pdfDoc ||
+      effectiveBook?.structured_pages ||
       isAudioOpen ||
       audioSnapshot.playerState === "playing" ||
-      audioSnapshot.playerState === "loading";
-    if (!isAudioPlayingOrOpen) return;
+      audioSnapshot.playerState === "loading" ||
+      audioSnapshot.playerState === "paused"
+  );
+
+  // Extract & process current page text when Smart Reader is opened or active
+  useEffect(() => {
+    if (!pdfDoc && !effectiveBook?.structured_pages) return;
+    if (!shouldExtractCurrentPage) return;
 
     let cancelled = false;
 
@@ -395,8 +423,7 @@ export default function ProBookViewer({
     bookId,
     effectiveBook,
     totalPages,
-    isAudioOpen,
-    audioSnapshot.playerState,
+    shouldExtractCurrentPage,
     readerSettings.autoOcrNastaliq,
     readerSettings.quranReciterId,
     ensurePageExtracted,
@@ -434,7 +461,7 @@ export default function ProBookViewer({
       const step = viewMode === "spread" ? 2 : 1;
       const maxPage = totalPages > 0 ? totalPages : prev + step;
       const clamped = Math.min(maxPage, prev + step);
-      setScrollTriggerPage(clamped);
+      setScrollTriggerPage({ page: clamped, seq: Date.now() });
       if (clamped !== prev) onPageChange?.(clamped);
       return clamped;
     });
@@ -444,7 +471,7 @@ export default function ProBookViewer({
     setCurrentPage((prev) => {
       const step = viewMode === "spread" ? 2 : 1;
       const clamped = Math.max(1, prev - step);
-      setScrollTriggerPage(clamped);
+      setScrollTriggerPage({ page: clamped, seq: Date.now() });
       if (clamped !== prev) onPageChange?.(clamped);
       return clamped;
     });
@@ -476,6 +503,18 @@ export default function ProBookViewer({
       localStorage.setItem("dau_reader_fitmode", newFit);
     } catch {}
   };
+
+  const handleSelectViewMode = useCallback(
+    (nextMode) => {
+      const resolved = nextMode === "single" ? "single" : "vertical";
+      setViewModeState(resolved);
+      try {
+        localStorage.setItem("dau_reader_viewmode", resolved);
+      } catch {}
+      setScrollTriggerPage({ page: currentPage, seq: Date.now() });
+    },
+    [currentPage]
+  );
 
   // Bookmarks management
   const isCurrentBookmarked = bookmarks.some(
@@ -632,8 +671,11 @@ export default function ProBookViewer({
     touchStartX.current = null;
     touchStartY.current = null;
 
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) {
       if (dx > 0) nextPage();
+      else prevPage();
+    } else if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx) * 1.35) {
+      if (dy < 0) nextPage();
       else prevPage();
     }
   };
@@ -663,6 +705,10 @@ export default function ProBookViewer({
         currentPage={currentPage}
         totalPages={totalPages}
         isBookmarked={isCurrentBookmarked}
+        viewMode={viewMode}
+        onToggleViewMode={() =>
+          handleSelectViewMode(viewMode === "vertical" ? "single" : "vertical")
+        }
         onBack={onBack}
         onTogglePanel={togglePanel}
         onToggleBookmark={toggleBookmark}
@@ -890,6 +936,8 @@ export default function ProBookViewer({
             onSelectTheme={handleChangeTheme}
             fitMode={fitMode}
             onSelectFitMode={handleSelectFitMode}
+            viewMode={viewMode}
+            onSelectViewMode={handleSelectViewMode}
             brightness={brightness}
             onChangeBrightness={setBrightness}
             onClose={() => setActivePanel(null)}
@@ -938,6 +986,7 @@ export default function ProBookViewer({
 
       {/* 3. Simple Smart Reader Bar (ONLY shown when user clicks the single Smart Reader button) */}
       <IntelligentAudioPlayer
+        pageData={activePageData}
         audioState={audioSnapshot}
         readerSettings={readerSettings}
         isOpen={isAudioOpen}
@@ -947,6 +996,7 @@ export default function ProBookViewer({
         }}
         onPlay={(opts) => intelligentAudioEngine.playFrom(opts)}
         onPause={() => intelligentAudioEngine.pause()}
+        onStop={() => intelligentAudioEngine.stop()}
         onPrevSentence={() => intelligentAudioEngine.prevSentence()}
         onNextSentence={() => intelligentAudioEngine.nextSentence()}
         onChangeSpeed={(spd) => {
@@ -967,12 +1017,23 @@ export default function ProBookViewer({
         zoom={zoom}
         themeCfg={themeCfg}
         isFullscreen={isFullscreen}
+        viewMode={viewMode}
+        onToggleViewMode={() =>
+          handleSelectViewMode(viewMode === "vertical" ? "single" : "vertical")
+        }
         isAudioOpen={isAudioOpen}
         onToggleAudioOpen={() => {
           setIsAudioOpen((prev) => {
             const next = !prev;
             if (!next && audioSnapshot.playerState === "playing") {
-              intelligentAudioEngine.pause();
+              intelligentAudioEngine.pause("immediate");
+            } else if (next && audioSnapshot.playerState !== "playing") {
+              setTimeout(() => {
+                intelligentAudioEngine.playFrom({
+                  sentenceIndex: audioSnapshot.sentenceIndex || 0,
+                  wordIndex: audioSnapshot.wordIndex || 0,
+                });
+              }, 40);
             }
             return next;
           });

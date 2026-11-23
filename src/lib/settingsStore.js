@@ -92,8 +92,8 @@ export const DEFAULT_SETTINGS = {
   youtube_label:     "قناتنا على يوتيوب",
   youtube_sub:       "تابعونا على قناتنا لمزيد من المحتوى الإسلامي",
   app_lang:          "ar",
-  dark_mode:         "false",
-  theme_mode:        "auto",  // light | dark | auto
+  dark_mode:         "true",
+  theme_mode:        "dark",  // light | dark | auto
   show_dev_nav:      "false",
   categories:        "[\"القرآن وعلومه\",\"الحديث الشريف\",\"الفقه الإسلامي\",\"السيرة النبوية\",\"العقيدة\",\"التزكية والرقائق\",\"التاريخ الإسلامي\",\"أخرى\",\"أردو\"]",
   offline_mode:      "true",
@@ -160,7 +160,56 @@ try {
     localStorage.removeItem("dev_logo_url");
     localStorage.setItem(SETTINGS_SCHEMA_VER_KEY, "1");
   }
+  // Upgrade stale "auto" / "false" theme values and refresh non-saved cache keys from deduplicated AppSettings.json
+  if (typeof localStorage !== "undefined" && localStorage.getItem("devs__dark_fix_v2") !== "1") {
+    let savedSet = new Set();
+    try {
+      const rawSaved = localStorage.getItem(SAVED_KEYS_LS);
+      const parsedSaved = rawSaved ? JSON.parse(rawSaved) : [];
+      if (Array.isArray(parsedSaved)) savedSet = new Set(parsedSaved);
+    } catch {}
+    Object.keys(DEFAULT_SETTINGS).forEach((k) => {
+      if (k !== "app_lang" && !savedSet.has(k)) {
+        localStorage.removeItem(LS_PREFIX + k);
+      }
+    });
+    const curMode = localStorage.getItem("devs_theme_mode");
+    if (!curMode || curMode === "auto") {
+      localStorage.setItem("devs_theme_mode", "dark");
+    }
+    const curDark = localStorage.getItem("devs_dark_mode");
+    if (!curDark || curDark === "false") {
+      localStorage.setItem("devs_dark_mode", "true");
+    }
+    localStorage.setItem("devs__dark_fix_v2", "1");
+  }
 } catch {}
+
+const KEY_TIMESTAMPS_LS = "devs__key_ts";
+
+function readKeyTimestamps() {
+  try {
+    const raw = localStorage.getItem(KEY_TIMESTAMPS_LS);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function recordKeyTimestamp(key, iso) {
+  try {
+    const map = readKeyTimestamps();
+    const prevMs = map[key] ? Date.parse(String(map[key])) : 0;
+    const candidateMs = iso ? Date.parse(String(iso)) : Date.now();
+    let nextMs = Number.isFinite(candidateMs) ? candidateMs : Date.now();
+    if (Number.isFinite(prevMs) && prevMs >= nextMs) {
+      nextMs = prevMs + 1;
+    }
+    map[key] = new Date(nextMs).toISOString();
+    localStorage.setItem(KEY_TIMESTAMPS_LS, JSON.stringify(map));
+  } catch {}
+}
 
 function readSavedKeysSet() {
   try {
@@ -172,11 +221,12 @@ function readSavedKeysSet() {
   }
 }
 
-function markKeyLocallySaved(key) {
+function markKeyLocallySaved(key, explicitIso) {
   try {
     const set = readSavedKeysSet();
     set.add(key);
     localStorage.setItem(SAVED_KEYS_LS, JSON.stringify(Array.from(set)));
+    recordKeyTimestamp(key, explicitIso);
   } catch {}
 }
 
@@ -208,7 +258,7 @@ function markDirtyKey(key, value) {
 
 function clearDirtyKey(key, savedValue) {
   const map = readDirtyMap();
-  if (key in map && map[key] === String(savedValue ?? "")) {
+  if (key in map && (savedValue === undefined || map[key] === String(savedValue ?? ""))) {
     delete map[key];
     writeDirtyMap(map);
   }
@@ -233,6 +283,7 @@ const ls = {
             k !== "_migrated" &&
             k !== "_dirty_keys" &&
             k !== "_saved_keys" &&
+            k !== "_key_ts" &&
             k !== "_schema_v3" &&
             k !== "_schema_v4" &&
             k !== "_schema_v5" &&
@@ -254,10 +305,11 @@ const ls = {
 };
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
-async function dbGetAll() {
+async function dbGetAllWithMeta() {
   try {
     const rows = await entities.AppSettings.list('-updated_date', 1000);
     const map = {};
+    const timestamps = {};
     // rows are sorted newest-first (-updated_date): only take the first (newest) entry per setting_key
     rows.forEach((r) => {
       if (r.setting_key && !(r.setting_key in map)) {
@@ -265,24 +317,27 @@ async function dbGetAll() {
           r.setting_key === "app_name"
             ? normalizeLegacyAppName(r.setting_value ?? "")
             : (r.setting_value ?? "");
+        if (r.updated_date) {
+          timestamps[r.setting_key] = String(r.updated_date);
+        }
       }
     });
-    return map;
+    return { map, timestamps };
   } catch(e) { return null; }
 }
 
 async function dbSet(key, value, previousValue, userEmail) {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return false;
-  }
   try {
-    await entities.AppSettings.update(key, {
+    const saved = await entities.AppSettings.update(key, {
       setting_key: key,
       setting_value: String(value ?? ""),
       setting_type: "text",
       previous_value: previousValue ? String(previousValue) : "",
       changed_by: userEmail || "admin",
     });
+    if (saved?.updated_date) {
+      recordKeyTimestamp(key, String(saved.updated_date));
+    }
     return true;
   } catch (e) {
     console.error("Failed saving setting:", key, e?.message);
@@ -321,8 +376,11 @@ function syncCustomFontFaces(customFonts) {
 
 export function applySettingsToDom(settings) {
   // Dark mode — resolve first so custom colors can be skipped in dark mode
-  const themeMode = settings.theme_mode || (settings.dark_mode === "true" ? "dark" : "light");
-  const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+  const isExplicitDark = settings.dark_mode === "true" && settings.theme_mode !== "light";
+  const themeMode = isExplicitDark
+    ? "dark"
+    : settings.theme_mode || (settings.dark_mode === "true" ? "dark" : "dark");
+  const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
   const resolvedDark = themeMode === "dark" ? true : themeMode === "light" ? false : systemDark;
   document.documentElement.classList.toggle("dark", resolvedDark);
 
@@ -491,10 +549,15 @@ function flushSave(key) {
   markKeyLocallySaved(key);
   emitStatus("saving");
 
+  // Serialize writes to the same setting key so rapid edits never land out of order
+  const prevFlight = _inFlightSaves.get(key);
   const run = (async () => {
+    if (prevFlight) {
+      await prevFlight.catch(() => {});
+    }
     let ok = await dbSet(key, value, previous, _userEmail);
-    if (!ok && (typeof navigator === "undefined" || navigator.onLine !== false)) {
-      await new Promise(r => setTimeout(r, 600));
+    if (!ok) {
+      await new Promise(r => setTimeout(r, 400));
       ok = await dbSet(key, value, previous, _userEmail);
     }
     if (ok) {
@@ -667,10 +730,12 @@ export async function loadSettings(userEmail) {
   dispatchChange();
 
   // 2. Load from DB and merge without clobbering locally saved or dirty edits
-  const dbData = await dbGetAll();
+  const dbRes = await dbGetAllWithMeta();
+  const dbData = dbRes?.map;
   if (dbData && Object.keys(dbData).length > 0) {
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
     const latestLocal = ls.getAll();
+    const latestSavedKeys = readSavedKeysSet();
     let latestLang = "";
     try { latestLang = localStorage.getItem("dev_app_lang") || ""; } catch {}
     if (latestLang) latestLocal.app_lang = latestLang;
@@ -683,14 +748,19 @@ export async function loadSettings(userEmail) {
       }
     });
 
-    // Preserve keys explicitly saved on this device so seed data never reverts Developer Panel changes
+    // Preserve locally saved keys edited by the developer on this device
+    latestSavedKeys.forEach((k) => {
+      if (k in latestLocal && latestLocal[k] !== undefined && latestLocal[k] !== null) {
+        merged[k] = String(latestLocal[k]);
+      }
+    });
     savedKeys.forEach((k) => {
-      if (k in latestLocal) {
-        merged[k] = String(latestLocal[k] ?? "");
+      if (k in latestLocal && latestLocal[k] !== undefined && latestLocal[k] !== null) {
+        merged[k] = String(latestLocal[k]);
       }
     });
 
-    // Overlay persisted dirty edits + in-flight RAM edits so newer local changes are never overwritten
+    // Overlay persisted dirty edits + in-flight RAM edits so unsynced local changes are NEVER overwritten
     Object.entries(readDirtyMap()).forEach(([k, v]) => {
       merged[k] = String(v);
     });
@@ -701,6 +771,29 @@ export async function loadSettings(userEmail) {
     ls.setAll(_cache);
     applySettingsToDom(_cache);
     dispatchChange();
+
+    // Auto-backup any locally saved developer settings to the server disk store (data-export/live_catalog_store.json)
+    try {
+      const allSavedKeys = new Set([...Array.from(savedKeys), ...Array.from(latestSavedKeys)]);
+      if (allSavedKeys.size > 0) {
+        const itemsToPush = Array.from(allSavedKeys)
+          .filter((k) => k in _cache && !USER_LOCAL_PREF_KEYS.has(k))
+          .map((k) => ({
+            id: `set_${k}`,
+            setting_key: k,
+            setting_value: String(_cache[k] ?? ""),
+            setting_type: "text",
+            updated_date: readKeyTimestamps()[k] || new Date().toISOString(),
+          }));
+        if (itemsToPush.length > 0) {
+          fetch("/api/catalog-store/app_settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items: itemsToPush }),
+          }).catch(() => {});
+        }
+      }
+    } catch {}
   }
 
   if (Object.keys(readDirtyMap()).length > 0 && (typeof navigator === "undefined" || navigator.onLine !== false)) {
@@ -715,7 +808,8 @@ async function refreshSettingsFromRemote() {
   if (_isRefreshingRemoteSettings) return;
   _isRefreshingRemoteSettings = true;
   try {
-    const dbData = await dbGetAll();
+    const dbRes = await dbGetAllWithMeta();
+    const dbData = dbRes?.map;
     if (!dbData || Object.keys(dbData).length === 0) return;
     const merged = { ...DEFAULT_SETTINGS, ...dbData };
     const latestLocal = ls.getAll();
@@ -731,8 +825,8 @@ async function refreshSettingsFromRemote() {
       }
     });
     savedKeys.forEach((k) => {
-      if (k in latestLocal) {
-        merged[k] = String(latestLocal[k] ?? "");
+      if (k in latestLocal && latestLocal[k] !== undefined && latestLocal[k] !== null) {
+        merged[k] = String(latestLocal[k]);
       }
     });
     Object.entries(readDirtyMap()).forEach(([k, v]) => {
