@@ -94,7 +94,7 @@ export const DEFAULT_SETTINGS = {
   app_lang:          "ar",
   dark_mode:         "true",
   theme_mode:        "dark",  // light | dark | auto
-  show_dev_nav:      "false",
+  show_dev_nav:      "true",
   categories:        "[\"القرآن وعلومه\",\"الحديث الشريف\",\"الفقه الإسلامي\",\"السيرة النبوية\",\"العقيدة\",\"التزكية والرقائق\",\"التاريخ الإسلامي\",\"أخرى\",\"أردو\"]",
   offline_mode:      "true",
   // Contact page
@@ -182,6 +182,19 @@ try {
       localStorage.setItem("devs_dark_mode", "true");
     }
     localStorage.setItem("devs__dark_fix_v2", "1");
+  }
+  // Ensure Developer Panel button is shown in the navigation bar by default (user can hide it later from Dev Panel)
+  if (typeof localStorage !== "undefined" && localStorage.getItem("devs__show_dev_nav_v1") !== "1") {
+    localStorage.setItem("devs_show_dev_nav", "true");
+    try {
+      const rawSaved = localStorage.getItem(SAVED_KEYS_LS);
+      const parsedSaved = rawSaved ? JSON.parse(rawSaved) : [];
+      if (Array.isArray(parsedSaved)) {
+        const filtered = parsedSaved.filter((k) => k !== "show_dev_nav");
+        localStorage.setItem(SAVED_KEYS_LS, JSON.stringify(filtered));
+      }
+    } catch {}
+    localStorage.setItem("devs__show_dev_nav_v1", "1");
   }
 } catch {}
 

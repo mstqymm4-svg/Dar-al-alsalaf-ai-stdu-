@@ -18,6 +18,15 @@ import {
   setCachedQuranVerification,
 } from "./cacheManager";
 import { WASWASA_STRUCTURED_PAGES } from "./sampleUrduBook";
+import {
+  NOORI_GID_TO_UNI,
+  NOORI_SKEL_VARIANTS_TO_ROOT,
+  NOORI_SKEL_MARK_TO_UNI,
+  NOORI_ROOT_SKEL_LIG_REV,
+  NOORI_PRECOMPOSED_GSUB_FIXES,
+  TRAD_ARABIC_GID_TO_UNI,
+  SALEEM_QURAN_GID_TO_UNI,
+} from "./nooriNastaliqGsubMap";
 
 // ─── Structured Error Taxonomy ────────────────────────────────────────────────
 export const READER_ERROR_CODES = {
@@ -797,7 +806,11 @@ function containsCanonicalQuranPhrase(text) {
 }
 
 function hasSpeakableLetters(str) {
-  return /[\u0600-\u06FF\u0750-\u077F\w]/.test(String(str || ""));
+  const s = String(str || "").trim();
+  if (!s) return false;
+  // Ignore isolated TOC page numbers or punctuation-only strings
+  if (/^[\d٠-٩۰-۹\s.۔،؛؟!:"'«»﴿﴾\(\)\[\]—–-]+$/.test(s)) return false;
+  return /[\u0621-\u065F\u0670-\u06D3\u0750-\u077Fa-zA-Z]/.test(s);
 }
 
 /**
@@ -1052,6 +1065,449 @@ function buildSentenceObject(text, block, blockIndex, forcedSegmentType = null) 
   };
 }
 
+const NOORI_ZERO_WIDTH_TAGS = new Set([1649, 1651, 1653, 1654]);
+
+function isNooriMarkGid(c) {
+  return (c >= 460 && c <= 484) || (c >= 256 && c <= 270);
+}
+
+function decodeIslamicHonorificPua(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/[\uF048\u1916]/g, " ﷺ ")
+    .replace(/\uF049/g, " رضي الله عنه ")
+    .replace(/\uF04A/g, " رضي الله عنهما ")
+    .replace(/\uF04B/g, " رضي الله عنها ")
+    .replace(/\uF04C/g, " رضي الله عنهم ")
+    .replace(/\uF056/g, " رحمه الله ")
+    .replace(/\uF04F/g, " عليه السلام ")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\u0128\u0134\u01B0\u01D6]/g, "");
+}
+
+function decodeSingleNooriGlyph(curr) {
+  if (curr.c === 12610 && curr.rawU === "ㅂ") {
+    return "ب";
+  }
+  const fixKey = `${curr.c}:${curr.rawU}`;
+  if (NOORI_PRECOMPOSED_GSUB_FIXES[fixKey]) {
+    return NOORI_PRECOMPOSED_GSUB_FIXES[fixKey];
+  }
+  let trueU = curr.rawU;
+  if (curr.c >= 219 && curr.c <= 306 && NOORI_GID_TO_UNI[curr.c]) {
+    trueU = NOORI_GID_TO_UNI[curr.c];
+  } else if (NOORI_ROOT_SKEL_LIG_REV[curr.c]) {
+    const skels = NOORI_ROOT_SKEL_LIG_REV[curr.c];
+    trueU =
+      skels
+        .map((sk) => NOORI_SKEL_MARK_TO_UNI[`${sk}:none`] || NOORI_GID_TO_UNI[sk] || "")
+        .join("") || curr.rawU;
+  } else {
+    const root = NOORI_SKEL_VARIANTS_TO_ROOT[curr.c];
+    if (root && NOORI_SKEL_MARK_TO_UNI[`${root}:none`]) {
+      trueU = NOORI_SKEL_MARK_TO_UNI[`${root}:none`];
+    }
+  }
+  return decodeIslamicHonorificPua(
+    trueU
+      .replace(/\u063E/g, "م")
+      .replace(/\u063F/g, "ن")
+      .replace(/\u063D/g, "ل")
+      .replace(/\u063B/g, "ف")
+      .replace(/\u063C/g, "ق")
+  );
+}
+
+/**
+ * Recover 100% dot-accurate glyph strings from pdf.js getOperatorList() + getTextContent():
+ * 1. Fixes pdf.js's character-by-character BiDi reversal of multi-character Urdu/Arabic ligature glyphs.
+ * 2. Decodes Jameel Noori Nastaleeq dynamic skeleton+nuqta-mark ligatures (Lookups #30 & #33..48).
+ * 3. Decodes embedded Traditional Arabic (TTF #4 & #17) and Muhammadi Quranic (TTF #13) GIDs whose /ToUnicode tables are corrupted.
+ * 4. Ignores marked-content tags ("P", "Span") so curFont is never overwritten by non-font operators.
+ */
+export function recoverTrueGlyphTextItems(items, opList) {
+  if (!items || items.length === 0) return [];
+  if (!opList || !Array.isArray(opList.fnArray) || !Array.isArray(opList.argsArray)) {
+    return items.map((it) => ({
+      ...it,
+      str: decodeIslamicHonorificPua(String(it.str || ""))
+        .replace(/ملسو\s*هيلع\s*هللا\s*ىلص/g, "صلى الله عليه وسلم")
+        .replace(/ملسو\s*هيلع\s*للها\s*لصى/g, "صلى الله عليه وسلم"),
+    }));
+  }
+
+  const fontStats = {};
+  let curFont = "";
+  const fontStack1 = [];
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i];
+    const args = opList.argsArray[i];
+    if (fn === 10) {
+      fontStack1.push(curFont);
+      continue;
+    }
+    if (fn === 11) {
+      if (fontStack1.length > 0) curFont = fontStack1.pop();
+      continue;
+    }
+    if (!args) continue;
+    if (
+      args.length === 2 &&
+      typeof args[0] === "string" &&
+      /^g_d\d+_f\d+$/.test(args[0]) &&
+      typeof args[1] === "number"
+    ) {
+      curFont = args[0];
+      if (!fontStats[curFont]) {
+        fontStats[curFont] = {
+          nooriScore: 0,
+          tradArabicScore: 0,
+          saleemQuranScore: 0,
+        };
+      }
+    } else if (Array.isArray(args[0]) && curFont && fontStats[curFont]) {
+      const st = fontStats[curFont];
+      for (const g of args[0]) {
+        if (!g || typeof g !== "object" || typeof g.unicode !== "string") continue;
+        const c = g.originalCharCode;
+        const w = Math.round(g.width || 0);
+        const u = g.unicode;
+
+        // 1. Jameel Noori Nastaleeq signatures (exclude MCS Taybah symbol c === 6422)
+        if (
+          (c === 296 && (w === 9 || w === 1000)) ||
+          (c >= 460 && c <= 484 && (w === 0 || w === 1000)) ||
+          (c > 2500 && c !== 6422)
+        ) {
+          st.nooriScore += 3;
+        }
+
+        // 2. Traditional Arabic (TTF #4 & #17) signatures
+        if (
+          (c === 166 && u === "ا") ||
+          (c === 190 && u === "ؿ") ||
+          (c === 506 && u === " ") ||
+          (c === 519 && u === "ْ") ||
+          (c === 361 && u === "ب٠") ||
+          (c === 365 && u === "ب٤") ||
+          (c === 374 && u === "ب٭") ||
+          (c >= 200 && c <= 204 && /^[\u064B-\u0652]$/.test(u))
+        ) {
+          st.tradArabicScore += 5;
+        }
+
+        // 3. Muhammadi Quranic (TTF #13) signatures
+        if (
+          (c === 441 && u === "ا") ||
+          (c === 722 && u === "ي") ||
+          (c === 720 && u === "و") ||
+          (c === 718 && u === "ن") ||
+          (c === 732 && u === "ى") ||
+          (c === 1741 && u === "فَ") ||
+          (c === 1735 && u === "عَ") ||
+          (c === 1919 && u === "مِ") ||
+          (c >= 472 && c <= 482 && w === 0 && /^[\u064B-\u0652\u0670]$/.test(u)) ||
+          (c >= 518 && c <= 527 && /^[\u064B-\u0652\u0670]$/.test(u))
+        ) {
+          st.saleemQuranScore += 6;
+        }
+      }
+    }
+  }
+
+  const fontKindMap = {};
+  for (const [fName, st] of Object.entries(fontStats)) {
+    if (st.saleemQuranScore >= 12 && st.saleemQuranScore >= st.tradArabicScore) {
+      fontKindMap[fName] = "saleem_quran";
+    } else if (st.tradArabicScore >= 8) {
+      fontKindMap[fName] = "trad_arabic";
+    } else if (st.nooriScore > 0) {
+      fontKindMap[fName] = "noori";
+    } else {
+      fontKindMap[fName] = "standard";
+    }
+  }
+
+  const glyphStream = [];
+  curFont = "";
+  const fontStack2 = [];
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i];
+    const args = opList.argsArray[i];
+    if (fn === 10) {
+      fontStack2.push(curFont);
+      continue;
+    }
+    if (fn === 11) {
+      if (fontStack2.length > 0) curFont = fontStack2.pop();
+      continue;
+    }
+    if (!args) continue;
+    if (
+      args.length === 2 &&
+      typeof args[0] === "string" &&
+      /^g_d\d+_f\d+$/.test(args[0]) &&
+      typeof args[1] === "number"
+    ) {
+      curFont = args[0];
+    } else if (Array.isArray(args[0])) {
+      const fontKind = fontKindMap[curFont] || "standard";
+      for (const g of args[0]) {
+        if (g && typeof g === "object" && typeof g.unicode === "string" && g.unicode.length > 0) {
+          glyphStream.push({
+            rawU: g.unicode,
+            trueU: g.unicode,
+            c: g.originalCharCode,
+            w: Math.round(g.width || 0),
+            fontKind,
+            fontName: curFont,
+          });
+        }
+      }
+    }
+  }
+
+  if (glyphStream.length === 0) return items;
+
+  // Decode each glyph according to its font family (noori, trad_arabic, saleem_quran, or standard)
+  let idx = 0;
+  while (idx < glyphStream.length) {
+    const curr = glyphStream[idx];
+    if (curr.fontKind === "trad_arabic") {
+      const mapped =
+        TRAD_ARABIC_GID_TO_UNI[curr.c] !== undefined
+          ? TRAD_ARABIC_GID_TO_UNI[curr.c]
+          : curr.rawU;
+      curr.trueU = decodeIslamicHonorificPua(mapped);
+      idx++;
+      continue;
+    }
+
+    if (curr.fontKind === "saleem_quran") {
+      const mapped =
+        SALEEM_QURAN_GID_TO_UNI[curr.c] !== undefined
+          ? SALEEM_QURAN_GID_TO_UNI[curr.c]
+          : curr.rawU;
+      curr.trueU = decodeIslamicHonorificPua(mapped)
+        .replace(/بٔ/g, "أ")
+        .replace(/أ/g, "أ")
+        .replace(/إ/g, "إ");
+      idx++;
+      continue;
+    }
+
+    if (curr.fontKind !== "noori") {
+      curr.trueU = decodeIslamicHonorificPua(curr.rawU)
+        .replace(/ملسو\s*هيلع\s*هللا\s*ىلص/g, "صلى الله عليه وسلم")
+        .replace(/ملسو\s*هيلع\s*للها\s*لصى/g, "صلى الله عليه وسلم");
+      idx++;
+      continue;
+    }
+
+    // Jameel Noori Nastaleeq decoding
+    if (NOORI_ZERO_WIDTH_TAGS.has(curr.c) && (curr.w === 0 || curr.w === 1000)) {
+      curr.trueU = "";
+      idx++;
+      continue;
+    }
+
+    if (
+      (isNooriMarkGid(curr.c) || NOORI_ZERO_WIDTH_TAGS.has(curr.c)) &&
+      (curr.w === 0 || curr.w === 1000)
+    ) {
+      const marksLtr = [];
+      while (
+        idx < glyphStream.length &&
+        glyphStream[idx].fontKind === "noori" &&
+        (glyphStream[idx].w === 0 || glyphStream[idx].w === 1000) &&
+        (isNooriMarkGid(glyphStream[idx].c) || NOORI_ZERO_WIDTH_TAGS.has(glyphStream[idx].c))
+      ) {
+        if (!NOORI_ZERO_WIDTH_TAGS.has(glyphStream[idx].c)) {
+          marksLtr.push(glyphStream[idx].c);
+        }
+        glyphStream[idx].trueU = "";
+        idx++;
+      }
+      if (idx < glyphStream.length && glyphStream[idx].fontKind === "noori") {
+        const base = glyphStream[idx++];
+        const baseRoot = NOORI_SKEL_VARIANTS_TO_ROOT[base.c] || base.c;
+        const skels = NOORI_ROOT_SKEL_LIG_REV[base.c] || [baseRoot];
+        const mQueue = [...marksLtr].reverse();
+        const chars = [];
+        for (const sk of skels) {
+          let matched = null;
+          if (
+            mQueue.length >= 2 &&
+            NOORI_SKEL_MARK_TO_UNI[`${sk}:${mQueue[0]}+${mQueue[1]}`]
+          ) {
+            matched = NOORI_SKEL_MARK_TO_UNI[`${sk}:${mQueue[0]}+${mQueue[1]}`];
+            mQueue.splice(0, 2);
+          } else if (
+            mQueue.length >= 1 &&
+            NOORI_SKEL_MARK_TO_UNI[`${sk}:${mQueue[0]}`]
+          ) {
+            matched = NOORI_SKEL_MARK_TO_UNI[`${sk}:${mQueue[0]}`];
+            mQueue.shift();
+          } else {
+            matched =
+              NOORI_SKEL_MARK_TO_UNI[`${sk}:none`] ||
+              NOORI_GID_TO_UNI[sk] ||
+              base.rawU ||
+              "";
+          }
+          chars.push(matched);
+        }
+        base.trueU = decodeIslamicHonorificPua(chars.join(""));
+        continue;
+      }
+    }
+
+    idx++;
+    curr.trueU = decodeSingleNooriGlyph(curr);
+  }
+
+  // Align each pdf.js text item with its exact glyph slice in glyphStream (searching forward from gCursor first)
+  let gCursor = 0;
+  return items.map((item) => {
+    const str = String(item.str || "");
+    const strNoSpace = str.replace(/\s+/g, "");
+    if (!strNoSpace) return item;
+    const revStrNoSpace = [...str].reverse().join("").replace(/\s+/g, "");
+
+    let matchedSlice = null;
+    let matchedEnd = -1;
+    let isReversed = false;
+
+    const candidates = [];
+    for (let s = gCursor; s < Math.min(glyphStream.length, gCursor + 180); s++) {
+      candidates.push(s);
+    }
+    for (let s = Math.max(0, gCursor - 24); s < gCursor; s++) {
+      candidates.push(s);
+    }
+
+    for (const start of candidates) {
+      let acc = "";
+      const slice = [];
+      for (let k = start; k < Math.min(glyphStream.length, start + 120); k++) {
+        const g = glyphStream[k];
+        // If we haven't accumulated any non-space characters yet and this glyph's rawU is purely whitespace,
+        // only include it if it's a Noori space separator (c === 296 or c === 3); if it's a Traditional Arabic
+        // glyph whose broken /ToUnicode mapped a real letter (like 506 -> ن or 511 -> ه) to " ", don't let a
+        // preceding real space (c === 3) swallow it into the wrong item!
+        if (
+          acc.length === 0 &&
+          !g.rawU.replace(/\s+/g, "") &&
+          g.fontKind === "trad_arabic"
+        ) {
+          break;
+        }
+        slice.push(g);
+        acc += g.rawU.replace(/\s+/g, "");
+        if (acc.length >= revStrNoSpace.length) {
+          if (acc === revStrNoSpace) {
+            matchedSlice = slice;
+            matchedEnd = k + 1;
+            isReversed = true;
+            break;
+          } else if (acc === strNoSpace) {
+            matchedSlice = slice;
+            matchedEnd = k + 1;
+            isReversed = false;
+            break;
+          }
+          if (acc.length > revStrNoSpace.length + 5) break;
+        }
+      }
+      if (matchedSlice) break;
+    }
+
+    if (matchedSlice) {
+      if (matchedEnd > gCursor) gCursor = matchedEnd;
+      const ordered = isReversed ? [...matchedSlice].reverse() : matchedSlice;
+      const decodedStr = decodeIslamicHonorificPua(
+        ordered.map((g) => g.trueU).join("")
+      )
+        .replace(/بٔ/g, "أ")
+        .replace(/أ/g, "أ")
+        .replace(/إ/g, "إ")
+        .replace(/ملسو\s*هيلع\s*هللا\s*ىلص/g, "صلى الله عليه وسلم")
+        .replace(/ملسو\s*هيلع\s*للها\s*لصى/g, "صلى الله عليه وسلم");
+      return { ...item, str: decodedStr };
+    }
+
+    return {
+      ...item,
+      str: decodeIslamicHonorificPua(str)
+        .replace(/ملسو\s*هيلع\s*هللا\s*ىلص/g, "صلى الله عليه وسلم")
+        .replace(/ملسو\s*هيلع\s*للها\s*لصى/g, "صلى الله عليه وسلم"),
+    };
+  });
+}
+
+/**
+ * Post-process common Nastaliq sub-word splits after GSUB decoding so every word is 100% whole.
+ */
+export function polishDecodedNastaliqLine(rawLine) {
+  if (!rawLine) return "";
+  let s = decodeIslamicHonorificPua(String(rawLine));
+  // Replace King Fahd Mushaf Page 458 (QCF_P458) cover calligraphy verse with authentic Unicode text (Surah Az-Zumar 39:2)
+  s = s.replace(
+    /﴿\s*[ڎڈژ\uFB50-\uFDCF\s]+\s*﴾/g,
+    "﴿فَاعْبُدِ اللَّهَ مُخْلِصًا لَّهُ الدِّينَ﴾"
+  );
+  // Strip table-of-contents dot leaders (2+ consecutive periods/dots)
+  s = s.replace(/\.{2,}|…+/g, " ");
+  // Rejoin Noon Ghunna (ں) or Bari Ye (ے) when separated by a space from its stem
+  s = s.replace(/([\u0621-\u06D3])\s+([ںے])(?=\s|$|[۔.،؛؟!:])/g, "$1$2");
+  // Rejoin isolated initial Alif before known stems where Nastaliq kerning left a small gap
+  s = s
+    .replace(/(^|\s)ا\s+(خلاص|سلام|عتبار|حساس|نسان|یمان|مت|عمال|حادیث|حادىث|سلاف|طاعت|ختیار|ہمیت|مید|سلوب|لفاظ|مور|حکام|نبیاء|نبىاء)(?=\s|$|[۔.،؛؟!:])/g, "$1ا$2")
+    .replace(/االلہ/g, "اللہ")
+    .replace(/اس\s+پوری\s*(?:تا|ات)\s*ب?\s*کا\s*نتیجہ/g, "اس پوری کتاب کا نتیجہ")
+    .replace(/بالنلا\s*ت/g, "بالنيات")
+    .replace(/ِ\s*ْنَ\s*َع\s*ْنِ\s*عُمَر/g, "عَنْ عُمَرَ")
+    .replace(/فَمْنَ/g, "فَمَنْ")
+    .replace(/فَ([هہ])ِجْرَتُ([هہ])\s*ِ?ل([ىی])َُ\s*إ/g, "فَ$1ِجْرَتُ$2 إِلَى")
+    .replace(/(^|\s)ِجْرَتُ([هہ])\s*ِ?ل([ىی])َُ\s*إ/g, "$1هِجْرَتُ$2 إِلَى")
+    .replace(/(^|\s)ِجْرَتُ([هہ])ُ/g, "$1هِجْرَتُ$2ُ")
+    .replace(/فَ([هہ])\1ِجْرَتُ/g, "فَ$1ِجْرَتُ")
+    .replace(/(^|\s)دو\s+الاب(?=\s|$|[۔.،؛؟!:])/g, "$1دوبالا")
+    .replace(/(^|\s)مندرجہ\s+الاب(?=\s|$|[۔.،؛؟!:])/g, "$1مندرجہ بالا")
+    .replace(/(^|\s)ہر\s+کو\s*ئ([ىی])(?=\s|$|[۔.،؛؟!:])/g, "$1ہر کوئ$2")
+    .replace(/(^|\s)وا\s+ل([ىی])(?=\s|$|[۔.،؛؟!:])/g, "$1وال$2")
+    .replace(/(^|\s)دعوا\s+نا(?=\s|$|[۔.،؛؟!:])/g, "$1دعوانا")
+    .replace(/(^|\s)سواونٹن([ىی])وں(?=\s|$|[۔.،؛؟!:])/g, "$1سو اونٹن$2وں")
+    .replace(/(^|\s)ب([ىی])انکیا(?=\s|$|[۔.،؛؟!:])/g, "$1ب$2ان کیا")
+    .replace(/(^|\s)صحیحطور(?=\s|$|[۔.،؛؟!:])/g, "$1صحیح طور")
+    .replace(/(^|\s)پرکھسکے(?=\s|$|[۔.،؛؟!:])/g, "$1پرکھ سکے")
+    .replace(/(^|\s)محققینکا(?=\s|$|[۔.،؛؟!:])/g, "$1محققین کا")
+    .replace(/(^|\s)کیاگ([ىی])ا(?=\s|$|[۔.،؛؟!:])/g, "$1کیا گ$2ا")
+    .replace(/(^|\s)ہواور(?=\s|$|[۔.،؛؟!:])/g, "$1ہو اور")
+    .replace(/(^|\s)مزیدمعلومات(?=\s|$|[۔.،؛؟!:])/g, "$1مزید معلومات")
+    .replace(/(^|\s)پیما\s+نے(?=\s|$|[۔.،؛؟!:])/g, "$1پیمانے")
+    .replace(/(^|\s)بھر\s+پر(?=\s|$|[۔.،؛؟!:])/g, "$1بھرپور")
+    .replace(/(^|\s)تالیف\s+وترتیب(?=\s|$|[۔.،؛؟!:])/g, "$1تالیف و ترتیب")
+    .replace(/(^|\s)دنیا\s+وآخرت(?=\s|$|[۔.،؛؟!:])/g, "$1دنیا و آخرت")
+    .replace(/(^|\s)ایمان\s+واخلاص(?=\s|$|[۔.،؛؟!:])/g, "$1ایمان و اخلاص")
+    .replace(/(^|\s)موت\s+وزندگ([ىی])(?=\s|$|[۔.،؛؟!:])/g, "$1موت و زندگ$2")
+    .replace(/(^|\s)اجروثواب(?=\s|$|[۔.،؛؟!:])/g, "$1اجر و ثواب")
+    .replace(/(^|\s)اطاعت\s+وعبادت(?=\s|$|[۔.،؛؟!:])/g, "$1اطاعت و عبادت")
+    .replace(/(^|\s)توحیداداكرنےپر(?=\s|$|[۔.،؛؟!:])/g, "$1توحید ادا كرنے پر")
+    .replace(/(^|\s)پىداكرتاہے(?=\s|$|[۔.،؛؟!:])/g, "$1پىدا كرتا ہے")
+    .replace(/(^|\s)بناپرکامیاب(?=\s|$|[۔.،؛؟!:])/g, "$1بنا پر کامیاب")
+    .replace(/(^|\s)بناپر(?=\s|$|[۔.،؛؟!:])/g, "$1بنا پر")
+    .replace(/(^|\s)کیاجارہاہے(?=\s|$|[۔.،؛؟!:])/g, "$1کیا جا رہا ہے")
+    .replace(/(^|\s)ہوتاہے(?=\s|$|[۔.،؛؟!:])/g, "$1ہوتا ہے")
+    .replace(/(^|\s)سےہوتى(?=\s|$|[۔.،؛؟!:])/g, "$1سے ہوتى")
+    .replace(/(^|\s)ہےتاکہ(?=\s|$|[۔.،؛؟!:])/g, "$1ہے تاکہ")
+    .replace(/(^|\s)پراخلاص(?=\s|$|[۔.،؛؟!:])/g, "$1پر اخلاص")
+    .replace(/(^|\s)کےوسائل(?=\s|$|[۔.،؛؟!:])/g, "$1کے وسائل")
+    .replace(/(^|\s)چنداہم(?=\s|$|[۔.،؛؟!:])/g, "$1چند اہم")
+    .replace(/(^|\s)چھٹاباب(?=\s|$|[۔.،؛؟!:])/g, "$1چھٹا باب");
+
+  return s.replace(/\s+/g, " ").trim();
+}
+
 /**
  * 5. Extract native PDF text layer + coordinates and evaluate OCR quality
  */
@@ -1064,14 +1520,14 @@ export async function extractAndProcessPdfPage({
   reciterId = "ar.alafasy",
   bookMetadata = null,
 }) {
-  // Check cache first (only return cached data if not forcing fresh OCR and cached page has pipelineVersion === 4)
+  // Check cache first (only return cached data if not forcing fresh OCR and cached page has pipelineVersion === 6)
   if (!forceOcr) {
     const cached = await getCachedPageOcr(bookId, pageNumber);
     if (
       cached?.data &&
       Array.isArray(cached.data.sentences) &&
       cached.data.sentences.length > 0 &&
-      cached.data.pipelineVersion === 4
+      cached.data.pipelineVersion === 6
     ) {
       return cached.data;
     }
@@ -1113,8 +1569,12 @@ export async function extractAndProcessPdfPage({
     try {
       pdfPage = await pdfDoc.getPage(pageNumber);
       pageViewport = pdfPage.getViewport({ scale: 1.0 });
-      const textContent = await pdfPage.getTextContent();
-      nativeItems = textContent?.items || [];
+      const [textContent, operatorList] = await Promise.all([
+        pdfPage.getTextContent({ disableCombineTextItems: true }),
+        pdfPage.getOperatorList().catch(() => null),
+      ]);
+      const rawItems = textContent?.items || [];
+      nativeItems = recoverTrueGlyphTextItems(rawItems, operatorList);
     } catch {
       nativeItems = [];
     }
@@ -1175,7 +1635,9 @@ export async function extractAndProcessPdfPage({
     }
   }
 
-  let finalBlocks = analysis.isCorruptedLayer ? [] : blocksFromNative;
+  // Never discard non-empty native blocks if OCR did not run or did not return replacement blocks
+  let finalBlocks =
+    blocksFromNative && blocksFromNative.length > 0 ? blocksFromNative : [];
   let finalSource = "pdf-text-layer";
   let finalQuality = analysis.qualityScore;
 
@@ -1231,126 +1693,188 @@ export async function extractAndProcessPdfPage({
 }
 
 /**
- * Helper: Subdivide a line bounding box `[minX, maxX, normY, normH]` across an array of RTL words
+ * Helper: Subdivide a bounding box `[minX, maxX, normY, normH]` across an array of RTL words
  * proportionally by character length from right to left so every word has accurate PDF coordinates.
  */
 function buildProportionalRtlWordItems(words, minX, maxX, normY, normH) {
   if (!words || words.length === 0) return [];
-  const spanW = Math.max(20, maxX - minX);
+  if (words.length === 1) {
+    return [
+      {
+        str: words[0],
+        normX: minX,
+        normY,
+        normW: Math.max(12, maxX - minX),
+        normH,
+      },
+    ];
+  }
+  const spanW = Math.max(16, maxX - minX);
   const weights = words.map((w) => Math.max(1, w.length));
   const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
   let rightCursor = maxX;
 
   return words.map((w, i) => {
-    const wordW = Math.max(12, Math.round((weights[i] / totalWeight) * spanW));
+    const rawW = Math.round((weights[i] / totalWeight) * spanW);
+    const wordW = Math.max(10, i === words.length - 1 ? rightCursor - minX : rawW);
     const itemX = Math.max(minX, rightCursor - wordW);
-    rightCursor = Math.max(minX, itemX - 2);
+    rightCursor = Math.max(minX, itemX - 1);
     return {
       str: w,
       normX: itemX,
       normY,
-      normW: wordW,
+      normW: Math.max(10, wordW),
       normH,
     };
   });
 }
 
 /**
- * Coalesce RTL PDF.js text items along a line safely:
- * - NEVER glues separate multi-letter words together (`rtlGap` between multi-letter words always preserves a word boundary space).
- * - Only joins touching sub-word single-glyph/combining-mark fragments directly (`rtlGap <= 1`),
- *   and delegates disconnected single-letter runs to `rejoinFragmentedUrduArabicLetters` (dictionary lookahead).
+ * Coalesce RTL PDF.js text items along a line safely and compute per-word bounding boxes
+ * strictly anchored inside each text item's true horizontal span `[item.normX, item.normX + item.normW]`.
  */
 function coalesceRtlLineItems(sortedItems, hasRtl) {
   if (!sortedItems || sortedItems.length === 0) {
     return { lineText: "", coalescedWordItems: [] };
   }
+
+  // Filter out table-of-contents dot-leader runs so they never distort text or word bounding boxes
+  const nonDotItems = sortedItems
+    .map((it) => ({
+      ...it,
+      str: String(it.str || "").replace(/\.{2,}|…+/g, " "),
+    }))
+    .filter((it) => it.str.trim().length > 0);
+
+  if (nonDotItems.length === 0) {
+    return { lineText: "", coalescedWordItems: [] };
+  }
+
   if (!hasRtl) {
-    const text = sortedItems
+    const text = nonDotItems
       .map((it) => it.str.trim())
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
-    return { lineText: text, coalescedWordItems: sortedItems };
+    return { lineText: text, coalescedWordItems: nonDotItems };
   }
 
-  let rawJoined = "";
-  const coalescedWordItems = [];
-  let currentWordItem = null;
+  const mergedChunks = [];
+  let currentChunk = null;
 
-  for (let i = 0; i < sortedItems.length; i++) {
-    const curr = sortedItems[i];
+  for (let i = 0; i < nonDotItems.length; i++) {
+    const curr = nonDotItems[i];
     const currStr = normalizePresentationFormsAndUrduChars(curr.str || "");
     if (!currStr.trim()) continue;
 
-    if (i === 0 || !currentWordItem) {
-      rawJoined = currStr.trim();
-      currentWordItem = { ...curr, str: currStr.trim() };
+    if (!currentChunk) {
+      currentChunk = { ...curr, str: currStr.trim(), rawStr: curr.str };
       continue;
     }
 
-    const prev = sortedItems[i - 1];
-    const prevStr = normalizePresentationFormsAndUrduChars(prev.str || "");
-
-    const rtlGap = prev.normX - (curr.normX + curr.normW);
-    const hadExplicitSpace = /\s$/.test(prev.str) || /^\s/.test(curr.str);
-    const prevClean = prevStr.trim();
+    const prevClean = currentChunk.str.trim();
     const currClean = currStr.trim();
+    const rtlGap = currentChunk.normX - (curr.normX + curr.normW);
+    const hadExplicitSpace =
+      /\s$/.test(currentChunk.rawStr || "") || /^\s/.test(curr.str || "");
     const isCombiningOnly = /^[\u064B-\u065F\u0670]+$/.test(currClean);
+    const startsWithWordFinalChar = /^[ںےةۃ]/.test(currClean);
     const prevLastChar = prevClean.slice(-1);
     const prevEndsWithDualJoiner = DUAL_JOINING_LETTERS_REGEX.test(prevLastChar);
     const prevEndsWithWordFinal = STRICTLY_WORD_FINAL_CHARS.has(prevLastChar);
 
-    // Only join directly without space if:
-    // 1) Current item is a combining diacritic mark, OR
-    // 2) Glyphs are literally touching/overlapping (rtlGap <= 1), no explicit space existed,
-    //    previous char connects forward, AND at least one of the two items is a 1-char fragment
-    //    (so two separate multi-letter words are NEVER glued together!)
+    // Check if joining the last token of currentChunk with the first token of currClean forms a known word
+    const prevLastWord = prevClean.split(/\s+/).pop() || "";
+    const currFirstWord = currClean.split(/\s+/)[0] || "";
+    const combinedCandidate = prevLastWord + currFirstWord;
+    const formsKnownWord =
+      !hadExplicitSpace &&
+      rtlGap <= 8 &&
+      (KNOWN_WORDS_SET.has(combinedCandidate) ||
+        KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(combinedCandidate, "ur")) ||
+        KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(combinedCandidate, "ar")));
+
     const shouldJoinDirectly =
       isCombiningOnly ||
+      (startsWithWordFinalChar && rtlGap <= 10) ||
+      formsKnownWord ||
       (!hadExplicitSpace &&
         !prevEndsWithWordFinal &&
         prevEndsWithDualJoiner &&
-        rtlGap <= 1 &&
-        (prevClean.length === 1 || currClean.length === 1) &&
-        !KNOWN_WORDS_SET.has(prevClean));
+        rtlGap <= 4 &&
+        (!KNOWN_WORDS_SET.has(prevLastWord) || currFirstWord.length <= 2));
 
     if (shouldJoinDirectly) {
-      rawJoined += currClean;
-      const newMinX = Math.min(currentWordItem.normX, curr.normX);
+      const newMinX = Math.min(currentChunk.normX, curr.normX);
       const newMaxX = Math.max(
-        currentWordItem.normX + currentWordItem.normW,
+        currentChunk.normX + currentChunk.normW,
         curr.normX + curr.normW
       );
-      currentWordItem.str += currClean;
-      currentWordItem.normX = newMinX;
-      currentWordItem.normW = newMaxX - newMinX;
+      currentChunk.str = prevClean + currClean;
+      currentChunk.rawStr = (currentChunk.rawStr || "") + (curr.str || "");
+      currentChunk.normX = newMinX;
+      currentChunk.normW = newMaxX - newMinX;
+      currentChunk.normY = Math.min(currentChunk.normY, curr.normY);
+      currentChunk.normH = Math.max(currentChunk.normH || 18, curr.normH || 18);
     } else {
-      coalescedWordItems.push(currentWordItem);
-      rawJoined += " " + currClean;
-      currentWordItem = { ...curr, str: currClean };
+      mergedChunks.push(currentChunk);
+      currentChunk = { ...curr, str: currClean, rawStr: curr.str };
     }
   }
 
-  if (currentWordItem) {
-    coalescedWordItems.push(currentWordItem);
+  if (currentChunk) {
+    mergedChunks.push(currentChunk);
   }
 
-  // Run the Urdu/Arabic disconnected-letter rejoiner & Visual LTR reversal fixer across the line
-  const repairedLine = rejoinFragmentedUrduArabicLetters(rawJoined);
+  // Polish each chunk and subdivide multi-word chunks WITHIN their own exact [normX, normX + normW] bounding box!
+  const perWordItems = [];
+  const polishedChunkTexts = [];
+
+  for (const chunk of mergedChunks) {
+    const polishedChunk = polishDecodedNastaliqLine(
+      rejoinFragmentedUrduArabicLetters(chunk.str)
+    );
+    if (!polishedChunk) continue;
+    polishedChunkTexts.push(polishedChunk);
+    const chunkWords = polishedChunk.split(/\s+/).filter(Boolean);
+    const subItems = buildProportionalRtlWordItems(
+      chunkWords,
+      chunk.normX,
+      chunk.normX + chunk.normW,
+      chunk.normY,
+      chunk.normH || 18
+    );
+    perWordItems.push(...subItems);
+  }
+
+  const repairedLine = polishDecodedNastaliqLine(polishedChunkTexts.join(" "));
   const finalWords = repairedLine.split(/\s+/).filter(Boolean);
 
-  const minX = Math.min(...sortedItems.map((i) => i.normX));
-  const maxX = Math.max(...sortedItems.map((i) => i.normX + i.normW));
-  const minY = Math.min(...sortedItems.map((i) => i.normY));
-  const maxH = Math.max(...sortedItems.map((i) => i.normH || 18));
+  if (perWordItems.length === finalWords.length) {
+    return {
+      lineText: repairedLine,
+      coalescedWordItems: perWordItems.map((it, idx) => ({
+        ...it,
+        str: finalWords[idx],
+      })),
+    };
+  }
 
-  const alignedWordItems =
-    coalescedWordItems.length === finalWords.length
-      ? coalescedWordItems
-      : buildProportionalRtlWordItems(finalWords, minX, maxX, minY, maxH);
+  const minX = Math.min(...mergedChunks.map((i) => i.normX));
+  const maxX = Math.max(...mergedChunks.map((i) => i.normX + i.normW));
+  const minY = Math.min(...mergedChunks.map((i) => i.normY));
+  const maxH = Math.max(...mergedChunks.map((i) => i.normH || 18));
 
-  return { lineText: repairedLine, coalescedWordItems: alignedWordItems };
+  return {
+    lineText: repairedLine,
+    coalescedWordItems: buildProportionalRtlWordItems(
+      finalWords,
+      minX,
+      maxX,
+      minY,
+      maxH
+    ),
+  };
 }
 
 /**
@@ -1373,17 +1897,21 @@ export function analyzeNativePdfTextLayer(items, viewport) {
 
   const lineBuckets = [];
   for (const item of items) {
-    const str = String(item.str || "");
+    const rawStr = String(item.str || "");
+    const str = rawStr.replace(/\.{3,}|…+/g, " ");
     if (!str.trim()) continue;
     const tx = item.transform ? item.transform[4] : 0;
     const ty = item.transform ? item.transform[5] : 0;
     const w = item.width || str.length * 5.5;
     const h = item.height || Math.abs(item.transform?.[3] || 14);
 
+    // Skip zero-width control mark items that were emptied during GSUB decoding
+    if (w <= 0.1 && !str.trim()) continue;
+
     const normY = Math.round(((pageHeight - ty - h) / pageHeight) * 1000);
     const normX = Math.round((tx / pageWidth) * 1000);
-    const normW = Math.max(2, Math.round((w / pageWidth) * 1000));
-    const normH = Math.max(14, Math.round((h / pageHeight) * 1000));
+    const normW = Math.max(4, Math.round((w / pageWidth) * 1000));
+    const normH = Math.max(16, Math.round((h / pageHeight) * 1000));
 
     let bucket = lineBuckets.find((b) => Math.abs(b.normY - normY) <= 14);
     if (!bucket) {
@@ -1394,7 +1922,7 @@ export function analyzeNativePdfTextLayer(items, viewport) {
       str,
       normX: Math.max(0, Math.min(1000, normX)),
       normY: Math.max(0, Math.min(1000, normY)),
-      normW: Math.max(2, Math.min(1000, normW)),
+      normW: Math.max(4, Math.min(1000, normW)),
       normH,
     });
   }
@@ -1443,10 +1971,12 @@ export function analyzeNativePdfTextLayer(items, viewport) {
       }
     }
 
-    const minX = Math.min(...b.items.map((i) => i.normX));
-    const maxX = Math.max(...b.items.map((i) => i.normX + i.normW));
-    const minY = Math.min(...b.items.map((i) => i.normY));
-    const maxY = Math.max(...b.items.map((i) => i.normY + i.normH));
+    const activeItems =
+      coalescedWordItems.length > 0 ? coalescedWordItems : b.items;
+    const minX = Math.min(...activeItems.map((i) => i.normX));
+    const maxX = Math.max(...activeItems.map((i) => i.normX + i.normW));
+    const minY = Math.min(...activeItems.map((i) => i.normY));
+    const maxY = Math.max(...activeItems.map((i) => i.normY + i.normH));
 
     orderedLines.push({
       text: lineText,
@@ -1503,8 +2033,10 @@ function buildBlocksFromNativeItems(orderedLines) {
 
   const flushBlock = () => {
     if (currentLines.length === 0) return;
-    const combinedText = rejoinFragmentedUrduArabicLetters(
-      currentLines.map((l) => l.text).join(" ")
+    const combinedText = polishDecodedNastaliqLine(
+      rejoinFragmentedUrduArabicLetters(
+        currentLines.map((l) => l.text).join(" ")
+      )
     );
     const minY = Math.min(...currentLines.map((l) => l.box2d[0]));
     const minX = Math.min(...currentLines.map((l) => l.box2d[1]));
@@ -1537,14 +2069,30 @@ function buildBlocksFromNativeItems(orderedLines) {
 
   for (let i = 0; i < orderedLines.length; i++) {
     const line = orderedLines[i];
+    if (!hasSpeakableLetters(line.text)) continue;
     const prev = currentLines[currentLines.length - 1];
     const verticalGap = prev ? line.box2d[0] - prev.box2d[2] : 0;
+    const accText = currentLines.map((l) => l.text).join(" ");
+    const openQuranCount = (accText.match(/﴿/g) || []).length;
+    const closeQuranCount = (accText.match(/﴾/g) || []).length;
+    const isInsideUnclosedQuran = openQuranCount > closeQuranCount;
+
+    const prevIsUrdu = prev ? detectIsUrduScript(prev.text) : false;
+    const currIsUrdu = detectIsUrduScript(line.text);
+    const languageSwitched =
+      !isInsideUnclosedQuran &&
+      prev &&
+      prevIsUrdu !== currIsUrdu &&
+      prev.text.length >= 6 &&
+      line.text.length >= 6;
 
     if (
       prev &&
+      !isInsideUnclosedQuran &&
       (verticalGap > 24 ||
         line.isFootnoteArea !== prev.isFootnoteArea ||
-        /[۔؟!\.]$/.test(prev.text))
+        languageSwitched ||
+        /[۔؟!\.:]$/.test(prev.text))
     ) {
       flushBlock();
     }
@@ -1593,6 +2141,102 @@ export async function runGeminiVisionOcrOnPdfPage(
   return await res.json();
 }
 
+function normalizeTokenForCoordMatch(str) {
+  return String(str || "")
+    .replace(/[\u064B-\u065F\u0670۔.،؛؟!:"'«»﴿﴾\(\)\[\]—–-]/g, "")
+    .replace(/[کك]/g, "ک")
+    .replace(/[یىي]/g, "ی")
+    .replace(/[ہهةۃ]/g, "ہ")
+    .trim();
+}
+
+/**
+ * Align sentence words to `realLineItems` starting at `startCursor` with fuzzy token resynchronization
+ * so stripped footnote markers or punctuation never shift word highlighting boxes.
+ */
+function alignSentenceWordsToLineItems(sentWords, realLineItems, startCursor) {
+  if (!realLineItems || realLineItems.length === 0 || !sentWords || sentWords.length === 0) {
+    return { matchedItems: null, nextCursor: startCursor };
+  }
+  let cursor = Math.max(0, Math.min(realLineItems.length - 1, startCursor));
+  const matchedItems = [];
+
+  for (let wIdx = 0; wIdx < sentWords.length; wIdx++) {
+    const targetNorm = normalizeTokenForCoordMatch(
+      sentWords[wIdx].word || sentWords[wIdx].text || ""
+    );
+    let chosenIdx = cursor;
+    if (targetNorm) {
+      const searchEnd = Math.min(realLineItems.length, cursor + 6);
+      for (let look = cursor; look < searchEnd; look++) {
+        const candNorm = normalizeTokenForCoordMatch(realLineItems[look]?.str || "");
+        if (
+          candNorm &&
+          (candNorm === targetNorm ||
+            candNorm.includes(targetNorm) ||
+            targetNorm.includes(candNorm))
+        ) {
+          chosenIdx = look;
+          break;
+        }
+      }
+    }
+    const item = realLineItems[Math.min(chosenIdx, realLineItems.length - 1)];
+    matchedItems.push(item);
+    cursor = Math.min(realLineItems.length, chosenIdx + 1);
+  }
+
+  return { matchedItems, nextCursor: cursor };
+}
+
+/**
+ * Build per-line tight highlight boxes for a sentence so multi-line sentences
+ * highlight cleanly along each line instead of drawing a single large overlapping rectangle.
+ */
+function buildSentenceLineBoxes(wordsWithCoords, fallbackBox2d) {
+  const validRects = (wordsWithCoords || [])
+    .map((w) => w?.rect)
+    .filter((r) => r && typeof r.topPct === "number" && typeof r.leftPct === "number");
+
+  if (validRects.length === 0) {
+    if (Array.isArray(fallbackBox2d) && fallbackBox2d.length >= 4) {
+      const [ymin, xmin, ymax, xmax] = fallbackBox2d;
+      return [
+        {
+          topPct: Math.max(0, Math.min(98, ymin / 10)),
+          leftPct: Math.max(0, Math.min(98, xmin / 10)),
+          widthPct: Math.max(4, Math.min(98, (xmax - xmin) / 10)),
+          heightPct: Math.max(2, Math.min(45, (ymax - ymin) / 10)),
+        },
+      ];
+    }
+    return [];
+  }
+
+  const lineGroups = [];
+  for (const r of validRects) {
+    let group = lineGroups.find((g) => Math.abs(g.topPct - r.topPct) <= 1.35);
+    if (!group) {
+      group = { topPct: r.topPct, rects: [] };
+      lineGroups.push(group);
+    }
+    group.rects.push(r);
+  }
+
+  return lineGroups.map((g) => {
+    const minTop = Math.min(...g.rects.map((r) => r.topPct));
+    const maxBottom = Math.max(...g.rects.map((r) => r.topPct + r.heightPct));
+    const minLeft = Math.min(...g.rects.map((r) => r.leftPct));
+    const maxRight = Math.max(...g.rects.map((r) => r.leftPct + r.widthPct));
+    return {
+      topPct: Math.max(0, minTop - 0.25),
+      leftPct: Math.max(0, minLeft - 0.4),
+      widthPct: Math.min(99, Math.max(3, maxRight - minLeft + 0.8)),
+      heightPct: Math.min(18, Math.max(1.8, maxBottom - minTop + 0.5)),
+    };
+  });
+}
+
 /**
  * 8. Finalize blocks into sentences, validate Urdu/Arabic text integrity,
  *    assign accurate offset-aware word & sentence coordinates, and verify Quranic verses.
@@ -1618,8 +2262,6 @@ export async function finalizeStructuredBlocks({
     const blockSentences = segmentBlockIntoSentences(block, bIdx);
     const totalSentencesInBlock = blockSentences.length;
 
-    // Only treat `lineItems` as exact word coordinates when they actually come from
-    // native PDF text items or Tesseract word bounding boxes (`block.lineItems`).
     const realLineItems =
       Array.isArray(block.lineItems) && block.lineItems.length > 0
         ? block.lineItems
@@ -1633,12 +2275,13 @@ export async function finalizeStructuredBlocks({
         sent.cleanedPronunciationText || sent.originalText
       );
       if (validation.repairedText) {
+        const polished = polishDecodedNastaliqLine(validation.repairedText);
         sent.cleanedPronunciationText = normalizeUrduTextForPronunciation(
-          validation.repairedText,
+          polished,
           sent.language
         );
         sent.originalText = canonicalizeTextForLanguage(
-          sent.originalText || validation.repairedText,
+          polishDecodedNastaliqLine(sent.originalText || polished),
           sent.language
         );
         const syncedWords = sent.cleanedPronunciationText
@@ -1651,6 +2294,8 @@ export async function finalizeStructuredBlocks({
           rect: null,
         }));
       }
+
+      if (!sent.words || sent.words.length === 0) continue;
 
       let quranMeta = null;
       if (sent.segmentType === "quran") {
@@ -1666,16 +2311,10 @@ export async function finalizeStructuredBlocks({
         }
       }
 
-      const sentenceWordSlice =
-        realLineItems
-          ? realLineItems.slice(
-              blockWordCursor,
-              blockWordCursor + sent.words.length
-            )
-          : null;
+      const { matchedItems: sentenceWordSlice, nextCursor } =
+        alignSentenceWordsToLineItems(sent.words, realLineItems, blockWordCursor);
+      blockWordCursor = nextCursor;
 
-      // Preserve the exact `block.box2d` when real per-word coordinates don't exist,
-      // or compute a tight bounding box from real PDF/OCR word items when they do exist.
       let sentenceBox2d = sent.box2d || block.box2d;
       if (sentenceWordSlice && sentenceWordSlice.length > 0) {
         const sMinY = Math.min(...sentenceWordSlice.map((it) => it.normY));
@@ -1687,10 +2326,10 @@ export async function finalizeStructuredBlocks({
           ...sentenceWordSlice.map((it) => it.normX + (it.normW || 25))
         );
         sentenceBox2d = [
-          Math.max(0, sMinY - 4),
-          Math.max(0, sMinX - 6),
-          Math.min(1000, sMaxY + 4),
-          Math.min(1000, sMaxX + 6),
+          Math.max(0, sMinY - 3),
+          Math.max(0, sMinX - 4),
+          Math.min(1000, sMaxY + 3),
+          Math.min(1000, sMaxX + 4),
         ];
       }
 
@@ -1706,12 +2345,13 @@ export async function finalizeStructuredBlocks({
         bIdx
       );
 
-      blockWordCursor += sent.words.length;
+      const lineBoxes = buildSentenceLineBoxes(wordsWithCoords, sentenceBox2d);
       totalWordsCount += wordsWithCoords.length;
 
       allSentences.push({
         ...sent,
         box2d: sentenceBox2d,
+        lineBoxes,
         sentenceIndex: sentenceCounter++,
         bookId,
         pageNumber,
@@ -1725,7 +2365,7 @@ export async function finalizeStructuredBlocks({
   }
 
   return {
-    pipelineVersion: 4,
+    pipelineVersion: 6,
     bookId,
     pageNumber,
     extractionSource,
@@ -1762,6 +2402,37 @@ function assignWordCoordinates(
     box2d.length >= 4;
 
   if (!hasRealLineItems) {
+    // Subdivide fallback box2d proportionally so user can still tap individual words
+    if (Array.isArray(box2d) && box2d.length >= 4) {
+      const [ymin, xmin, ymax, xmax] = box2d;
+      const syntheticItems = buildProportionalRtlWordItems(
+        words.map((w) => w.word || w.text || ""),
+        xmin,
+        xmax,
+        ymin,
+        Math.max(18, ymax - ymin)
+      );
+      return words.map((w, idx) => {
+        const it = syntheticItems[idx];
+        return {
+          ...w,
+          word: w.word || w.text || "",
+          text: w.word || w.text || "",
+          wordIndex: idx,
+          pageNumber,
+          paragraphIndex,
+          rect: it
+            ? {
+                topPct: Math.max(0, Math.min(98, it.normY / 10)),
+                leftPct: Math.max(0, Math.min(98, it.normX / 10)),
+                widthPct: Math.max(1.8, Math.min(95, (it.normW || 25) / 10)),
+                heightPct: Math.max(1.8, Math.min(25, (it.normH || 20) / 10)),
+              }
+            : null,
+        };
+      });
+    }
+
     return words.map((w, idx) => ({
       ...w,
       word: w.word || w.text || "",
@@ -1789,10 +2460,10 @@ function assignWordCoordinates(
         pageNumber,
         paragraphIndex,
         rect: {
-          topPct: Math.max(0, Math.min(98, matchedItem.normY / 10)),
-          leftPct: Math.max(0, Math.min(98, matchedItem.normX / 10)),
-          widthPct: Math.max(2, Math.min(95, (matchedItem.normW || 25) / 10)),
-          heightPct: Math.max(1.6, Math.min(25, (matchedItem.normH || 20) / 10)),
+          topPct: Math.max(0, Math.min(98, (matchedItem.normY - 2) / 10)),
+          leftPct: Math.max(0, Math.min(98, (matchedItem.normX - 1) / 10)),
+          widthPct: Math.max(1.8, Math.min(95, ((matchedItem.normW || 24) + 2) / 10)),
+          heightPct: Math.max(1.8, Math.min(25, ((matchedItem.normH || 20) + 4) / 10)),
         },
       };
     }

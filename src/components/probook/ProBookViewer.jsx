@@ -364,7 +364,25 @@ export default function ProBookViewer({
 
     const processCurrentPage = async () => {
       setIsRunningOcr(true);
-      intelligentAudioEngine.setExtractingPage(true);
+      intelligentAudioEngine.setContext({
+        book: effectiveBook,
+        pageNumber: currentPage,
+        totalPages:
+          totalPages ||
+          effectiveBook?.pages_count ||
+          effectiveBook?.page_count ||
+          1,
+        isExtractingPage: true,
+        onRequestPageTurn: (targetPage, opts) => {
+          if (opts?.autoContinueAudio) {
+            autoContinueNextPageRef.current = true;
+          }
+          goToPage(targetPage);
+        },
+        onEnsurePageExtracted: async (pageNum) => {
+          return await ensurePageExtracted(pageNum || currentPage, false);
+        },
+      });
       try {
         const data = await extractAndProcessPdfPage({
           pdfDoc,
@@ -395,7 +413,7 @@ export default function ProBookViewer({
             goToPage(targetPage);
           },
           onEnsurePageExtracted: async (pageNum) => {
-            return await ensurePageExtracted(pageNum || currentPage, true);
+            return await ensurePageExtracted(pageNum || currentPage, false);
           },
         });
 
@@ -792,12 +810,12 @@ export default function ProBookViewer({
                   themeFilter={themeCfg.pageFilter}
                   themeBg={themeCfg.pageBg}
                 >
-                  {isAudioOpen && (
+                  {!isAnnotationActive && (
                     <SmartWordHighlightLayer
                       pageData={activePageData}
                       activeSentenceIndex={audioSnapshot.sentenceIndex}
                       activeWordIndex={audioSnapshot.wordIndex}
-                      isPlayingOrPaused={isAudioActive}
+                      isPlayingOrPaused={isAudioActive && isAudioOpen}
                       wordHighlightEnabled={
                         readerSettings.wordHighlightEnabled !== false
                       }

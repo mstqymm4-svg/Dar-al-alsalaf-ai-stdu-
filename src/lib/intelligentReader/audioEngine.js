@@ -479,7 +479,17 @@ class IntelligentAudioEngine {
       const rawCandidate =
         sentence.cleanedPronunciationText || sentence.originalText || "";
       const validation = validateUrduArabicText(rawCandidate);
-      if (!validation.isValid) {
+      const speakableCandidate = (
+        validation.repairedText ||
+        rawCandidate ||
+        ""
+      ).trim();
+      if (
+        !speakableCandidate ||
+        !/[\u0621-\u065F\u0670-\u06D3\u0750-\u077Fa-zA-Z]/.test(
+          speakableCandidate
+        )
+      ) {
         this._setError(
           validation.errorCode || "INVALID_TEXT",
           validation.reason || ""
@@ -488,7 +498,7 @@ class IntelligentAudioEngine {
       }
 
       const baseNormalized = normalizeUrduTextForPronunciation(
-        validation.repairedText
+        speakableCandidate
       );
 
       // Automatic per-sentence language classification (Arabic vs Urdu)

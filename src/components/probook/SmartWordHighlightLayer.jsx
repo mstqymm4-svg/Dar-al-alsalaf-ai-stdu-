@@ -1,9 +1,10 @@
 /**
  * DAR AL TAWHID — Smart Word & Sentence Highlight Overlay Layer (القسم 10)
  *
- * Overlays synchronized sentence and word highlights directly over the PDF page
+ * Overlays synchronized per-line sentence and word highlights directly over the PDF page
  * without altering the original PDF canvas layout.
- * Also allows the user to tap any sentence/word region to start reading from there.
+ * Allows the user to hover and tap/click any individual word or sentence region
+ * anywhere on the page to start reading accurately from that exact word.
  */
 
 import React from "react";
@@ -28,7 +29,7 @@ export default function SmartWordHighlightLayer({
 
   return (
     <div
-      className="absolute inset-0 overflow-hidden"
+      className="absolute inset-0 overflow-hidden select-none"
       style={{
         pointerEvents: isAnnotationActive ? "none" : "auto",
         zIndex: 12,
@@ -36,59 +37,69 @@ export default function SmartWordHighlightLayer({
     >
       {pageData.sentences.map((sent, sIdx) => {
         const isCurrentSentence = isPlayingOrPaused && sIdx === activeSentenceIndex;
-        const box = sent.box2d;
-        if (!Array.isArray(box) || box.length < 4) return null;
+        const hasLineBoxes = Array.isArray(sent.lineBoxes) && sent.lineBoxes.length > 0;
+        const fallbackBox = Array.isArray(sent.box2d) && sent.box2d.length >= 4 ? sent.box2d : null;
 
-        const [ymin, xmin, ymax, xmax] = box;
-        const topPct = Math.max(0, Math.min(98, ymin / 10));
-        const leftPct = Math.max(0, Math.min(98, xmin / 10));
-        const widthPct = Math.max(4, Math.min(98, (xmax - xmin) / 10));
-        const heightPct = Math.max(2, Math.min(45, (ymax - ymin) / 10));
+        const lineRects = hasLineBoxes
+          ? sent.lineBoxes
+          : fallbackBox
+          ? [
+              {
+                topPct: Math.max(0, Math.min(98, fallbackBox[0] / 10)),
+                leftPct: Math.max(0, Math.min(98, fallbackBox[1] / 10)),
+                widthPct: Math.max(2, Math.min(98, (fallbackBox[3] - fallbackBox[1]) / 10)),
+                heightPct: Math.max(1.8, Math.min(45, (fallbackBox[2] - fallbackBox[0]) / 10)),
+              },
+            ]
+          : [];
 
         return (
           <React.Fragment key={`sent-box-${sIdx}`}>
-            {/* Sentence Bounding Box Overlay */}
-            <div
-              onClick={(e) => {
-                if (isAnnotationActive) return;
-                e.stopPropagation();
-                onSelectSentenceOrWord?.(sIdx, 0);
-              }}
-              title="اضغط لبدء القراءة الصوتية من هذه الجملة"
-              className="absolute transition-all duration-200 rounded-lg cursor-pointer group"
-              style={{
-                top: `${topPct}%`,
-                left: `${leftPct}%`,
-                width: `${widthPct}%`,
-                height: `${heightPct}%`,
-                backgroundColor:
-                  isCurrentSentence && sentenceHighlightEnabled
-                    ? colorCfg.sentenceBg
-                    : "transparent",
-                border:
-                  isCurrentSentence && sentenceHighlightEnabled
-                    ? `2px solid ${colorCfg.wordBorder}`
-                    : "1px solid transparent",
-                boxShadow:
-                  isCurrentSentence && sentenceHighlightEnabled
-                    ? `0 0 14px ${colorCfg.sentenceBg}`
-                    : "none",
-              }}
-            >
-              {/* Subtle hover hint when not actively playing this sentence */}
-              {!isCurrentSentence && !isAnnotationActive && (
-                <div className="w-full h-full opacity-0 group-hover:opacity-100 transition-opacity rounded-lg border border-dashed border-[#0891B2]/50 bg-[#A5F3FC]/10" />
-              )}
-            </div>
+            {/* Per-Line Sentence Highlight Boxes */}
+            {lineRects.map((rect, lIdx) => (
+              <div
+                key={`sent-line-${sIdx}-${lIdx}`}
+                onClick={(e) => {
+                  if (isAnnotationActive) return;
+                  e.stopPropagation();
+                  onSelectSentenceOrWord?.(sIdx, 0);
+                }}
+                title="اضغط لبدء القراءة الصوتية من هذه الجملة"
+                className="absolute transition-all duration-150 rounded-md cursor-pointer group"
+                style={{
+                  top: `${rect.topPct}%`,
+                  left: `${rect.leftPct}%`,
+                  width: `${rect.widthPct}%`,
+                  height: `${rect.heightPct}%`,
+                  backgroundColor:
+                    isCurrentSentence && sentenceHighlightEnabled
+                      ? colorCfg.sentenceBg
+                      : "transparent",
+                  border:
+                    isCurrentSentence && sentenceHighlightEnabled
+                      ? `1.5px solid ${colorCfg.wordBorder}`
+                      : "1px solid transparent",
+                  boxShadow:
+                    isCurrentSentence && sentenceHighlightEnabled
+                      ? `0 0 10px ${colorCfg.sentenceBg}`
+                      : "none",
+                  zIndex: 12,
+                }}
+              >
+                {!isCurrentSentence && !isAnnotationActive && (
+                  <div className="w-full h-full opacity-0 group-hover:opacity-100 transition-opacity rounded-md border border-dashed border-[#0891B2]/40 bg-[#A5F3FC]/10" />
+                )}
+              </div>
+            ))}
 
-            {/* Active Word Highlight Box (ONLY when reliable PDF word coordinates exist; otherwise sentence highlight is used) */}
-            {isCurrentSentence &&
-              wordHighlightEnabled &&
-              sent.hasExactWordCoords !== false &&
+            {/* Individual Word Boxes (Clickable on ALL sentences so user can tap any exact word) */}
+            {sent.hasExactWordCoords !== false &&
               Array.isArray(sent.words) &&
               sent.words.map((wObj, wIdx) => {
                 if (!wObj?.rect) return null;
-                const isCurrentWord = wIdx === activeWordIndex;
+                const isCurrentWord =
+                  isCurrentSentence && wordHighlightEnabled && wIdx === activeWordIndex;
+
                 return (
                   <div
                     key={`word-box-${sIdx}-${wIdx}`}
@@ -97,21 +108,26 @@ export default function SmartWordHighlightLayer({
                       e.stopPropagation();
                       onSelectSentenceOrWord?.(sIdx, wIdx);
                     }}
-                    title={`بدء القراءة من كلمة: ${wObj.word}`}
-                    className="absolute transition-all duration-100 rounded-md cursor-pointer"
+                    title={wObj.word ? `اقرأ من: ${wObj.word}` : "اضغط للقراءة من هذه الكلمة"}
+                    className={`absolute transition-all duration-100 rounded-[4px] cursor-pointer ${
+                      !isCurrentWord && !isAnnotationActive
+                        ? "hover:bg-[#0891B2]/20 hover:border-b-2 hover:border-[#0891B2]"
+                        : ""
+                    }`}
                     style={{
                       top: `${wObj.rect.topPct}%`,
                       left: `${wObj.rect.leftPct}%`,
                       width: `${wObj.rect.widthPct}%`,
                       height: `${wObj.rect.heightPct}%`,
-                      backgroundColor: isCurrentWord
-                        ? colorCfg.wordBg
-                        : "transparent",
+                      backgroundColor: isCurrentWord ? colorCfg.wordBg : undefined,
                       borderBottom: isCurrentWord
                         ? `3px solid ${colorCfg.wordBorder}`
-                        : "none",
-                      transform: isCurrentWord ? "scale(1.04)" : "none",
-                      zIndex: isCurrentWord ? 15 : 13,
+                        : undefined,
+                      boxShadow: isCurrentWord
+                        ? `0 2px 8px ${colorCfg.wordBg}`
+                        : undefined,
+                      transform: isCurrentWord ? "scale(1.05)" : "none",
+                      zIndex: isCurrentWord ? 16 : 14,
                     }}
                   />
                 );
