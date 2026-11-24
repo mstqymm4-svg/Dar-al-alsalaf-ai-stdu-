@@ -174,6 +174,7 @@ export default function ProBookViewer({
 
   // Intelligent Reader Page Extraction & Audio State
   const [activePageData, setActivePageData] = useState(null);
+  const [pageDataMap, setPageDataMap] = useState({});
   const [isRunningOcr, setIsRunningOcr] = useState(false);
   const [audioSnapshot, setAudioSnapshot] = useState(() =>
     intelligentAudioEngine.getSnapshot()
@@ -294,10 +295,13 @@ export default function ProBookViewer({
           bookId,
           autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
           forceOcr,
-          reciterId: readerSettings.quranReciterId || "ar.alafasy",
+          reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
           bookMetadata: effectiveBook,
         });
         setActivePageData(data);
+        if (data) {
+          setPageDataMap((prev) => ({ ...prev, [targetPageNumber]: data }));
+        }
         return data;
       } catch (e) {
         console.warn("[DAR AL TAWHID Page Processor]:", e);
@@ -390,11 +394,40 @@ export default function ProBookViewer({
           bookId,
           autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
           forceOcr: false,
-          reciterId: readerSettings.quranReciterId || "ar.alafasy",
+          reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
           bookMetadata: effectiveBook,
         });
         if (cancelled) return;
         setActivePageData(data);
+        if (data) {
+          setPageDataMap((prev) => ({ ...prev, [currentPage]: data }));
+        }
+
+        // Background-extract adjacent pages (currentPage + 1 and currentPage - 1) so vertical stream word clicking is ready on neighboring pages
+        if (pdfDoc) {
+          const adjPages = [currentPage + 1, currentPage - 1].filter(
+            (p) => p >= 1 && p <= (totalPages || 9999)
+          );
+          for (const adjP of adjPages) {
+            extractAndProcessPdfPage({
+              pdfDoc,
+              pageNumber: adjP,
+              bookId,
+              autoOcrEnabled: false,
+              forceOcr: false,
+              reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
+              bookMetadata: effectiveBook,
+            })
+              .then((adjData) => {
+                if (!cancelled && adjData) {
+                  setPageDataMap((prev) =>
+                    prev[adjP] ? prev : { ...prev, [adjP]: adjData }
+                  );
+                }
+              })
+              .catch(() => {});
+          }
+        }
 
         intelligentAudioEngine.setContext({
           book: effectiveBook,
@@ -704,7 +737,58 @@ export default function ProBookViewer({
 
   const isAudioActive =
     audioSnapshot.playerState === "playing" ||
-    audioSnapshot.playerState === "paused";
+    audioSnapshot.playerState === "paused" ||
+    audioSnapshot.playerState === "loading";
+
+  const handleSelectWordOnPage = useCallback(
+    (sIdx, wIdx, clickedPageNum, clickedPageData) => {
+      setIsAudioOpen(true);
+      if (clickedPageNum && Number(clickedPageNum) !== Number(currentPage)) {
+        updateCurrentPage(Number(clickedPageNum), false);
+      }
+      const targetData =
+        clickedPageData ||
+        (clickedPageNum ? pageDataMap[clickedPageNum] : null) ||
+        activePageData;
+      if (targetData) {
+        setActivePageData(targetData);
+        intelligentAudioEngine.setContext({
+          book: effectiveBook,
+          pageNumber: Number(clickedPageNum || currentPage),
+          totalPages:
+            totalPages ||
+            effectiveBook?.pages_count ||
+            effectiveBook?.page_count ||
+            1,
+          pageData: targetData,
+          isExtractingPage: false,
+          onRequestPageTurn: (targetPage, opts) => {
+            if (opts?.autoContinueAudio) {
+              autoContinueNextPageRef.current = true;
+            }
+            goToPage(targetPage);
+          },
+          onEnsurePageExtracted: async (pageNum) => {
+            return await ensurePageExtracted(pageNum || currentPage, false);
+          },
+        });
+      }
+      intelligentAudioEngine.playFrom({
+        sentenceIndex: sIdx,
+        wordIndex: wIdx,
+      });
+    },
+    [
+      currentPage,
+      updateCurrentPage,
+      pageDataMap,
+      activePageData,
+      effectiveBook,
+      totalPages,
+      goToPage,
+      ensurePageExtracted,
+    ]
+  );
 
   return (
     <div
@@ -780,6 +864,7 @@ export default function ProBookViewer({
             bookId={bookId}
             scrollTriggerPage={scrollTriggerPage}
             activePageData={activePageData}
+            pageDataMap={pageDataMap}
             activeSentenceIndex={audioSnapshot.sentenceIndex}
             activeWordIndex={audioSnapshot.wordIndex}
             isAudioActive={isAudioActive && isAudioOpen}
@@ -788,13 +873,7 @@ export default function ProBookViewer({
               readerSettings.sentenceHighlightEnabled !== false
             }
             highlightColorId={readerSettings.highlightColorId || "cyan"}
-            onSelectSentenceOrWord={(sIdx, wIdx) => {
-              setIsAudioOpen(true);
-              intelligentAudioEngine.playFrom({
-                sentenceIndex: sIdx,
-                wordIndex: wIdx,
-              });
-            }}
+            onSelectSentenceOrWord={handleSelectWordOnPage}
           />
         ) : (
           /* Single Page View - Responsive across mobile, tablet, and desktop */
@@ -826,13 +905,14 @@ export default function ProBookViewer({
                         readerSettings.highlightColorId || "cyan"
                       }
                       isAnnotationActive={isAnnotationActive}
-                      onSelectSentenceOrWord={(sIdx, wIdx) => {
-                        setIsAudioOpen(true);
-                        intelligentAudioEngine.playFrom({
-                          sentenceIndex: sIdx,
-                          wordIndex: wIdx,
-                        });
-                      }}
+                      onSelectSentenceOrWord={(sIdx, wIdx, pNum) =>
+                        handleSelectWordOnPage(
+                          sIdx,
+                          wIdx,
+                          pNum || currentPage,
+                          activePageData
+                        )
+                      }
                     />
                   )}
                   <PageAnnotationLayer

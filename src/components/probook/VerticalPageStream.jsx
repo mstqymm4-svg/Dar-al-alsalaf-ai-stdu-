@@ -28,6 +28,7 @@ export default function VerticalPageStream({
   scrollTriggerPage,
   // Intelligent Reader Word/Sentence Highlight props
   activePageData = null,
+  pageDataMap = {},
   activeSentenceIndex = 0,
   activeWordIndex = 0,
   isAudioActive = false,
@@ -175,6 +176,12 @@ export default function VerticalPageStream({
     >
       {pages.map((p) => {
         const shouldRender = visibleSet.has(p) || Math.abs(p - currentPage) <= 1;
+        const pageDataForThisPage =
+          (activePageData && Number(activePageData.pageNumber) === p
+            ? activePageData
+            : null) ||
+          pageDataMap?.[p] ||
+          null;
         const isCurrentAudioPage =
           activePageData && Number(activePageData.pageNumber) === p;
 
@@ -198,17 +205,23 @@ export default function VerticalPageStream({
                   themeFilter={themeCfg?.pageFilter}
                   themeBg={themeCfg?.pageBg}
                 >
-                  {isCurrentAudioPage && (
+                  {pageDataForThisPage && (
                     <SmartWordHighlightLayer
-                      pageData={activePageData}
-                      activeSentenceIndex={activeSentenceIndex}
-                      activeWordIndex={activeWordIndex}
-                      isPlayingOrPaused={isAudioActive}
+                      pageData={pageDataForThisPage}
+                      activeSentenceIndex={
+                        isCurrentAudioPage ? activeSentenceIndex : -1
+                      }
+                      activeWordIndex={
+                        isCurrentAudioPage ? activeWordIndex : -1
+                      }
+                      isPlayingOrPaused={isCurrentAudioPage && isAudioActive}
                       wordHighlightEnabled={wordHighlightEnabled}
                       sentenceHighlightEnabled={sentenceHighlightEnabled}
                       highlightColorId={highlightColorId}
                       isAnnotationActive={isAnnotationActive}
-                      onSelectSentenceOrWord={onSelectSentenceOrWord}
+                      onSelectSentenceOrWord={(sIdx, wIdx) =>
+                        onSelectSentenceOrWord?.(sIdx, wIdx, p, pageDataForThisPage)
+                      }
                     />
                   )}
                   <PageAnnotationLayer

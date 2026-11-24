@@ -72,6 +72,7 @@ class IntelligentAudioEngine {
     this._rafId = null;
     this._currentBlobUrl = null;
     this._abortController = null;
+    this._loadedSentenceKey = "";
 
     this._initAudioElement();
     this._initSystemInterruptionHandlers();
@@ -401,13 +402,45 @@ class IntelligentAudioEngine {
       } catch {}
     }
 
-    if (sentenceIndex !== null) {
-      this.sentenceIndex = Math.max(
+    const targetSIdx =
+      sentenceIndex !== null
+        ? Math.max(0, Math.min(sentences.length - 1, Number(sentenceIndex)))
+        : this.sentenceIndex;
+    const targetWIdx =
+      wordIndex !== null ? Math.max(0, Number(wordIndex)) : 0;
+
+    // Instant in-sentence word seek fast-path: if the target sentence is ALREADY loaded in this.audioEl
+    // and we have word timings for targetWIdx, seek immediately with 0ms latency!
+    const expectedKey = `${this.bookId}:${this.pageNumber}:${targetSIdx}`;
+    if (
+      targetSIdx === this.sentenceIndex &&
+      this._loadedSentenceKey === expectedKey &&
+      this.audioEl?.src &&
+      this.currentWordTimings &&
+      this.currentWordTimings[targetWIdx] &&
+      Number.isFinite(this.audioEl.duration) &&
+      this.audioEl.duration > 0
+    ) {
+      this.wordIndex = targetWIdx;
+      const targetSec = Math.max(
         0,
-        Math.min(sentences.length - 1, Number(sentenceIndex))
+        this.currentWordTimings[targetWIdx].startMs / 1000
       );
+      if (targetSec < this.audioEl.duration) {
+        this.audioEl.currentTime = targetSec;
+      }
+      this.audioEl.playbackRate = this.playbackRate;
+      this.audioEl.volume = this.volume;
+      this._emit();
+      try {
+        await this.audioEl.play();
+        this._persistPosition();
+        return;
+      } catch {}
     }
-    this.wordIndex = wordIndex !== null ? Math.max(0, Number(wordIndex)) : 0;
+
+    this.sentenceIndex = targetSIdx;
+    this.wordIndex = targetWIdx;
 
     await this._loadAndPlayCurrentSentence(this.wordIndex);
   }
@@ -446,18 +479,38 @@ class IntelligentAudioEngine {
     const settings = loadReaderSettings();
 
     try {
-      // ─── Case 1: Verified Quranic Verse → Play Authentic Recorded Recitation ONLY ───
+      // ─── Case 1: Verified Quranic Verse → Play Authentic Recorded Recitation ONLY (Sheikh Abdul Rahman Al-Sudais) ───
       if (
         sentence.segmentType === "quran" &&
         sentence.quranMeta?.verified &&
         sentence.quranMeta?.audioUrl
       ) {
+        const currentVerseId = `${this.bookId}:${sentence.quranMeta.surahNumber}:${sentence.quranMeta.ayahNumber}`;
+        const prevPageVerseKey = `${currentVerseId}:page${this.pageNumber - 1}`;
+        const isPageTopClosingFragment =
+          this.sentenceIndex === 0 &&
+          !String(sentence.originalText || "").includes("﴿") &&
+          String(sentence.originalText || "").includes("﴾");
+
+        if (
+          isPageTopClosingFragment &&
+          this._lastRecitedQuranVerseKey === prevPageVerseKey &&
+          sentences.length > 1
+        ) {
+          this._lastRecitedQuranVerseKey = `${currentVerseId}:page${this.pageNumber}`;
+          this.sentenceIndex = 1;
+          this.wordIndex = 0;
+          await this._loadAndPlayCurrentSentence(0);
+          return;
+        }
+
+        this._lastRecitedQuranVerseKey = `${currentVerseId}:page${this.pageNumber}`;
         this.currentSegmentInfo = {
           segmentType: "quran",
           language: "ar",
-          badgeLabel: `تلاوة قرآنية مسجلة • ${sentence.quranMeta.surahName} (${sentence.quranMeta.ayahNumber})`,
+          badgeLabel: `تلاوة قرآنية مسجلة • الشيخ عبد الرحمن السديس • ${sentence.quranMeta.surahName} (${sentence.quranMeta.ayahNumber})`,
           provider: "quran-authentic-recording",
-          voiceId: settings.quranReciterId || "ar.alafasy",
+          voiceId: settings.quranReciterId || "ar.abdurrahmaansudais",
           quranMeta: sentence.quranMeta,
         };
         this.currentWordTimings = [];
@@ -470,7 +523,8 @@ class IntelligentAudioEngine {
           sessionId
         );
         if (sessionId === this._playSessionId) {
-          this._prefetchNextSentence(this.sentenceIndex + 1);
+          this._loadedSentenceKey = `${this.bookId}:${this.pageNumber}:${this.sentenceIndex}`;
+          this._prefetchUpcomingSentences(this.sentenceIndex);
         }
         return;
       }
@@ -624,7 +678,8 @@ class IntelligentAudioEngine {
       );
 
       if (sessionId === this._playSessionId) {
-        this._prefetchNextSentence(this.sentenceIndex + 1);
+        this._loadedSentenceKey = `${this.bookId}:${this.pageNumber}:${this.sentenceIndex}`;
+        this._prefetchUpcomingSentences(this.sentenceIndex);
       }
     } catch (err) {
       if (err?.name === "AbortError" || sessionId !== this._playSessionId) {
@@ -781,10 +836,26 @@ class IntelligentAudioEngine {
     });
   }
 
+  _prefetchUpcomingSentences(currentIdx) {
+    // Prefetch up to 3 upcoming sentences in parallel so transitions between words, languages, Hadiths, and Quran verses are instant
+    for (let offset = 1; offset <= 3; offset++) {
+      this._prefetchNextSentence(currentIdx + offset);
+    }
+  }
+
   async _prefetchNextSentence(nextIdx) {
     const sentences = this.pageData?.sentences || [];
     const nextSent = sentences[nextIdx];
-    if (!nextSent || nextSent.segmentType === "quran") return;
+    if (!nextSent) return;
+
+    // If upcoming sentence is a verified Quranic verse, warm the browser audio/HTTP cache for Sheikh Abdul Rahman Al-Sudais's MP3
+    if (nextSent.segmentType === "quran") {
+      const qUrl = nextSent.quranMeta?.audioUrl || nextSent.quranMeta?.directAudioUrl;
+      if (qUrl && typeof fetch === "function") {
+        fetch(qUrl).catch(() => {});
+      }
+      return;
+    }
 
     const baseNormalized = normalizeUrduTextForPronunciation(
       nextSent.cleanedPronunciationText || nextSent.originalText

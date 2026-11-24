@@ -62,10 +62,10 @@ export default function SmartWordHighlightLayer({
                 onClick={(e) => {
                   if (isAnnotationActive) return;
                   e.stopPropagation();
-                  onSelectSentenceOrWord?.(sIdx, 0);
+                  onSelectSentenceOrWord?.(sIdx, 0, pageData.pageNumber);
                 }}
                 title="اضغط لبدء القراءة الصوتية من هذه الجملة"
-                className="absolute transition-all duration-150 rounded-md cursor-pointer group"
+                className="absolute transition-all duration-100 rounded-md cursor-pointer group"
                 style={{
                   top: `${rect.topPct}%`,
                   left: `${rect.leftPct}%`,
@@ -87,14 +87,13 @@ export default function SmartWordHighlightLayer({
                 }}
               >
                 {!isCurrentSentence && !isAnnotationActive && (
-                  <div className="w-full h-full opacity-0 group-hover:opacity-100 transition-opacity rounded-md border border-dashed border-[#0891B2]/40 bg-[#A5F3FC]/10" />
+                  <div className="w-full h-full opacity-0 group-hover:opacity-100 transition-opacity rounded-md border border-dashed border-[#0891B2]/45 bg-[#A5F3FC]/10" />
                 )}
               </div>
             ))}
 
-            {/* Individual Word Boxes (Clickable on ALL sentences so user can tap any exact word) */}
-            {sent.hasExactWordCoords !== false &&
-              Array.isArray(sent.words) &&
+            {/* Individual Word Boxes (Clickable on ALL sentences so user can tap any exact word with pinpoint accuracy) */}
+            {Array.isArray(sent.words) &&
               sent.words.map((wObj, wIdx) => {
                 if (!wObj?.rect) return null;
                 const isCurrentWord =
@@ -106,12 +105,12 @@ export default function SmartWordHighlightLayer({
                     onClick={(e) => {
                       if (isAnnotationActive) return;
                       e.stopPropagation();
-                      onSelectSentenceOrWord?.(sIdx, wIdx);
+                      onSelectSentenceOrWord?.(sIdx, wIdx, pageData.pageNumber);
                     }}
                     title={wObj.word ? `اقرأ من: ${wObj.word}` : "اضغط للقراءة من هذه الكلمة"}
-                    className={`absolute transition-all duration-100 rounded-[4px] cursor-pointer ${
+                    className={`absolute transition-all duration-75 rounded-[4px] cursor-pointer ${
                       !isCurrentWord && !isAnnotationActive
-                        ? "hover:bg-[#0891B2]/20 hover:border-b-2 hover:border-[#0891B2]"
+                        ? "hover:bg-[#0891B2]/25 hover:ring-1 hover:ring-[#0891B2] hover:border-b-2 hover:border-[#0891B2]"
                         : ""
                     }`}
                     style={{
@@ -126,8 +125,8 @@ export default function SmartWordHighlightLayer({
                       boxShadow: isCurrentWord
                         ? `0 2px 8px ${colorCfg.wordBg}`
                         : undefined,
-                      transform: isCurrentWord ? "scale(1.05)" : "none",
-                      zIndex: isCurrentWord ? 16 : 14,
+                      transform: isCurrentWord ? "scale(1.06)" : "none",
+                      zIndex: isCurrentWord ? 18 : 15,
                     }}
                   />
                 );

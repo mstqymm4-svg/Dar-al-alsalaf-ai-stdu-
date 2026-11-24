@@ -22,7 +22,7 @@ import { useT } from "@/lib/i18n";
 
 const SEGMENT_BADGE_MAP = {
   quran: {
-    label: "تلاوة قرآنية مسجلة • الشيخ مشاري العفاسي",
+    label: "تلاوة قرآنية مسجلة • الشيخ عبد الرحمن السديس",
     cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   },
   hadith: {
@@ -52,7 +52,7 @@ const SEGMENT_BADGE_MAP = {
  * Automatically uses scholarly male voices:
  * - Urdu: ur-PK-AsadNeural
  * - Arabic / Hadith / Dua: ar-SA-HamedNeural
- * - Verified Quranic verses: Authentic Recorded Recitation (Mishary Alafasy)
+ * - Verified Quranic verses: Authentic Recorded Recitation (Sheikh Abdul Rahman Al-Sudais)
  */
 export default function IntelligentAudioPlayer({
   isOpen = true,

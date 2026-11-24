@@ -115,10 +115,115 @@ const CANONICAL_QURAN_INDEX: CanonicalAyah[] = [
     uthmaniText: "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
     normalizedKey: "بسم الله الرحمن الرحيم",
   },
+  {
+    surahNumber: 39,
+    surahNameAr: "سورة الزمر",
+    ayahNumber: 2,
+    globalAyahNumber: 4060,
+    uthmaniText: "فَاعْبُدِ اللَّهَ مُخْلِصًا لَّهُ الدِّينَ",
+    normalizedKey: "فاعبد الله مخلصا له الدين",
+  },
+  {
+    surahNumber: 25,
+    surahNameAr: "سورة الفرقان",
+    ayahNumber: 23,
+    globalAyahNumber: 2878,
+    uthmaniText: "وَقَدِمْنَا إِلَىٰ مَا عَمِلُوا مِنْ عَمَلٍ فَجَعَلْنَاهُ هَبَاءً مَّنثُورًا",
+    normalizedKey: "وقدمنا الي ما عملوا من عمل فجعلناه هباء منثورا",
+  },
+  {
+    surahNumber: 4,
+    surahNameAr: "سورة النساء",
+    ayahNumber: 125,
+    globalAyahNumber: 618,
+    uthmaniText: "وَمَنْ أَحْسَنُ دِينًا مِّمَّنْ أَسْلَمَ وَجْهَهُ لِلَّهِ وَهُوَ مُحْسِنٌ وَاتَّبَعَ مِلَّةَ إِبْرَاهِيمَ حَنِيفًا وَاتَّخَذَ اللَّهُ إِبْرَاهِيمَ خَلِيلًا",
+    normalizedKey: "ومن احسن دينا ممن اسلم وجهه لله وهو محسن واتبع مله ابراهيم حنيفا واتخذ الله ابراهيم خليلا",
+  },
+  {
+    surahNumber: 2,
+    surahNameAr: "سورة البقرة",
+    ayahNumber: 112,
+    globalAyahNumber: 119,
+    uthmaniText: "بَلَىٰ مَنْ أَسْلَمَ وَجْهَهُ لِلَّهِ وَهُوَ مُحْسِنٌ فَلَهُ أَجْرُهُ عِندَ رَبِّهِ وَلَا خَوْفٌ عَلَيْهِمْ وَلَا هُمْ يَحْزَنُونَ",
+    normalizedKey: "بلي من اسلم وجهه لله وهو محسن فله اجره عند ربه ولا خوف عليهم ولا هم يحزنون",
+  },
+  {
+    surahNumber: 98,
+    surahNameAr: "سورة البينة",
+    ayahNumber: 5,
+    globalAyahNumber: 6135,
+    uthmaniText: "وَمَا أُمِرُوا إِلَّا لِيَعْبُدُوا اللَّهَ مُخْلِصِينَ لَهُ الدِّينَ حُنَفَاءَ وَيُقِيمُوا الصَّلَاةَ وَيُؤْتُوا الزَّكَاةَ وَذَٰلِكَ دِينُ الْقَيِّمَةِ",
+    normalizedKey: "وما امروا الا ليعبدوا الله مخلصين له الدين حنفاء ويقيموا الصلاه ويؤتوا الزكاه وذلك دين القيمه",
+  },
+  {
+    surahNumber: 18,
+    surahNameAr: "سورة الكهف",
+    ayahNumber: 110,
+    globalAyahNumber: 2250,
+    uthmaniText: "فَمَن كَانَ يَرْجُو لِقَاءَ رَبِّهِ فَلْيَعْمَلْ عَمَلًا صَالِحًا وَلَا يُشْرِكْ بِعِبَادَةِ رَبِّهِ أَحَدًا",
+    normalizedKey: "فمن كان يرجو لقاء ربه فليعمل عملا صالحا ولا يشرك بعباده ربه احدا",
+  },
+  {
+    surahNumber: 67,
+    surahNameAr: "سورة الملك",
+    ayahNumber: 2,
+    globalAyahNumber: 5243,
+    uthmaniText: "الَّذِي خَلَقَ الْمَوْتَ وَالْحَيَاةَ لِيَبْلُوَكُمْ أَيُّكُمْ أَحْسَنُ عَمَلًا وَهُوَ الْعَزِيزُ الْغَفُورُ",
+    normalizedKey: "الذي خلق الموت والحياه ليبلوكم ايكم احسن عملا وهو العزيز الغفور",
+  },
+  {
+    surahNumber: 11,
+    surahNameAr: "سورة هود",
+    ayahNumber: 15,
+    globalAyahNumber: 1488,
+    uthmaniText: "مَن كَانَ يُرِيدُ الْحَيَاةَ الدُّنْيَا وَزِينَتَهَا نُوَفِّ إِلَيْهِمْ أَعْمَالَهُمْ فِيهَا وَهُمْ فِيهَا لَا يُبْخَسُونَ",
+    normalizedKey: "من كان يريد الحياه الدنيا وزينتها نوف اليهم اعمالهم فيها وهم فيها لا يبخسون",
+  },
+  {
+    surahNumber: 11,
+    surahNameAr: "سورة هود",
+    ayahNumber: 16,
+    globalAyahNumber: 1489,
+    uthmaniText: "أُولَٰئِكَ الَّذِينَ لَيْسَ لَهُمْ فِي الْآخِرَةِ إِلَّا النَّارُ وَحَبِطَ مَا صَنَعُوا فِيهَا وَبَاطِلٌ مَّا كَانُوا يَعْمَلُونَ",
+    normalizedKey: "اوليك الذين ليس لهم في الاخره الا النار وحبط ما صنعوا فيها وباطل ما كانوا يعملون",
+  },
+  {
+    surahNumber: 39,
+    surahNameAr: "سورة الزمر",
+    ayahNumber: 3,
+    globalAyahNumber: 4061,
+    uthmaniText: "أَلَا لِلَّهِ الدِّينُ الْخَالِصُ",
+    normalizedKey: "الا لله الدين الخالص",
+  },
+  {
+    surahNumber: 39,
+    surahNameAr: "سورة الزمر",
+    ayahNumber: 11,
+    globalAyahNumber: 4069,
+    uthmaniText: "قُلْ إِنِّي أُمِرْتُ أَنْ أَعْبُدَ اللَّهَ مُخْلِصًا لَّهُ الدِّينَ",
+    normalizedKey: "قل اني امرت ان اعبد الله مخلصا له الدين",
+  },
+  {
+    surahNumber: 39,
+    surahNameAr: "سورة الزمر",
+    ayahNumber: 14,
+    globalAyahNumber: 4072,
+    uthmaniText: "قُلِ اللَّهَ أَعْبُدُ مُخْلِصًا لَّهُ دِينِي",
+    normalizedKey: "قل الله اعبد مخلصا له ديني",
+  },
+  {
+    surahNumber: 39,
+    surahNameAr: "سورة الزمر",
+    ayahNumber: 65,
+    globalAyahNumber: 4123,
+    uthmaniText: "وَلَقَدْ أُوحِيَ إِلَيْكَ وَإِلَى الَّذِينَ مِن قَبْلِكَ لَئِنْ أَشْرَكْتَ لَيَحْبَطَنَّ عَمَلُكَ وَلَتَكُونَنَّ مِنَ الْخَاسِرِينَ",
+    normalizedKey: "ولقد اوحي اليك والي الذين من قبلك لين اشركت ليحبطن عملك ولتكونن من الخاسرين",
+  },
 ];
 
 export function normalizeArabicForQuranMatch(text: string): string {
   return String(text || "")
+    .replace(/[\(\)\[\]\{\}]\s*[٠-٩۰-۹\d]+\s*[\(\)\[\]\{\}]/g, " ")
     .replace(/[﴿﴾«»"'\(\)\[\]\{\}۞٭]/g, " ")
     .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
     .replace(/[أإآٱ]/g, "ا")
@@ -131,13 +236,20 @@ export function normalizeArabicForQuranMatch(text: string): string {
     .trim();
 }
 
-function buildEveryAyahUrl(surahNumber: number, ayahNumber: number, reciterFolder = "Alafasy_128kbps"): string {
+function buildEveryAyahUrl(
+  surahNumber: number,
+  ayahNumber: number,
+  reciterFolder = "Abdurrahmaan_As-Sudais_192kbps"
+): string {
   const s = String(surahNumber).padStart(3, "0");
   const a = String(ayahNumber).padStart(3, "0");
   return `https://everyayah.com/data/${reciterFolder}/${s}${a}.mp3`;
 }
 
-function buildIslamicNetworkAudioUrl(globalAyahNumber: number, edition = "ar.alafasy"): string {
+function buildIslamicNetworkAudioUrl(
+  globalAyahNumber: number,
+  edition = "ar.abdurrahmaansudais"
+): string {
   return `https://cdn.islamic.network/quran/audio/128/${edition}/${globalAyahNumber}.mp3`;
 }
 
@@ -179,6 +291,7 @@ const KNOWN_WORDS_SERVER_LIST = [
   "صریح", "صريح", "الایمان", "الإيمان", "شر", "الوسواس", "الخناس", "یوسوس", "يوسوس",
   "صدور", "الناس", "اعوذ", "أعوذ", "برب", "كيف", "کیف", "تنقذ", "نفسك", "نفسک", "ورطة", "ورطۃ",
   "الوسوسة", "الوسوسۃ", "الشيطان", "واضع", "خطمه", "قلب", "ابن", "آدم", "حاشية", "حاشیہ",
+  "نیت", "نیتوں", "نیتیں", "اخلاص", "اعمال", "عمل", "مقصد", "مقاصد", "بندہ", "بندے", "ثواب", "اجر", "ہجرت", "دنیا", "آخرت",
 ];
 
 const KNOWN_WORDS_SERVER_SET = new Set(KNOWN_WORDS_SERVER_LIST);
@@ -203,7 +316,7 @@ export function canonicalizeTextForLanguageServer(text: string, isArabic: boolea
   }
   return s
     .replace(/\u0643/g, "\u06A9") // ك -> ک
-    .replace(/\u064A/g, "\u06CC") // ي -> ی
+    .replace(/[\u0649\u064A]/g, "\u06CC") // ى / ي -> ی (critical so ur-PK-AsadNeural never reads Alef Maksura ى as Fatha/Alif)
     .replace(/\u0647/g, "\u06C1"); // ه -> ہ
 }
 
@@ -274,11 +387,8 @@ function detectAndFixVisualRtlReversalServer(lineText: string): string {
   }
 
   const forwardStats = scoreRtlPlausibilityServer(line);
-  if (
-    forwardStats.initialFinalViolations === 0 &&
-    forwardStats.totalWords > 0 &&
-    forwardStats.recognizedWords / forwardStats.totalWords >= 0.35
-  ) {
+  // If there are no word-initial [ےںةۃ] violations, NEVER reverse tokens (which could turn "نیت" into "تین")
+  if (forwardStats.initialFinalViolations === 0) {
     return line;
   }
 
@@ -294,11 +404,19 @@ function detectAndFixVisualRtlReversalServer(lineText: string): string {
   let bestText = line;
   let bestScore = forwardStats.score;
 
-  if (wholeRevStats.score >= bestScore + 3 && wholeRevStats.recognizedWords > forwardStats.recognizedWords) {
+  if (
+    wholeRevStats.initialFinalViolations === 0 &&
+    wholeRevStats.score >= bestScore + 6 &&
+    wholeRevStats.recognizedWords > forwardStats.recognizedWords
+  ) {
     bestText = wholeReversed;
     bestScore = wholeRevStats.score;
   }
-  if (tokenRevStats.score >= bestScore + 3 && tokenRevStats.recognizedWords > forwardStats.recognizedWords) {
+  if (
+    tokenRevStats.initialFinalViolations === 0 &&
+    tokenRevStats.score >= bestScore + 6 &&
+    tokenRevStats.recognizedWords > forwardStats.recognizedWords
+  ) {
     bestText = perTokenReversed;
   }
 
@@ -484,10 +602,14 @@ export function rejoinFragmentedUrduArabicLettersServer(rawText: string): string
 export function detectIsUrduScriptServer(text: string): boolean {
   const s = rejoinFragmentedUrduArabicLettersServer(text);
   if (!s) return false;
+  const sUrNorm = s
+    .replace(/\u0643/g, "\u06A9")
+    .replace(/[\u0649\u064A]/g, "\u06CC")
+    .replace(/\u0647/g, "\u06C1");
   const strictUrduChars = (s.match(/[ٹڈڑںےھپچژگ]/g) || []).length;
   const exclusiveUrduWords = (
-    s.match(
-      /(?:^|\s)(?:کے|کی|کا|میں|ہے|ہیں|تھا|تھے|تھی|اور|پر|سے|کو|نے|بھی|کیونکہ|لیکن|تاکہ|ہوتا|ہوتی|ہوتے|کرتا|کرتے|کرتی|رہا|رہی|رہے|جائے|والا|والے|والی|لیے|ساتھ|اندر|باہر|پہلے|فرمایا|فرماتے|وسوسے|آپ|اپنے|اپنی|اپنا|نہیں|کبھی|ایسے|جنہیں|سمجھنا|ہونا|چاہیے|سکتا|سکتے|کیا|کیوں|کیسے|کہاں|یہاں|وہاں)(?=\s|$|[۔،؟!:])/g
+    sUrNorm.match(
+      /(?:^|\s)(?:کے|کی|کا|میں|ہے|ہیں|تھا|تھے|تھی|تھیں|اور|پر|سے|کو|نے|بھی|کیونکہ|لیکن|تاکہ|ہوتا|ہوتی|ہوتے|ہوئی|ہوئے|ہوگا|ہوگی|ہوں|کرتا|کرتے|کرتی|کیا|کیے|کئے|گیا|گئی|گئے|رہا|رہی|رہے|جائے|والا|والے|والی|لیے|لئے|ساتھ|بغیر|ذریعہ|ذریعے|تحت|متعلق|اندر|باہر|پہلے|فرمایا|فرماتے|وسوسے|آپ|اپنے|اپنی|اپنا|نہیں|کبھی|ایسے|جنہیں|سمجھنا|ہونا|چاہیے|چاہئے|سکتا|سکتے|سکتی|کیوں|کیسے|کہاں|یہاں|وہاں|معلومات|وضاحت|تعریف|رہنمائیاں|نشانیاں|بیماریاں|طریقے)(?=\s|$|[۔،؟!:])/g
     ) || []
   ).length;
 
@@ -499,7 +621,7 @@ export function detectIsUrduScriptServer(text: string): boolean {
       /(?:^|\s)(?:الحمد|لله|للہ|رب|العالمين|العالمین|قال|رسول|النبي|صلى|صلی|وسلم|رضي|رضی|اللهم|أعوذ|اعوذ|بالله|باللہ|من|في|على|إلى|عن|مع|بين|عند|حتى|أن|إن|قد|لم|لن|لا|ما|هو|هي|هم|كان|كانت|ذلك|ذَلِكَ|ذلک|هذا|هذه|الذي|التي|الذين|صريح|صَرِيحُ|الإيمان|الْإِيمَانِ|كيف|کیف|تنقذ|نفسك|نفسک|ورطة|ورطۃ|الوسوسة|الوسوسۃ|إغاثة|القاعدة|الفقهية|الدعاء)(?=\s|$|[۔.،؛؟!:"'»﴾])/g
     ) || []
   ).length;
-  const strictArabicChars = (s.match(/[ةىإأؤئ]/g) || []).length;
+  const strictArabicChars = (s.match(/[ةإأؤئ]/g) || []).length;
   const tashkeelCount = (s.match(/[\u064B-\u0652\u0670]/g) || []).length;
 
   const urduScore = strictUrduChars * 2.5 + exclusiveUrduWords * 3.5;
@@ -510,6 +632,9 @@ export function detectIsUrduScriptServer(text: string): boolean {
     (tashkeelCount >= 3 ? 3 : 0);
 
   if (urduScore === 0) return false;
+  if (exclusiveUrduWords >= 1 && strictUrduChars >= 1 && tashkeelCount < 4) {
+    return true;
+  }
   if (exclusiveUrduWords >= 2 && arabicAlMatches <= 1 && tashkeelCount < 4) {
     return true;
   }
@@ -836,14 +961,15 @@ intelligentReaderRouter.post("/ocr-page", express.json({ limit: "18mb" }), async
 // ─── 2. POST /api/reader/verify-quran — Authentic Quranic Verse Verification ───
 intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) => {
   try {
-    const { text, surahHint, ayahHint, reciter = "ar.alafasy" } = req.body || {};
+    const { text, surahHint, ayahHint, reciter = "ar.abdurrahmaansudais" } = req.body || {};
     const reciterFolderMap: Record<string, string> = {
+      "ar.abdurrahmaansudais": "Abdurrahmaan_As-Sudais_192kbps",
       "ar.alafasy": "Alafasy_128kbps",
       "ar.abdulbasitmurattal": "Abdul_Basit_Murattal_192kbps",
       "ar.husary": "Husary_128kbps",
       "ar.minshawi": "Minshawy_Murattal_128kbps",
     };
-    const everyAyahFolder = reciterFolderMap[reciter] || "Alafasy_128kbps";
+    const everyAyahFolder = reciterFolderMap[reciter] || "Abdurrahmaan_As-Sudais_192kbps";
 
     if (Number(surahHint) >= 1 && Number(surahHint) <= 114 && Number(ayahHint) >= 1) {
       const sNum = Number(surahHint);
@@ -874,14 +1000,18 @@ intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) =
     }
 
     const normInput = normalizeArabicForQuranMatch(text || "");
+    const normInputNoSpace = normInput.replace(/\s+/g, "");
     if (!normInput || normInput.length < 8) {
       return res.json({ verified: false, reason: "Text too short for strict Quran verification" });
     }
 
     for (const item of CANONICAL_QURAN_INDEX) {
+      const keyNoSpace = item.normalizedKey.replace(/\s+/g, "");
       if (
         normInput.includes(item.normalizedKey) ||
-        (item.normalizedKey.includes(normInput) && normInput.length >= 14)
+        (item.normalizedKey.includes(normInput) && normInput.length >= 14) ||
+        normInputNoSpace.includes(keyNoSpace) ||
+        (keyNoSpace.includes(normInputNoSpace) && normInputNoSpace.length >= 14)
       ) {
         const directUrl = buildEveryAyahUrl(item.surahNumber, item.ayahNumber, everyAyahFolder);
         return res.json({
@@ -892,6 +1022,7 @@ intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) =
           ayahNumber: item.ayahNumber,
           globalAyahNumber: item.globalAyahNumber,
           uthmaniText: item.uthmaniText,
+          reciterId: reciter,
           audioUrl: `/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`,
           directAudioUrl: directUrl,
           backupAudioUrl: buildIslamicNetworkAudioUrl(item.globalAyahNumber, reciter),
@@ -900,7 +1031,11 @@ intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) =
     }
 
     try {
-      const searchWords = normInput.split(" ").slice(0, 6).join(" ");
+      const searchWords = normInput
+        .split(" ")
+        .filter((w) => w.length >= 3)
+        .slice(0, 5)
+        .join(" ");
       const searchUrl = `https://api.alquran.cloud/v1/search/${encodeURIComponent(searchWords)}/all/quran-simple-clean`;
       const sRes = await fetch(searchUrl);
       if (sRes.ok) {
@@ -908,11 +1043,14 @@ intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) =
         const matches = sData?.data?.matches || [];
         for (const m of matches) {
           const normMatch = normalizeArabicForQuranMatch(m.text || "");
+          const normMatchNoSpace = normMatch.replace(/\s+/g, "");
           if (
             normMatch &&
             (normInput.includes(normMatch) ||
               normMatch.includes(normInput) ||
-              tokenOverlapRatio(normInput, normMatch) >= 0.78)
+              normInputNoSpace.includes(normMatchNoSpace) ||
+              normMatchNoSpace.includes(normInputNoSpace) ||
+              tokenOverlapRatio(normInput, normMatch) >= 0.72)
           ) {
             const sNum = m.surah?.number;
             const aNum = m.numberInSurah;

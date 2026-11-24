@@ -65,6 +65,11 @@ export const ARABIC_VOICES = [
 
 export const QURAN_RECITERS = [
   {
+    id: "ar.abdurrahmaansudais",
+    label: "الشيخ عبد الرحمن السديس (تلاوة مسجلة معتمدة)",
+    folder: "Abdurrahmaan_As-Sudais_192kbps",
+  },
+  {
     id: "ar.alafasy",
     label: "الشيخ مشاري راشد العفاسي (تلاوة مسجلة معتمدة)",
     folder: "Alafasy_128kbps",
@@ -119,12 +124,12 @@ export const HIGHLIGHT_COLORS = [
   },
 ];
 
-// Locked automatic optimal defaults (Male voices + Auto language detection + Auto highlighting)
+// Locked automatic optimal defaults (Male voices + Sheikh Abdul Rahman Al-Sudais + Auto language detection + Auto highlighting)
 const LOCKED_AUTOMATIC_OVERRIDES = {
   defaultUrduVoice: "pakistani_scholar_charon",
   urduVoiceId: "pakistani_scholar_charon",
   defaultArabicVoice: "arabic_hadith_charon",
-  quranReciterId: "ar.alafasy",
+  quranReciterId: "ar.abdurrahmaansudais",
   readingLanguage: "auto",
   wordHighlightEnabled: true,
   sentenceHighlightEnabled: true,

@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "id": "book_1795310327116_wbnr77",
+    "title": "‏ اخلاص سر النجاح",
+    "author": "محمد هارون",
+    "category": "أردو",
+    "description": "",
+    "cover_image": "",
+    "pdf_url": "firestore://book_files/pdf_1795310268454_y0aex",
+    "pages_count": 488,
+    "language": "العربية",
+    "is_featured": false,
+    "rating": 0,
+    "status": "published",
+    "created_date": "2026-11-22T01:18:47.116Z",
+    "updated_date": "2026-11-22T01:18:51.641Z",
+    "created_by": "daraltawhid25@gmail.com",
+    "_cached_at": 1795446979660
+  },
+  {
+    "id": "book_1795219649934_sn65ei",
+    "title": "‎⁨‏ اخلاص سر النجاح⁩",
+    "author": "محمد هارون",
+    "category": "أردو",
+    "description": "",
+    "cover_image": "",
+    "pdf_url": "firestore://book_files/pdf_1795219622218_3fy8f",
+    "pages_count": 486,
+    "language": "العربية",
+    "is_featured": true,
+    "rating": 0,
+    "status": "published",
+    "created_date": "2026-11-21T00:07:29.934Z",
+    "updated_date": "2026-11-21T00:07:29.934Z",
+    "created_by": "daraltawhid25@gmail.com",
+    "_cached_at": 1795446979660
+  }
+]
