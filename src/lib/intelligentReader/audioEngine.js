@@ -58,21 +58,29 @@ class IntelligentAudioEngine {
     this.pendingPauseAfterSentence = false;
     this.wasInterruptedBySystem = false;
 
-    // Active timings for the currently playing sentence
+    // Active timings & multi-ayah Sudais queue
     this.currentWordTimings = [];
     this.currentSegmentInfo = null; // { segmentType, language, quranMeta, provider, voiceId }
+    this._activeQuranQueue = null;
+    this._activeQuranAyahIdx = 0;
+    this._activeQuranWordRanges = [];
+    this._activeClipStartMs = 0;
+    this._activeClipEndMs = 0;
+    this._clipEndTriggered = false;
 
     // Callbacks registered by active reader view
     this.onRequestPageTurn = null;
     this.onEnsurePageExtracted = null;
     this.isExtractingPage = false;
 
-    // Concurrency & lifecycle guards
+    // Concurrency, prefetch Blob cache & lifecycle guards
     this._playSessionId = 0;
     this._rafId = null;
     this._currentBlobUrl = null;
     this._abortController = null;
     this._loadedSentenceKey = "";
+    this._prefetchedAudioBlobUrls = new Map(); // remoteUrl -> blobUrl (LRU max 40)
+    this._pendingAudioFetches = new Map(); // remoteUrl -> Promise<string|null>
 
     this._initAudioElement();
     this._initSystemInterruptionHandlers();
@@ -93,7 +101,19 @@ class IntelligentAudioEngine {
 
     this.audioEl.addEventListener("timeupdate", () => {
       this.currentTimeSec = this.audioEl.currentTime || 0;
-      this._syncWordIndexFromTime(this.currentTimeSec * 1000);
+      const currentMs = this.currentTimeSec * 1000;
+      if (
+        this._activeClipEndMs > 0 &&
+        currentMs >= this._activeClipEndMs &&
+        !this._clipEndTriggered
+      ) {
+        this._clipEndTriggered = true;
+        this.audioEl.pause();
+        this._stopHighResSyncLoop();
+        this._handleAudioEnded();
+        return;
+      }
+      this._syncWordIndexFromTime(currentMs);
       this._emit();
     });
 
@@ -116,7 +136,7 @@ class IntelligentAudioEngine {
 
     this.audioEl.addEventListener("ended", () => {
       this._stopHighResSyncLoop();
-      this._handleSentenceEnded();
+      this._handleAudioEnded();
     });
   }
 
@@ -386,13 +406,14 @@ class IntelligentAudioEngine {
     }
 
     // If paused on the exact same sentence and no explicit jump requested, resume cleanly
+    const clipMaxSec = this._activeClipEndMs > 0 ? this._activeClipEndMs / 1000 : this.durationSec;
     if (
       sentenceIndex === null &&
       wordIndex === null &&
       this.playerState === "paused" &&
       this.audioEl?.src &&
       this.currentTimeSec > 0 &&
-      this.currentTimeSec < this.durationSec
+      this.currentTimeSec < clipMaxSec
     ) {
       try {
         this.audioEl.playbackRate = this.playbackRate;
@@ -410,9 +431,10 @@ class IntelligentAudioEngine {
       wordIndex !== null ? Math.max(0, Number(wordIndex)) : 0;
 
     // Instant in-sentence word seek fast-path: if the target sentence is ALREADY loaded in this.audioEl
-    // and we have word timings for targetWIdx, seek immediately with 0ms latency!
+    // (single audio file) and we have word timings for targetWIdx, seek immediately with 0ms latency!
     const expectedKey = `${this.bookId}:${this.pageNumber}:${targetSIdx}`;
     if (
+      (!this._activeQuranQueue || this._activeQuranQueue.length <= 1) &&
       targetSIdx === this.sentenceIndex &&
       this._loadedSentenceKey === expectedKey &&
       this.audioEl?.src &&
@@ -422,9 +444,14 @@ class IntelligentAudioEngine {
       this.audioEl.duration > 0
     ) {
       this.wordIndex = targetWIdx;
+      const minClipSec = this._activeClipStartMs > 0 ? this._activeClipStartMs / 1000 : 0;
+      const maxClipSec =
+        this._activeClipEndMs > 0
+          ? Math.min(this.audioEl.duration, this._activeClipEndMs / 1000)
+          : this.audioEl.duration;
       const targetSec = Math.max(
-        0,
-        this.currentWordTimings[targetWIdx].startMs / 1000
+        minClipSec,
+        Math.min(maxClipSec, this.currentWordTimings[targetWIdx].startMs / 1000)
       );
       if (targetSec < this.audioEl.duration) {
         this.audioEl.currentTime = targetSec;
@@ -471,6 +498,14 @@ class IntelligentAudioEngine {
       } catch {}
     }
 
+    // Reset multi-ayah & partial-clip state when starting a sentence
+    this._activeQuranQueue = null;
+    this._activeQuranAyahIdx = 0;
+    this._activeQuranWordRanges = [];
+    this._activeClipStartMs = 0;
+    this._activeClipEndMs = 0;
+    this._clipEndTriggered = false;
+
     this.playerState = "loading";
     this._clearError();
     this.wordIndex = startAtWordIndex;
@@ -483,9 +518,10 @@ class IntelligentAudioEngine {
       if (
         sentence.segmentType === "quran" &&
         sentence.quranMeta?.verified &&
-        sentence.quranMeta?.audioUrl
+        (sentence.quranMeta?.audioUrl || sentence.quranMeta?.ayahList?.length > 0)
       ) {
-        const currentVerseId = `${this.bookId}:${sentence.quranMeta.surahNumber}:${sentence.quranMeta.ayahNumber}`;
+        const meta = sentence.quranMeta;
+        const currentVerseId = `${this.bookId}:${meta.surahNumber}:${meta.ayahNumber}-${meta.endAyahNumber || meta.ayahNumber}`;
         const prevPageVerseKey = `${currentVerseId}:page${this.pageNumber - 1}`;
         const isPageTopClosingFragment =
           this.sentenceIndex === 0 &&
@@ -505,23 +541,48 @@ class IntelligentAudioEngine {
         }
 
         this._lastRecitedQuranVerseKey = `${currentVerseId}:page${this.pageNumber}`;
-        this.currentSegmentInfo = {
-          segmentType: "quran",
-          language: "ar",
-          badgeLabel: `تلاوة قرآنية مسجلة • الشيخ عبد الرحمن السديس • ${sentence.quranMeta.surahName} (${sentence.quranMeta.ayahNumber})`,
-          provider: "quran-authentic-recording",
-          voiceId: settings.quranReciterId || "ar.abdurrahmaansudais",
-          quranMeta: sentence.quranMeta,
-        };
-        this.currentWordTimings = [];
 
-        await this._playAudioSource(
-          sentence.quranMeta.audioUrl,
-          sentence.quranMeta.directAudioUrl,
+        const reciterId = "ar.abdurrahmaansudais";
+        const ayahQueue =
+          Array.isArray(meta.ayahList) && meta.ayahList.length > 0
+            ? meta.ayahList
+            : [
+                {
+                  surahNumber: meta.surahNumber,
+                  surahName: meta.surahName,
+                  ayahNumber: meta.ayahNumber,
+                  globalAyahNumber: meta.globalAyahNumber,
+                  audioUrl: meta.audioUrl,
+                  directAudioUrl: meta.directAudioUrl,
+                  backupAudioUrl: meta.backupAudioUrl,
+                  normalizedWordCount: (sentence.words || []).length || 1,
+                },
+              ];
+
+        const totalWords = (sentence.words || []).length;
+        const ayahWordRanges = this._computeAyahWordRanges(ayahQueue, totalWords);
+
+        // Determine which Ayah in the multi-ayah queue owns startAtWordIndex
+        let startAyahQueueIdx = 0;
+        if (startAtWordIndex > 0 && ayahWordRanges.length > 1) {
+          const foundQ = ayahWordRanges.findIndex(
+            (r) => startAtWordIndex >= r.startIdx && startAtWordIndex < r.endIdx
+          );
+          if (foundQ >= 0) startAyahQueueIdx = foundQ;
+        }
+
+        this._activeQuranQueue = ayahQueue;
+        this._activeQuranAyahIdx = startAyahQueueIdx;
+        this._activeQuranWordRanges = ayahWordRanges;
+
+        await this._playActiveQuranAyahAtIndex(
+          startAyahQueueIdx,
           startAtWordIndex,
-          sentence.words || [],
+          sentence,
+          reciterId,
           sessionId
         );
+
         if (sessionId === this._playSessionId) {
           this._loadedSentenceKey = `${this.bookId}:${this.pageNumber}:${this.sentenceIndex}`;
           this._prefetchUpcomingSentences(this.sentenceIndex);
@@ -607,11 +668,26 @@ class IntelligentAudioEngine {
         voiceId,
       };
 
+      const hadithRateDelta = Number(settings?.hadithProsodyRateDelta ?? -3);
+      const pitchDeltaHz = Number(settings?.prosodyPitchDeltaHz ?? -1);
+      const prosodyPayload = {
+        preset: settings?.prosodyPreset || "scholarly",
+        enabled: settings?.prosodyEnabled !== false,
+        arabicTashkeel: settings?.arabicTashkeelEnabled !== false,
+        urduProofread: settings?.urduProofreadEnabled !== false,
+        hadithRateDelta,
+        pitchDeltaHz,
+      };
+      const prosodyKey = prosodyPayload.enabled
+        ? `${prosodyPayload.preset}:${prosodyPayload.arabicTashkeel ? 1 : 0}:${prosodyPayload.urduProofread ? 1 : 0}:${hadithRateDelta}:${pitchDeltaHz}`
+        : `flat:${prosodyPayload.arabicTashkeel ? 1 : 0}:${prosodyPayload.urduProofread ? 1 : 0}`;
+
       // Check IndexedDB Audio Cache first
       let ttsPayload = await getCachedTtsAudio(
         spokenText,
         voiceId,
-        languageCode
+        languageCode,
+        prosodyKey
       );
 
       if (sessionId !== this._playSessionId) return;
@@ -627,6 +703,7 @@ class IntelligentAudioEngine {
             segmentType: sentence.segmentType,
             voiceId,
             words: sentenceWordList,
+            prosody: prosodyPayload,
           }),
         });
 
@@ -647,7 +724,8 @@ class IntelligentAudioEngine {
             spokenText,
             voiceId,
             languageCode,
-            ttsPayload
+            ttsPayload,
+            prosodyKey
           );
         }
       }
@@ -705,12 +783,220 @@ class IntelligentAudioEngine {
     }
   }
 
+  _computeAyahWordRanges(ayahQueue, totalWords) {
+    if (!Array.isArray(ayahQueue) || ayahQueue.length === 0) return [];
+    if (ayahQueue.length === 1 || totalWords <= 0) {
+      return ayahQueue.map(() => ({ startIdx: 0, endIdx: Math.max(0, totalWords) }));
+    }
+    const weights = ayahQueue.map((a) => Math.max(2, Number(a.normalizedWordCount) || 5));
+    const sumW = weights.reduce((acc, w) => acc + w, 0) || 1;
+    const ranges = [];
+    let cursor = 0;
+    for (let i = 0; i < ayahQueue.length; i++) {
+      const startIdx = cursor;
+      const endIdx =
+        i === ayahQueue.length - 1
+          ? totalWords
+          : Math.min(totalWords, Math.max(startIdx + 1, cursor + Math.round((weights[i] / sumW) * totalWords)));
+      ranges.push({ startIdx, endIdx });
+      cursor = endIdx;
+    }
+    return ranges;
+  }
+
+  _buildSudaisAudioUrlsForAyah(ayahObj) {
+    const sPad = String(ayahObj.surahNumber || 1).padStart(3, "0");
+    const aPad = String(ayahObj.ayahNumber || 1).padStart(3, "0");
+    const sudaisEveryAyah = `https://everyayah.com/data/Abdurrahmaan_As-Sudais_192kbps/${sPad}${aPad}.mp3`;
+    const isSudaisDirect =
+      typeof ayahObj.directAudioUrl === "string" &&
+      (ayahObj.directAudioUrl.includes("Abdurrahmaan_As-Sudais") ||
+        ayahObj.directAudioUrl.includes("Sudais/"));
+    const primaryDirect = isSudaisDirect ? ayahObj.directAudioUrl : sudaisEveryAyah;
+    const primaryProxy = `/api/reader/quran-audio?url=${encodeURIComponent(primaryDirect)}`;
+    const backupDirect =
+      primaryDirect !== sudaisEveryAyah
+        ? sudaisEveryAyah
+        : ayahObj.backupAudioUrl ||
+          (ayahObj.globalAyahNumber
+            ? `https://cdn.islamic.network/quran/audio/128/ar.abdurrahmaansudais/${ayahObj.globalAyahNumber}.mp3`
+            : primaryDirect);
+    const backupProxy = `/api/reader/quran-audio?url=${encodeURIComponent(backupDirect)}`;
+    return { primaryProxy, backupProxy, primaryDirect, backupDirect };
+  }
+
+  async _playActiveQuranAyahAtIndex(
+    qIdx,
+    globalStartWordIdx,
+    sentence,
+    reciterId,
+    sessionId
+  ) {
+    const queue = this._activeQuranQueue;
+    if (!queue || !queue[qIdx] || sessionId !== this._playSessionId) return;
+
+    const ayahObj = queue[qIdx];
+    const range = this._activeQuranWordRanges[qIdx] || {
+      startIdx: 0,
+      endIdx: (sentence.words || []).length,
+    };
+    const sliceWords = (sentence.words || []).slice(range.startIdx, range.endIdx);
+    const localStartWordIdx = Math.max(0, globalStartWordIdx - range.startIdx);
+
+    this._activeClipStartMs = Number(ayahObj.clipStartMs || 0);
+    this._activeClipEndMs = Number(ayahObj.clipEndMs || 0);
+    this._clipEndTriggered = false;
+
+    const ayahLabel =
+      queue.length > 1
+        ? `${ayahObj.surahName} (${ayahObj.ayahNumber} من ${queue[0].ayahNumber}–${queue[queue.length - 1].ayahNumber})`
+        : `${ayahObj.surahName} (${ayahObj.ayahNumber})`;
+
+    this.currentSegmentInfo = {
+      segmentType: "quran",
+      language: "ar",
+      badgeLabel: `تلاوة قرآنية • الشيخ عبد الرحمن السديس • ${ayahLabel}`,
+      provider: "quran-authentic-recording",
+      voiceId: reciterId,
+      quranMeta: sentence.quranMeta,
+      activeAyahNumber: ayahObj.ayahNumber,
+      queueIndex: qIdx,
+      queueLength: queue.length,
+      isPartialClip: Boolean(ayahObj.isPartialClip),
+    };
+
+    if (
+      Array.isArray(ayahObj.wordTimings) &&
+      ayahObj.wordTimings.length > 0 &&
+      sliceWords.length > 0
+    ) {
+      const srcTimings = ayahObj.wordTimings;
+      this.currentWordTimings = sliceWords.map((wObj, i) => {
+        const tIdx = Math.min(
+          srcTimings.length - 1,
+          Math.floor((i / sliceWords.length) * srcTimings.length)
+        );
+        const srcT = srcTimings[tIdx];
+        return {
+          word: wObj.word || wObj.text || "",
+          wordIndex: range.startIdx + i,
+          startMs: srcT.startMs,
+          endMs: srcT.endMs,
+          confidence: srcT.confidence || "quran-com-segments",
+        };
+      });
+    } else {
+      this.currentWordTimings = [];
+    }
+
+    // Immediately prefetch the NEXT ayah inside this multi-ayah verse so transition has 0ms gap!
+    if (qIdx + 1 < queue.length) {
+      const nextUrls = this._buildSudaisAudioUrlsForAyah(queue[qIdx + 1]);
+      this._prefetchRemoteAudioToBlob(nextUrls.primaryProxy, nextUrls.backupProxy);
+    }
+
+    const urls = this._buildSudaisAudioUrlsForAyah(ayahObj);
+    const resolvedBlobOrUrl = await this._resolveAudioToBlobUrl(
+      urls.primaryProxy,
+      urls.backupProxy,
+      sessionId
+    );
+    if (sessionId !== this._playSessionId) return;
+
+    await this._playAudioSource(
+      resolvedBlobOrUrl || urls.primaryProxy,
+      urls.backupProxy,
+      localStartWordIdx,
+      sliceWords,
+      sessionId,
+      range.startIdx
+    );
+  }
+
+  _storePrefetchedBlob(keyUrl, blobUrl) {
+    if (!keyUrl || !blobUrl) return;
+    if (this._prefetchedAudioBlobUrls.has(keyUrl)) {
+      this._prefetchedAudioBlobUrls.delete(keyUrl);
+    } else if (this._prefetchedAudioBlobUrls.size >= 40) {
+      const oldestKey = this._prefetchedAudioBlobUrls.keys().next().value;
+      const oldestBlob = oldestKey ? this._prefetchedAudioBlobUrls.get(oldestKey) : null;
+      if (oldestKey) this._prefetchedAudioBlobUrls.delete(oldestKey);
+      if (oldestBlob && oldestBlob !== this._currentBlobUrl && oldestBlob !== this.audioEl?.src) {
+        try {
+          URL.revokeObjectURL(oldestBlob);
+        } catch {}
+      }
+    }
+    this._prefetchedAudioBlobUrls.set(keyUrl, blobUrl);
+  }
+
+  async _prefetchRemoteAudioToBlob(primaryUrl, backupUrl = null) {
+    if (!primaryUrl || typeof fetch !== "function" || typeof URL === "undefined") return null;
+    if (this._prefetchedAudioBlobUrls.has(primaryUrl)) {
+      return this._prefetchedAudioBlobUrls.get(primaryUrl);
+    }
+    if (this._pendingAudioFetches.has(primaryUrl)) {
+      return this._pendingAudioFetches.get(primaryUrl);
+    }
+    const p = (async () => {
+      for (const candidateUrl of [primaryUrl, backupUrl].filter(Boolean)) {
+        try {
+          const res = await fetch(candidateUrl);
+          if (!res.ok) continue;
+          const blob = await res.blob();
+          if (blob && blob.size > 256) {
+            const bUrl = URL.createObjectURL(blob);
+            this._storePrefetchedBlob(primaryUrl, bUrl);
+            return bUrl;
+          }
+        } catch {}
+      }
+      return null;
+    })().finally(() => {
+      this._pendingAudioFetches.delete(primaryUrl);
+    });
+    this._pendingAudioFetches.set(primaryUrl, p);
+    return p;
+  }
+
+  async _resolveAudioToBlobUrl(primaryUrl, backupUrl, sessionId) {
+    if (!primaryUrl) return null;
+    if (primaryUrl.startsWith("blob:")) return primaryUrl;
+    if (this._prefetchedAudioBlobUrls.has(primaryUrl)) {
+      return this._prefetchedAudioBlobUrls.get(primaryUrl);
+    }
+    if (this._pendingAudioFetches.has(primaryUrl)) {
+      const awaited = await this._pendingAudioFetches.get(primaryUrl);
+      if (awaited) return awaited;
+    }
+    for (const candidateUrl of [primaryUrl, backupUrl].filter(Boolean)) {
+      if (sessionId !== this._playSessionId) return null;
+      try {
+        const res = await fetch(candidateUrl, {
+          signal: this._abortController?.signal,
+        });
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        if (sessionId !== this._playSessionId) return null;
+        if (blob && blob.size > 256) {
+          const bUrl = URL.createObjectURL(blob);
+          this._storePrefetchedBlob(primaryUrl, bUrl);
+          return bUrl;
+        }
+      } catch (e) {
+        if (e?.name === "AbortError" || sessionId !== this._playSessionId) throw e;
+      }
+    }
+    return null;
+  }
+
   async _playAudioSource(
     primaryUrl,
     backupUrl = null,
     startAtWordIndex = 0,
     words = [],
-    sessionId = this._playSessionId
+    sessionId = this._playSessionId,
+    wordIndexOffset = 0
   ) {
     if (!this.audioEl || sessionId !== this._playSessionId) return;
 
@@ -726,6 +1012,10 @@ class IntelligentAudioEngine {
       };
       const onError = () => {
         cleanup();
+        if (sessionId !== this._playSessionId) {
+          resolve();
+          return;
+        }
         if (backupUrl && this.audioEl.src !== backupUrl) {
           this.audioEl.src = backupUrl;
           this.audioEl.load();
@@ -761,21 +1051,31 @@ class IntelligentAudioEngine {
         ? this.audioEl.duration * 1000
         : 0;
 
-    // 1. If no precomputed timings exist, build phonetic syllable-weighted timings from real decoded duration
+    // 1. If no precomputed timings exist, build phonetic syllable-weighted timings from real decoded duration (or partial clip bounds)
     if (
       this.currentWordTimings.length === 0 &&
       words.length > 0 &&
       realDurationMs > 0
     ) {
+      const effStart = this._activeClipStartMs > 0 ? this._activeClipStartMs : 0;
+      const effEnd =
+        this._activeClipEndMs > effStart
+          ? Math.min(realDurationMs, this._activeClipEndMs)
+          : realDurationMs;
       this.currentWordTimings = this._buildPhoneticTimingsForDuration(
         words,
-        realDurationMs
+        Math.max(100, effEnd - effStart),
+        wordIndexOffset,
+        effStart
       );
     } else if (
       this.currentWordTimings.length > 0 &&
-      realDurationMs > 250
+      realDurationMs > 250 &&
+      this._activeClipStartMs === 0 &&
+      this._activeClipEndMs === 0 &&
+      this.currentWordTimings[0]?.confidence !== "quran-com-segments"
     ) {
-      // 2. Re-calibrate precomputed timings if the server's estimated duration differs from the browser's real decoded duration
+      // 2. Re-calibrate precomputed TTS timings if the server's estimated duration differs from the browser's real decoded duration
       const lastTiming =
         this.currentWordTimings[this.currentWordTimings.length - 1];
       const lastEndMs = Number(lastTiming?.endMs || 0);
@@ -795,25 +1095,33 @@ class IntelligentAudioEngine {
       }
     }
 
-    // If user clicked a specific word inside the sentence, seek directly to that word's onset timestamp
+    // If partial ayah clip or user clicked a specific word, seek directly to that onset timestamp
+    let initialSeekSec = 0;
     if (startAtWordIndex > 0 && this.currentWordTimings[startAtWordIndex]) {
-      const targetSec =
-        this.currentWordTimings[startAtWordIndex].startMs / 1000;
-      if (
-        Number.isFinite(targetSec) &&
-        targetSec < (this.audioEl.duration || 9999)
-      ) {
-        this.audioEl.currentTime = targetSec;
-      }
+      initialSeekSec = this.currentWordTimings[startAtWordIndex].startMs / 1000;
+    } else if (this._activeClipStartMs > 0) {
+      initialSeekSec = this._activeClipStartMs / 1000;
+    }
+    if (
+      initialSeekSec > 0 &&
+      Number.isFinite(initialSeekSec) &&
+      initialSeekSec < (this.audioEl.duration || 9999)
+    ) {
+      this.audioEl.currentTime = initialSeekSec;
     }
 
     await this.audioEl.play();
     this._persistPosition();
   }
 
-  _buildPhoneticTimingsForDuration(words, totalDurationMs) {
-    const leadInMs = Math.min(180, totalDurationMs * 0.04);
-    const activeMs = Math.max(100, totalDurationMs - leadInMs * 2);
+  _buildPhoneticTimingsForDuration(
+    words,
+    totalDurationMs,
+    wordIndexOffset = 0,
+    baseOffsetMs = 0
+  ) {
+    const leadInMs = baseOffsetMs > 0 ? 40 : Math.min(180, totalDurationMs * 0.04);
+    const activeMs = Math.max(100, totalDurationMs - leadInMs * (baseOffsetMs > 0 ? 1 : 2));
     const weights = words.map((wObj) => {
       const w = String(wObj.word || wObj || "");
       const clean = w.replace(/[^\u0600-\u06FF\w]/g, "");
@@ -821,12 +1129,12 @@ class IntelligentAudioEngine {
       return Math.max(1.2, clean.length * 0.8 + maddCount * 0.7);
     });
     const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
-    let cursor = leadInMs;
+    let cursor = baseOffsetMs + leadInMs;
     return words.map((wObj, idx) => {
       const span = (weights[idx] / totalWeight) * activeMs;
       const item = {
         word: wObj.word || "",
-        wordIndex: idx,
+        wordIndex: idx + wordIndexOffset,
         startMs: Math.round(cursor),
         endMs: Math.round(cursor + span),
         confidence: "phonetic-syllable-weighted",
@@ -848,11 +1156,15 @@ class IntelligentAudioEngine {
     const nextSent = sentences[nextIdx];
     if (!nextSent) return;
 
-    // If upcoming sentence is a verified Quranic verse, warm the browser audio/HTTP cache for Sheikh Abdul Rahman Al-Sudais's MP3
-    if (nextSent.segmentType === "quran") {
-      const qUrl = nextSent.quranMeta?.audioUrl || nextSent.quranMeta?.directAudioUrl;
-      if (qUrl && typeof fetch === "function") {
-        fetch(qUrl).catch(() => {});
+    // If upcoming sentence is a verified Quranic verse, prefetch Sudais MP3s into Blob URL memory cache for 0ms start!
+    if (nextSent.segmentType === "quran" && nextSent.quranMeta?.verified) {
+      const queue =
+        Array.isArray(nextSent.quranMeta.ayahList) && nextSent.quranMeta.ayahList.length > 0
+          ? nextSent.quranMeta.ayahList
+          : [nextSent.quranMeta];
+      for (const ay of queue.slice(0, 3)) {
+        const urls = this._buildSudaisAudioUrlsForAyah(ay);
+        this._prefetchRemoteAudioToBlob(urls.primaryProxy, urls.backupProxy);
       }
       return;
     }
@@ -879,7 +1191,22 @@ class IntelligentAudioEngine {
       )
       .filter(Boolean);
 
-    const existing = await getCachedTtsAudio(spokenText, voiceId, langCode);
+    const settings = loadReaderSettings();
+    const hadithRateDelta = Number(settings?.hadithProsodyRateDelta ?? -3);
+    const pitchDeltaHz = Number(settings?.prosodyPitchDeltaHz ?? -1);
+    const prosodyPayload = {
+      preset: settings?.prosodyPreset || "scholarly",
+      enabled: settings?.prosodyEnabled !== false,
+      arabicTashkeel: settings?.arabicTashkeelEnabled !== false,
+      urduProofread: settings?.urduProofreadEnabled !== false,
+      hadithRateDelta,
+      pitchDeltaHz,
+    };
+    const prosodyKey = prosodyPayload.enabled
+      ? `${prosodyPayload.preset}:${prosodyPayload.arabicTashkeel ? 1 : 0}:${prosodyPayload.urduProofread ? 1 : 0}:${hadithRateDelta}:${pitchDeltaHz}`
+      : `flat:${prosodyPayload.arabicTashkeel ? 1 : 0}:${prosodyPayload.urduProofread ? 1 : 0}`;
+
+    const existing = await getCachedTtsAudio(spokenText, voiceId, langCode, prosodyKey);
     if (existing) return;
 
     try {
@@ -892,12 +1219,13 @@ class IntelligentAudioEngine {
           segmentType: nextSent.segmentType,
           voiceId,
           words: nextWordList,
+          prosody: prosodyPayload,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data?.audioBase64) {
-          await setCachedTtsAudio(spokenText, voiceId, langCode, data);
+          await setCachedTtsAudio(spokenText, voiceId, langCode, data, prosodyKey);
         }
       }
     } catch {}
@@ -960,6 +1288,17 @@ class IntelligentAudioEngine {
     const tick = () => {
       if (this.audioEl && !this.audioEl.paused) {
         const currentMs = this.audioEl.currentTime * 1000;
+        if (
+          this._activeClipEndMs > 0 &&
+          currentMs >= this._activeClipEndMs &&
+          !this._clipEndTriggered
+        ) {
+          this._clipEndTriggered = true;
+          this.audioEl.pause();
+          this._stopHighResSyncLoop();
+          this._handleAudioEnded();
+          return;
+        }
         this._syncWordIndexFromTime(currentMs);
         this._rafId = requestAnimationFrame(tick);
       }
@@ -979,17 +1318,57 @@ class IntelligentAudioEngine {
     let foundIdx = this.wordIndex;
     for (let i = 0; i < this.currentWordTimings.length; i++) {
       const t = this.currentWordTimings[i];
+      const wIdx = typeof t.wordIndex === "number" ? t.wordIndex : i;
       if (currentMs >= t.startMs && currentMs <= t.endMs + 40) {
-        foundIdx = i;
+        foundIdx = wIdx;
         break;
       } else if (currentMs > t.endMs) {
-        foundIdx = i;
+        foundIdx = wIdx;
       }
     }
     if (foundIdx !== this.wordIndex) {
       this.wordIndex = foundIdx;
       this._emit();
     }
+  }
+
+  async _handleAudioEnded() {
+    // If inside a multi-ayah Quranic verse, advance seamlessly to the next Ayah in Sheikh Al-Sudais's queue!
+    if (
+      Array.isArray(this._activeQuranQueue) &&
+      this._activeQuranAyahIdx + 1 < this._activeQuranQueue.length
+    ) {
+      const sentences = this.pageData?.sentences || [];
+      const sentence = sentences[this.sentenceIndex];
+      const nextQIdx = this._activeQuranAyahIdx + 1;
+      const nextRange = this._activeQuranWordRanges[nextQIdx] || { startIdx: this.wordIndex };
+      if (sentence) {
+        const sessionId = this._playSessionId;
+        this._activeQuranAyahIdx = nextQIdx;
+        this.wordIndex = nextRange.startIdx;
+        this._emit();
+        try {
+          await this._playActiveQuranAyahAtIndex(
+            nextQIdx,
+            nextRange.startIdx,
+            sentence,
+            "ar.abdurrahmaansudais",
+            sessionId
+          );
+          return;
+        } catch (e) {
+          if (e?.name === "AbortError" || sessionId !== this._playSessionId) return;
+        }
+      }
+    }
+
+    this._activeQuranQueue = null;
+    this._activeQuranAyahIdx = 0;
+    this._activeQuranWordRanges = [];
+    this._activeClipStartMs = 0;
+    this._activeClipEndMs = 0;
+    this._clipEndTriggered = false;
+    this._handleSentenceEnded();
   }
 
   _handleSentenceEnded() {
@@ -1027,7 +1406,10 @@ class IntelligentAudioEngine {
       const nextPage = this.pageNumber + 1;
       this.sentenceIndex = 0;
       this.wordIndex = 0;
-      this.onRequestPageTurn(nextPage, { autoContinueAudio: true });
+      this.onRequestPageTurn(nextPage, {
+        autoContinueAudio: true,
+        targetSentencePosition: "first",
+      });
     } else {
       this.playerState = "stopped";
       this._persistPosition();
@@ -1087,6 +1469,9 @@ class IntelligentAudioEngine {
         window.speechSynthesis.cancel();
       } catch {}
     }
+    this._activeClipStartMs = 0;
+    this._activeClipEndMs = 0;
+    this._clipEndTriggered = false;
     this.playerState = "stopped";
     this.wordIndex = 0;
     this.currentTimeSec = 0;
@@ -1096,12 +1481,14 @@ class IntelligentAudioEngine {
 
   seekBySeconds(deltaSec) {
     if (!this.audioEl || !Number.isFinite(this.audioEl.duration)) return;
+    const minSec = this._activeClipStartMs > 0 ? this._activeClipStartMs / 1000 : 0;
+    const maxSec =
+      this._activeClipEndMs > 0
+        ? Math.min(this.audioEl.duration, this._activeClipEndMs / 1000)
+        : this.audioEl.duration;
     const nextTime = Math.max(
-      0,
-      Math.min(
-        this.audioEl.duration,
-        (this.audioEl.currentTime || 0) + deltaSec
-      )
+      minSec,
+      Math.min(maxSec, (this.audioEl.currentTime || 0) + deltaSec)
     );
     this.audioEl.currentTime = nextTime;
     this.currentTimeSec = nextTime;
@@ -1112,8 +1499,13 @@ class IntelligentAudioEngine {
 
   seekToRatio(ratio) {
     if (!this.audioEl || !Number.isFinite(this.audioEl.duration)) return;
+    const minSec = this._activeClipStartMs > 0 ? this._activeClipStartMs / 1000 : 0;
+    const maxSec =
+      this._activeClipEndMs > 0
+        ? Math.min(this.audioEl.duration, this._activeClipEndMs / 1000)
+        : this.audioEl.duration;
     const clamped = Math.max(0, Math.min(1, Number(ratio) || 0));
-    const nextTime = clamped * this.audioEl.duration;
+    const nextTime = minSec + clamped * Math.max(0.1, maxSec - minSec);
     this.audioEl.currentTime = nextTime;
     this.currentTimeSec = nextTime;
     this._syncWordIndexFromTime(nextTime * 1000);
@@ -1130,7 +1522,11 @@ class IntelligentAudioEngine {
       typeof this.onRequestPageTurn === "function"
     ) {
       this.onRequestPageTurn(this.pageNumber + 1, {
-        autoContinueAudio: this.playerState === "playing",
+        autoContinueAudio:
+          this.playerState === "playing" ||
+          this.playerState === "loading" ||
+          this.playerState === "paused",
+        targetSentencePosition: "first",
       });
     }
   }
@@ -1143,9 +1539,69 @@ class IntelligentAudioEngine {
       typeof this.onRequestPageTurn === "function"
     ) {
       this.onRequestPageTurn(this.pageNumber - 1, {
-        autoContinueAudio: this.playerState === "playing",
+        autoContinueAudio:
+          this.playerState === "playing" ||
+          this.playerState === "loading" ||
+          this.playerState === "paused",
+        targetSentencePosition: "last",
       });
     }
+  }
+
+  /**
+   * Jump directly to the next or previous segment of a given category
+   * ("quran" = الآيات, "hadith" = الأحاديث, "urdu" = الشرح/النص) with zero lag.
+   */
+  jumpToSegmentType(category = "quran", direction = 1) {
+    const sentences = this.pageData?.sentences || [];
+    const matchesCategory = (s) => {
+      if (!s) return false;
+      if (category === "quran") return s.segmentType === "quran";
+      if (category === "hadith") {
+        return s.segmentType === "hadith" || s.segmentType === "dua" || s.segmentType === "arabic_quote";
+      }
+      return s.segmentType === "urdu_body" || s.segmentType === "heading";
+    };
+
+    const startIdx = this.sentenceIndex + (direction >= 0 ? 1 : -1);
+    for (
+      let i = startIdx;
+      direction >= 0 ? i < sentences.length : i >= 0;
+      i += direction >= 0 ? 1 : -1
+    ) {
+      if (matchesCategory(sentences[i])) {
+        this.playFrom({ sentenceIndex: i, wordIndex: 0 });
+        return true;
+      }
+    }
+
+    // Wrap on current page if another match exists before current sentence
+    for (
+      let i = direction >= 0 ? 0 : sentences.length - 1;
+      direction >= 0 ? i < this.sentenceIndex : i > this.sentenceIndex;
+      i += direction >= 0 ? 1 : -1
+    ) {
+      if (matchesCategory(sentences[i])) {
+        this.playFrom({ sentenceIndex: i, wordIndex: 0 });
+        return true;
+      }
+    }
+
+    // Or turn page seamlessly in requested direction
+    const targetPage = this.pageNumber + (direction >= 0 ? 1 : -1);
+    if (
+      targetPage >= 1 &&
+      targetPage <= this.totalPages &&
+      typeof this.onRequestPageTurn === "function"
+    ) {
+      this.onRequestPageTurn(targetPage, {
+        autoContinueAudio: true,
+        targetSegmentCategory: category,
+        targetSentencePosition: direction >= 0 ? "first" : "last",
+      });
+      return true;
+    }
+    return false;
   }
 
   setPlaybackRate(rate) {

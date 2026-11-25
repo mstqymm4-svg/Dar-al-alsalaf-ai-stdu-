@@ -124,6 +124,24 @@ export const HIGHLIGHT_COLORS = [
   },
 ];
 
+export const PROSODY_PRESETS = [
+  {
+    id: "scholarly",
+    label: "إلقاء علمي متزن (الأمثل للحديث والأردية)",
+    description: "تشكيل عربي دقيق مع نبرة وقورة للأحاديث وتوقفات واضحة للنصوص الأردية",
+  },
+  {
+    id: "measured",
+    label: "إلقاء متأنٍّ وعميق (للدراسة والتدبر)",
+    description: "وتيرة أهدأ ونبرة أعمق للأحاديث النبوية والأدعية المأثورة",
+  },
+  {
+    id: "narrative",
+    label: "سرد واضح متواصل (للقراءة السريعة)",
+    description: "انسيابية أسرع مع الحفاظ التام على مخارج الحروف والتشكيل",
+  },
+];
+
 // Locked automatic optimal defaults (Male voices + Sheikh Abdul Rahman Al-Sudais + Auto language detection + Auto highlighting)
 const LOCKED_AUTOMATIC_OVERRIDES = {
   defaultUrduVoice: "pakistani_scholar_charon",
@@ -142,12 +160,35 @@ const LOCKED_AUTOMATIC_OVERRIDES = {
 
 export const DEFAULT_READER_SETTINGS = {
   ...LOCKED_AUTOMATIC_OVERRIDES,
+  prosodyEnabled: true,
+  arabicTashkeelEnabled: true,
+  urduProofreadEnabled: true,
+  prosodyPreset: "scholarly",
+  hadithProsodyRateDelta: -3,
+  prosodyPitchDeltaHz: -1,
   defaultSpeed: 1,
   volume: 1,
   highlightColorId: "cyan",
   themeMode: "day",
   defaultDisplayMode: "reading_listening",
 };
+
+function sanitizeProsodySettings(candidate) {
+  const preset =
+    candidate?.prosodyPreset === "measured" || candidate?.prosodyPreset === "narrative"
+      ? candidate.prosodyPreset
+      : "scholarly";
+  const rawRate = Number(candidate?.hadithProsodyRateDelta);
+  const rawPitch = Number(candidate?.prosodyPitchDeltaHz);
+  return {
+    prosodyEnabled: candidate?.prosodyEnabled !== false,
+    arabicTashkeelEnabled: candidate?.arabicTashkeelEnabled !== false,
+    urduProofreadEnabled: candidate?.urduProofreadEnabled !== false,
+    prosodyPreset: preset,
+    hadithProsodyRateDelta: Number.isFinite(rawRate) ? Math.max(-10, Math.min(4, Math.round(rawRate))) : -3,
+    prosodyPitchDeltaHz: Number.isFinite(rawPitch) ? Math.max(-4, Math.min(2, Math.round(rawPitch))) : -1,
+  };
+}
 
 function getSettingsStorageKey(userEmail) {
   const email = String(userEmail || getAccountEmail() || "guest@local")
@@ -166,6 +207,7 @@ export function loadReaderSettings(userEmail) {
     return {
       ...DEFAULT_READER_SETTINGS,
       ...(parsed || {}),
+      ...sanitizeProsodySettings(parsed || {}),
       ...LOCKED_AUTOMATIC_OVERRIDES,
       defaultSpeed: Number(parsed?.defaultSpeed) > 0 ? Number(parsed.defaultSpeed) : 1,
       volume: typeof parsed?.volume === "number" ? parsed.volume : 1,
@@ -179,9 +221,13 @@ export function saveReaderSettings(partialSettings, userEmail) {
   try {
     const key = getSettingsStorageKey(userEmail);
     const current = loadReaderSettings(userEmail);
-    const updated = {
+    const merged = {
       ...current,
       ...(partialSettings || {}),
+    };
+    const updated = {
+      ...merged,
+      ...sanitizeProsodySettings(merged),
       ...LOCKED_AUTOMATIC_OVERRIDES,
       updatedAt: Date.now(),
     };

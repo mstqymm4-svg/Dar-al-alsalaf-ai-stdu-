@@ -7,14 +7,17 @@
  * 3. `quran_meta`: Verified Quran verse metadata & audio URLs
  */
 
-const CACHE_DB_NAME = "dat_intelligent_reader_cache_v4";
+const CACHE_DB_NAME = "dat_intelligent_reader_cache_v6";
 const CACHE_DB_VERSION = 1;
-export const PIPELINE_CACHE_VERSION = "v4";
+export const PIPELINE_CACHE_VERSION = "v6";
+export const READER_PIPELINE_VERSION = 11;
 
 const LEGACY_DB_NAMES = [
   "dat_intelligent_reader_cache_v1",
   "dat_intelligent_reader_cache_v2",
   "dat_intelligent_reader_cache_v3",
+  "dat_intelligent_reader_cache_v4",
+  "dat_intelligent_reader_cache_v5",
   "dar_al_tawhid_intelligent_reader_v1",
 ];
 
@@ -87,7 +90,7 @@ export async function getCachedPageOcr(bookId, pageNumber) {
       const tx = db.transaction("page_ocr", "readonly");
       const req = tx.objectStore("page_ocr").get(cacheKey);
       req.onsuccess = () => {
-        if (req.result && req.result?.data?.pipelineVersion === 4) {
+        if (req.result && req.result?.data?.pipelineVersion === READER_PIPELINE_VERSION) {
           _memOcr.set(cacheKey, req.result);
           resolve(req.result);
         } else {
@@ -107,7 +110,7 @@ export async function setCachedPageOcr(bookId, pageNumber, data) {
     cacheKey,
     bookId: String(bookId || "book"),
     pageNumber: Number(pageNumber || 1),
-    data: { ...data, pipelineVersion: 4 },
+    data: { ...data, pipelineVersion: READER_PIPELINE_VERSION },
     sizeBytes: JSON.stringify(data || {}).length,
     updatedAt: Date.now(),
   };
@@ -125,12 +128,12 @@ export async function setCachedPageOcr(bookId, pageNumber, data) {
 }
 
 // ─── TTS Audio Cache ──────────────────────────────────────────────────────────
-export function makeTtsCacheKey(text, voiceId, language) {
-  return `tts::${PIPELINE_CACHE_VERSION}::${voiceId}::${language}::${hashString(text)}`;
+export function makeTtsCacheKey(text, voiceId, language, prosodyKey = "scholarly") {
+  return `tts::${PIPELINE_CACHE_VERSION}::${voiceId}::${language}::${prosodyKey}::${hashString(text)}`;
 }
 
-export async function getCachedTtsAudio(text, voiceId, language) {
-  const cacheKey = makeTtsCacheKey(text, voiceId, language);
+export async function getCachedTtsAudio(text, voiceId, language, prosodyKey = "scholarly") {
+  const cacheKey = makeTtsCacheKey(text, voiceId, language, prosodyKey);
   if (_memTts.has(cacheKey)) return _memTts.get(cacheKey);
   try {
     const db = await openCacheDb();
@@ -138,7 +141,7 @@ export async function getCachedTtsAudio(text, voiceId, language) {
       const tx = db.transaction("tts_audio", "readonly");
       const req = tx.objectStore("tts_audio").get(cacheKey);
       req.onsuccess = () => {
-        if (req.result && req.result.pipelineVersion === 4) {
+        if (req.result && req.result.pipelineVersion === READER_PIPELINE_VERSION) {
           _memTts.set(cacheKey, req.result);
           resolve(req.result);
         } else {
@@ -152,13 +155,14 @@ export async function getCachedTtsAudio(text, voiceId, language) {
   }
 }
 
-export async function setCachedTtsAudio(text, voiceId, language, payload) {
-  const cacheKey = makeTtsCacheKey(text, voiceId, language);
+export async function setCachedTtsAudio(text, voiceId, language, payload, prosodyKey = "scholarly") {
+  const cacheKey = makeTtsCacheKey(text, voiceId, language, prosodyKey);
   const record = {
     cacheKey,
-    pipelineVersion: 4,
+    pipelineVersion: READER_PIPELINE_VERSION,
     voiceId,
     language,
+    prosodyKey,
     ...payload,
     sizeBytes: (payload?.audioBase64?.length || 0) * 0.75,
     updatedAt: Date.now(),
@@ -179,15 +183,22 @@ export async function setCachedTtsAudio(text, voiceId, language, payload) {
 // ─── Quran Verification Cache ─────────────────────────────────────────────────
 export async function getCachedQuranVerification(text, reciterId) {
   const cacheKey = `quran::${PIPELINE_CACHE_VERSION}::${reciterId}::${hashString(text)}`;
-  if (_memQuran.has(cacheKey)) return _memQuran.get(cacheKey);
+  if (_memQuran.has(cacheKey)) {
+    const cached = _memQuran.get(cacheKey);
+    if (cached?.pipelineVersion === READER_PIPELINE_VERSION) return cached;
+  }
   try {
     const db = await openCacheDb();
     return await new Promise((resolve) => {
       const tx = db.transaction("quran_meta", "readonly");
       const req = tx.objectStore("quran_meta").get(cacheKey);
       req.onsuccess = () => {
-        if (req.result) _memQuran.set(cacheKey, req.result);
-        resolve(req.result || null);
+        if (req.result && req.result.pipelineVersion === READER_PIPELINE_VERSION) {
+          _memQuran.set(cacheKey, req.result);
+          resolve(req.result);
+        } else {
+          resolve(null);
+        }
       };
       req.onerror = () => resolve(null);
     });
@@ -198,7 +209,13 @@ export async function getCachedQuranVerification(text, reciterId) {
 
 export async function setCachedQuranVerification(text, reciterId, result) {
   const cacheKey = `quran::${PIPELINE_CACHE_VERSION}::${reciterId}::${hashString(text)}`;
-  const record = { cacheKey, reciterId, ...result, updatedAt: Date.now() };
+  const record = {
+    cacheKey,
+    pipelineVersion: READER_PIPELINE_VERSION,
+    reciterId,
+    ...result,
+    updatedAt: Date.now(),
+  };
   _memQuran.set(cacheKey, record);
   try {
     const db = await openCacheDb();

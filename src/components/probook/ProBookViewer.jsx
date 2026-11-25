@@ -190,7 +190,7 @@ export default function ProBookViewer({
   const viewerRootRef = useRef(null);
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
-  const autoContinueNextPageRef = useRef(false);
+  const autoContinueNextPageRef = useRef(null);
 
   const themeCfg = READER_THEMES[theme] || READER_THEMES.light;
 
@@ -379,7 +379,10 @@ export default function ProBookViewer({
         isExtractingPage: true,
         onRequestPageTurn: (targetPage, opts) => {
           if (opts?.autoContinueAudio) {
-            autoContinueNextPageRef.current = true;
+            autoContinueNextPageRef.current = {
+              targetSentencePosition: opts.targetSentencePosition || "first",
+              targetSegmentCategory: opts.targetSegmentCategory || null,
+            };
           }
           goToPage(targetPage);
         },
@@ -441,7 +444,10 @@ export default function ProBookViewer({
           isExtractingPage: false,
           onRequestPageTurn: (targetPage, opts) => {
             if (opts?.autoContinueAudio) {
-              autoContinueNextPageRef.current = true;
+              autoContinueNextPageRef.current = {
+                targetSentencePosition: opts.targetSentencePosition || "first",
+                targetSegmentCategory: opts.targetSegmentCategory || null,
+              };
             }
             goToPage(targetPage);
           },
@@ -451,8 +457,35 @@ export default function ProBookViewer({
         });
 
         if (autoContinueNextPageRef.current) {
-          autoContinueNextPageRef.current = false;
-          intelligentAudioEngine.playFrom({ sentenceIndex: 0, wordIndex: 0 });
+          const navOpts = autoContinueNextPageRef.current;
+          autoContinueNextPageRef.current = null;
+          const sents = data?.sentences || [];
+          let targetIdx =
+            navOpts?.targetSentencePosition === "last" && sents.length > 0
+              ? sents.length - 1
+              : 0;
+          if (navOpts?.targetSegmentCategory && sents.length > 0) {
+            const cat = navOpts.targetSegmentCategory;
+            const matchFn = (s) => {
+              if (!s) return false;
+              if (cat === "quran") return s.segmentType === "quran";
+              if (cat === "hadith") {
+                return s.segmentType === "hadith" || s.segmentType === "dua" || s.segmentType === "arabic_quote";
+              }
+              return s.segmentType === "urdu_body" || s.segmentType === "heading";
+            };
+            const foundIdx =
+              navOpts.targetSentencePosition === "last"
+                ? [...sents].reverse().findIndex(matchFn)
+                : sents.findIndex(matchFn);
+            if (foundIdx >= 0) {
+              targetIdx =
+                navOpts.targetSentencePosition === "last"
+                  ? sents.length - 1 - foundIdx
+                  : foundIdx;
+            }
+          }
+          intelligentAudioEngine.playFrom({ sentenceIndex: targetIdx, wordIndex: 0 });
         }
       } catch (e) {
         console.warn("[DAR AL TAWHID Page Processor]:", e);
@@ -764,7 +797,10 @@ export default function ProBookViewer({
           isExtractingPage: false,
           onRequestPageTurn: (targetPage, opts) => {
             if (opts?.autoContinueAudio) {
-              autoContinueNextPageRef.current = true;
+              autoContinueNextPageRef.current = {
+                targetSentencePosition: opts.targetSentencePosition || "first",
+                targetSegmentCategory: opts.targetSegmentCategory || null,
+              };
             }
             goToPage(targetPage);
           },

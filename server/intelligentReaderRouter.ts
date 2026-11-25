@@ -9,6 +9,8 @@
  */
 
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { GoogleGenAI, Type } from "@google/genai";
 import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
 import Tesseract from "tesseract.js";
@@ -223,17 +225,45 @@ const CANONICAL_QURAN_INDEX: CanonicalAyah[] = [
 
 export function normalizeArabicForQuranMatch(text: string): string {
   return String(text || "")
+    .replace(/\uFEFF/g, "")
     .replace(/[\(\)\[\]\{\}]\s*[٠-٩۰-۹\d]+\s*[\(\)\[\]\{\}]/g, " ")
-    .replace(/[﴿﴾«»"'\(\)\[\]\{\}۞٭]/g, " ")
-    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/[﴿﴾«»"'\(\)\[\]\{\}۞٭،؛؟!۔.:—–\-]/g, " ")
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED\u0610-\u061A\u0640]/g, "")
     .replace(/[أإآٱ]/g, "ا")
     .replace(/[ةۃہ]/g, "ه")
     .replace(/[ىیے]/g, "ي")
     .replace(/ک/g, "ك")
     .replace(/ؤ/g, "و")
     .replace(/ئ/g, "ي")
+    .replace(/[٠-٩۰-۹\d]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeQuranOrthographicNoSpace(normalizedText: string): string {
+  return String(normalizedText || "")
+    .replace(/\s+/g, "")
+    .replace(/صلوه/g, "صلاه")
+    .replace(/زكوه/g, "زكاه")
+    .replace(/حيوه/g, "حياه")
+    .replace(/مشكوه/g, "مشكاه")
+    .replace(/غدوه/g, "غداه")
+    .replace(/نجوه/g, "نجاه")
+    .replace(/منوه/g, "مناه")
+    .replace(/ربوا/g, "ربا")
+    .replace(/اولائك|اوليك/g, "اوليك")
+    .replace(/هولاء|هاولاء/g, "هولا")
+    .replace(/ياايها|يايها/g, "يايها")
+    .replace(/سماوات|سموات/g, "سموت")
+    .replace(/عالمين|علمين/g, "علمين")
+    .replace(/رحمان|رحمن/g, "رحمن")
+    .replace(/ابراهيم|ابرهم/g, "ابراهيم")
+    .replace(/اسماعيل|اسمعيل/g, "اسمعيل")
+    .replace(/اسحاق|اسحق/g, "اسحق")
+    .replace(/سليمان|سليمن/g, "سليمن")
+    .replace(/هارون|هرون/g, "هرون")
+    .replace(/شيطان|شيطن/g, "شيطن")
+    .replace(/قران/g, "قران");
 }
 
 function buildEveryAyahUrl(
@@ -252,6 +282,264 @@ function buildIslamicNetworkAudioUrl(
 ): string {
   return `https://cdn.islamic.network/quran/audio/128/${edition}/${globalAyahNumber}.mp3`;
 }
+
+const RECITER_FOLDER_MAP: Record<string, string> = {
+  "ar.abdurrahmaansudais": "Abdurrahmaan_As-Sudais_192kbps",
+  "ar.alafasy": "Alafasy_128kbps",
+  "ar.abdulbasitmurattal": "Abdul_Basit_Murattal_192kbps",
+  "ar.husary": "Husary_128kbps",
+  "ar.minshawi": "Minshawy_Murattal_128kbps",
+};
+
+const RECITER_QURAN_COM_ID: Record<string, number> = {
+  "ar.abdurrahmaansudais": 3,
+  "ar.alafasy": 7,
+  "ar.abdulbasitmurattal": 2,
+  "ar.husary": 6,
+  "ar.minshawi": 9,
+};
+
+interface QuranComAyahSegmentsData {
+  audioUrl: string;
+  segments: Array<{ wordNum: number; startMs: number; endMs: number }>;
+  maxWordNum: number;
+}
+
+const _quranComSegmentsCache = new Map<string, QuranComAyahSegmentsData | null>();
+
+async function getQuranComAyahSegments(
+  surahNumber: number,
+  ayahNumber: number,
+  reciter = "ar.abdurrahmaansudais"
+): Promise<QuranComAyahSegmentsData | null> {
+  const qId = RECITER_QURAN_COM_ID[reciter] || 3;
+  const cacheKey = `${qId}:${surahNumber}:${ayahNumber}`;
+  if (_quranComSegmentsCache.has(cacheKey)) {
+    return _quranComSegmentsCache.get(cacheKey) || null;
+  }
+
+  try {
+    const url = `https://api.quran.com/api/v4/recitations/${qId}/by_ayah/${surahNumber}:${ayahNumber}?fields=segments`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(4500) });
+    if (!res.ok) {
+      _quranComSegmentsCache.set(cacheKey, null);
+      return null;
+    }
+    const json: any = await res.json();
+    const audioFile = Array.isArray(json?.audio_files) ? json.audio_files[0] : null;
+    const rawRelUrl = String(audioFile?.url || "").trim();
+    const rawSegs = Array.isArray(audioFile?.segments) ? audioFile.segments : [];
+    if (!rawRelUrl || rawSegs.length === 0) {
+      _quranComSegmentsCache.set(cacheKey, null);
+      return null;
+    }
+
+    const segments: Array<{ wordNum: number; startMs: number; endMs: number }> = [];
+    let maxWordNum = 0;
+    for (const seg of rawSegs) {
+      if (!Array.isArray(seg) || seg.length < 4) continue;
+      const wordNum = Number(seg[1]);
+      const startMs = Number(seg[2]);
+      const endMs = Number(seg[3]);
+      if (
+        Number.isFinite(wordNum) &&
+        wordNum >= 1 &&
+        Number.isFinite(startMs) &&
+        Number.isFinite(endMs) &&
+        endMs > startMs
+      ) {
+        segments.push({ wordNum, startMs, endMs });
+        if (wordNum > maxWordNum) maxWordNum = wordNum;
+      }
+    }
+
+    if (segments.length === 0 || maxWordNum === 0) {
+      _quranComSegmentsCache.set(cacheKey, null);
+      return null;
+    }
+
+    const fullAudioUrl = /^https?:\/\//i.test(rawRelUrl)
+      ? rawRelUrl
+      : `https://verses.quran.com/${rawRelUrl.replace(/^\/+/, "")}`;
+
+    const parsed: QuranComAyahSegmentsData = {
+      audioUrl: fullAudioUrl,
+      segments,
+      maxWordNum,
+    };
+    _quranComSegmentsCache.set(cacheKey, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+interface FullQuranEntry {
+  surahNumber: number;
+  surahNameAr: string;
+  ayahNumber: number;
+  globalAyahNumber: number;
+  text: string;
+  norm: string;
+  normNoSpace: string;
+  tokens: string[];
+  rawTokens: string[];
+}
+
+interface FullQuranIndexStore {
+  ayahs: FullQuranEntry[];
+  byKey: Map<string, number>;
+  surahMaxAyah: Map<number, number>;
+  wordIndex: Map<string, number[]>;
+  gram4Index: Map<string, number[]>;
+}
+
+const QURAN_INDEX_DISK_PATH = path.resolve(process.cwd(), "data-export", ".quran-full-index.json");
+let _fullQuranStorePromise: Promise<FullQuranIndexStore> | null = null;
+let _fullQuranStore: FullQuranIndexStore | null = null;
+
+function buildStoreFromEntries(rawEntries: Array<{
+  s: number;
+  sn: string;
+  a: number;
+  g: number;
+  t: string;
+}>): FullQuranIndexStore {
+  const ayahs: FullQuranEntry[] = [];
+  const byKey = new Map<string, number>();
+  const surahMaxAyah = new Map<number, number>();
+  const wordIndex = new Map<string, number[]>();
+  const gram4Index = new Map<string, number[]>();
+
+  for (let i = 0; i < rawEntries.length; i++) {
+    const raw = rawEntries[i];
+    const cleanText = String(raw.t || "").replace(/\uFEFF/g, "").trim();
+    const norm = normalizeArabicForQuranMatch(cleanText);
+    const normNoSpace = normalizeQuranOrthographicNoSpace(norm);
+    const rawTokens = norm.split(" ").filter(Boolean);
+    const tokens = rawTokens.filter((w) => w.length >= 2);
+    const entry: FullQuranEntry = {
+      surahNumber: raw.s,
+      surahNameAr: raw.sn,
+      ayahNumber: raw.a,
+      globalAyahNumber: raw.g,
+      text: cleanText,
+      norm,
+      normNoSpace,
+      tokens,
+      rawTokens,
+    };
+    ayahs.push(entry);
+    byKey.set(`${raw.s}:${raw.a}`, i);
+    const prevMax = surahMaxAyah.get(raw.s) || 0;
+    if (raw.a > prevMax) surahMaxAyah.set(raw.s, raw.a);
+
+    const seenWords = new Set<string>();
+    for (const tk of tokens) {
+      if (tk.length >= 3 && !seenWords.has(tk)) {
+        seenWords.add(tk);
+        let list = wordIndex.get(tk);
+        if (!list) {
+          list = [];
+          wordIndex.set(tk, list);
+        }
+        list.push(i);
+      }
+    }
+
+    if (normNoSpace.length >= 4) {
+      const seenGrams = new Set<string>();
+      for (let k = 0; k <= normNoSpace.length - 4; k += 2) {
+        const g4 = normNoSpace.slice(k, k + 4);
+        if (!seenGrams.has(g4)) {
+          seenGrams.add(g4);
+          let gList = gram4Index.get(g4);
+          if (!gList) {
+            gList = [];
+            gram4Index.set(g4, gList);
+          }
+          gList.push(i);
+        }
+      }
+    }
+  }
+
+  return { ayahs, byKey, surahMaxAyah, wordIndex, gram4Index };
+}
+
+async function getFullQuranIndex(): Promise<FullQuranIndexStore> {
+  if (_fullQuranStore) return _fullQuranStore;
+  if (_fullQuranStorePromise) return _fullQuranStorePromise;
+
+  _fullQuranStorePromise = (async () => {
+    // 1. Try disk cache first (instant < 15ms startup)
+    try {
+      if (fs.existsSync(QURAN_INDEX_DISK_PATH)) {
+        const rawJson = fs.readFileSync(QURAN_INDEX_DISK_PATH, "utf-8");
+        const parsed = JSON.parse(rawJson);
+        if (Array.isArray(parsed) && parsed.length >= 6200) {
+          _fullQuranStore = buildStoreFromEntries(parsed);
+          return _fullQuranStore;
+        }
+      }
+    } catch {
+      // Rebuild from API if disk file corrupt
+    }
+
+    // 2. Fetch full 6,236-ayah Quran from api.alquran.cloud and persist locally
+    try {
+      const apiRes = await fetch("https://api.alquran.cloud/v1/quran/quran-simple-clean", {
+        signal: AbortSignal.timeout(12000),
+      });
+      if (apiRes.ok) {
+        const apiData: any = await apiRes.json();
+        const surahs = Array.isArray(apiData?.data?.surahs) ? apiData.data.surahs : [];
+        const compactEntries: Array<{ s: number; sn: string; a: number; g: number; t: string }> = [];
+        for (const s of surahs) {
+          const sNum = Number(s.number);
+          const sName = String(s.name || `سورة ${sNum}`).trim();
+          for (const ay of s.ayahs || []) {
+            compactEntries.push({
+              s: sNum,
+              sn: sName,
+              a: Number(ay.numberInSurah),
+              g: Number(ay.number),
+              t: String(ay.text || "").replace(/\uFEFF/g, "").trim(),
+            });
+          }
+        }
+        if (compactEntries.length >= 6200) {
+          try {
+            fs.mkdirSync(path.dirname(QURAN_INDEX_DISK_PATH), { recursive: true });
+            fs.writeFileSync(QURAN_INDEX_DISK_PATH, JSON.stringify(compactEntries));
+          } catch {}
+          _fullQuranStore = buildStoreFromEntries(compactEntries);
+          return _fullQuranStore;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[DAR AL TAWHID Full Quran Loader Fallback]:", err?.message || err);
+    }
+
+    // 3. Emergency fallback to embedded canonical subset
+    const fallbackEntries = CANONICAL_QURAN_INDEX.map((it) => ({
+      s: it.surahNumber,
+      sn: it.surahNameAr,
+      a: it.ayahNumber,
+      g: it.globalAyahNumber,
+      t: it.uthmaniText,
+    }));
+    _fullQuranStore = buildStoreFromEntries(fallbackEntries);
+    return _fullQuranStore;
+  })();
+
+  return _fullQuranStorePromise;
+}
+
+// Pre-warm Full 6,236-Ayah index silently on module load
+setTimeout(() => {
+  getFullQuranIndex().catch(() => {});
+}, 250);
 
 // ─── Helper: Server-side Presentation Forms Normalization, Visual LTR Reversal Fix & Letter Rejoiner ───
 const STRICTLY_WORD_FINAL_SERVER = new Set(["ے", "ں", "ة", "ى", "ۃ"]);
@@ -958,161 +1246,825 @@ intelligentReaderRouter.post("/ocr-page", express.json({ limit: "18mb" }), async
   }
 });
 
-// ─── 2. POST /api/reader/verify-quran — Authentic Quranic Verse Verification ───
-intelligentReaderRouter.post("/verify-quran", express.json(), async (req, res) => {
-  try {
-    const { text, surahHint, ayahHint, reciter = "ar.abdurrahmaansudais" } = req.body || {};
-    const reciterFolderMap: Record<string, string> = {
-      "ar.abdurrahmaansudais": "Abdurrahmaan_As-Sudais_192kbps",
-      "ar.alafasy": "Alafasy_128kbps",
-      "ar.abdulbasitmurattal": "Abdul_Basit_Murattal_192kbps",
-      "ar.husary": "Husary_128kbps",
-      "ar.minshawi": "Minshawy_Murattal_128kbps",
-    };
-    const everyAyahFolder = reciterFolderMap[reciter] || "Abdurrahmaan_As-Sudais_192kbps";
+function charBigramDiceNoSpace(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+  const gramsA = new Map<string, number>();
+  for (let i = 0; i < a.length - 1; i++) {
+    const g = a.slice(i, i + 2);
+    gramsA.set(g, (gramsA.get(g) || 0) + 1);
+  }
+  let overlap = 0;
+  for (let i = 0; i < b.length - 1; i++) {
+    const g = b.slice(i, i + 2);
+    const c = gramsA.get(g) || 0;
+    if (c > 0) {
+      overlap++;
+      gramsA.set(g, c - 1);
+    }
+  }
+  return (2 * overlap) / (a.length - 1 + b.length - 1);
+}
 
-    if (Number(surahHint) >= 1 && Number(surahHint) <= 114 && Number(ayahHint) >= 1) {
-      const sNum = Number(surahHint);
-      const aNum = Number(ayahHint);
-      try {
-        const apiRes = await fetch(`https://api.alquran.cloud/v1/ayah/${sNum}:${aNum}/${reciter}`);
-        if (apiRes.ok) {
-          const data: any = await apiRes.json();
-          if (data?.data?.number) {
-            return res.json({
-              verified: true,
-              confidence: 1.0,
-              surahNumber: sNum,
-              surahName: data.data.surah?.name || `سورة ${sNum}`,
-              ayahNumber: aNum,
-              globalAyahNumber: data.data.number,
-              uthmaniText: data.data.text,
-              audioUrl: `/api/reader/quran-audio?url=${encodeURIComponent(
-                data.data.audio || buildEveryAyahUrl(sNum, aNum, everyAyahFolder)
-              )}`,
-              directAudioUrl: data.data.audio || buildEveryAyahUrl(sNum, aNum, everyAyahFolder),
-            });
+function scoreNoSpaceMatch(inputNS: string, candNS: string): {
+  score: number;
+  containment: number;
+  dice: number;
+} {
+  if (!inputNS || !candNS) return { score: 0, containment: 0, dice: 0 };
+  if (inputNS === candNS) return { score: 1.0, containment: 1.0, dice: 1.0 };
+
+  if (candNS.includes(inputNS) && inputNS.length >= 12) {
+    const lenRatio = inputNS.length / Math.max(1, candNS.length);
+    return {
+      score: Math.min(0.99, 0.86 + 0.13 * lenRatio),
+      containment: 1.0,
+      dice: charBigramDiceNoSpace(inputNS, candNS),
+    };
+  }
+  if (inputNS.includes(candNS) && candNS.length >= 12) {
+    const lenRatio = candNS.length / Math.max(1, inputNS.length);
+    return {
+      score: Math.min(0.99, 0.84 + 0.15 * lenRatio),
+      containment: 1.0,
+      dice: charBigramDiceNoSpace(inputNS, candNS),
+    };
+  }
+
+  const dice = charBigramDiceNoSpace(inputNS, candNS);
+  const shorterLen = Math.min(inputNS.length, candNS.length);
+  const longerLen = Math.max(inputNS.length, candNS.length);
+  // Check ordered bigram containment of shorter string inside longer string
+  const gramsLong = new Map<string, number>();
+  const longer = inputNS.length >= candNS.length ? inputNS : candNS;
+  const shorter = inputNS.length < candNS.length ? inputNS : candNS;
+  for (let i = 0; i < longer.length - 1; i++) {
+    const g = longer.slice(i, i + 2);
+    gramsLong.set(g, (gramsLong.get(g) || 0) + 1);
+  }
+  let shortHits = 0;
+  for (let i = 0; i < shorter.length - 1; i++) {
+    const g = shorter.slice(i, i + 2);
+    const c = gramsLong.get(g) || 0;
+    if (c > 0) {
+      shortHits++;
+      gramsLong.set(g, c - 1);
+    }
+  }
+  const containment = shorterLen >= 4 ? shortHits / Math.max(1, shorterLen - 1) : 0;
+  const lengthBalance = shorterLen / Math.max(1, longerLen);
+  const score =
+    lengthBalance >= 0.6
+      ? dice * 0.72 + containment * 0.28
+      : containment >= 0.86 && shorterLen >= 16
+      ? containment * 0.78 + dice * 0.22
+      : dice * 0.65 + containment * 0.35;
+
+  return { score, containment, dice };
+}
+
+function alignWrittenTokensToEntries(
+  entries: FullQuranEntry[],
+  normInputNS: string
+): Array<{
+  entry: FullQuranEntry;
+  startWord0: number;
+  endWord0: number;
+  totalWords: number;
+  isPartial: boolean;
+}> {
+  if (!entries || entries.length === 0) return [];
+  const tokenFormsList = entries.map((e) => {
+    const raw = e.rawTokens && e.rawTokens.length > 0 ? e.rawTokens : e.norm.split(" ").filter(Boolean);
+    return raw.map((tk) => normalizeQuranOrthographicNoSpace(tk));
+  });
+
+  // Skip alignment if input text is empty or contains undecoded QCF PUA glyphs
+  if (!normInputNS || normInputNS.length < 8 || /[\uFB50-\uFDCFڎڈژ]/.test(normInputNS)) {
+    return entries.map((e, i) => {
+      const total = tokenFormsList[i].length;
+      return {
+        entry: e,
+        startWord0: 0,
+        endWord0: Math.max(0, total - 1),
+        totalWords: total,
+        isPartial: false,
+      };
+    });
+  }
+
+  // Case 1: Single Ayah — detect strict partial prefix, suffix, or mid-ayah excerpt
+  if (entries.length === 1) {
+    const forms = tokenFormsList[0];
+    const N = forms.length;
+    if (N <= 1 || normInputNS.length >= entries[0].normNoSpace.length * 0.9) {
+      return [
+        {
+          entry: entries[0],
+          startWord0: 0,
+          endWord0: Math.max(0, N - 1),
+          totalWords: N,
+          isPartial: false,
+        },
+      ];
+    }
+
+    // Cumulative char lengths for O(1) slice length checks
+    const cumLens = new Array<number>(N + 1).fill(0);
+    for (let i = 0; i < N; i++) {
+      cumLens[i + 1] = cumLens[i] + forms[i].length;
+    }
+
+    let bestS = 0;
+    let bestE = N - 1;
+    let bestSc = -1;
+    const minLen = Math.max(5, Math.floor(normInputNS.length * 0.65));
+    const maxLen = Math.ceil(normInputNS.length * 1.45);
+
+    for (let s = 0; s < N; s++) {
+      for (let e = s; e < N; e++) {
+        const spanCharLen = cumLens[e + 1] - cumLens[s];
+        if (spanCharLen < minLen) continue;
+        if (spanCharLen > maxLen) break;
+
+        const spanNS = forms.slice(s, e + 1).join("");
+        const m = scoreNoSpaceMatch(normInputNS, spanNS);
+        const lenMatch =
+          1 - Math.min(0.4, Math.abs(normInputNS.length - spanNS.length) / Math.max(12, normInputNS.length));
+        const sc = m.score * 0.85 + lenMatch * 0.15;
+        if (sc > bestSc) {
+          bestSc = sc;
+          bestS = s;
+          bestE = e;
+        }
+      }
+    }
+
+    const isPartial =
+      bestSc >= 0.78 &&
+      (bestS > 0 || bestE < N - 1) &&
+      bestE - bestS + 1 < N;
+
+    return [
+      {
+        entry: entries[0],
+        startWord0: isPartial ? bestS : 0,
+        endWord0: isPartial ? bestE : Math.max(0, N - 1),
+        totalWords: N,
+        isPartial,
+      },
+    ];
+  }
+
+  // Case 2: Multi-Ayah Span — check if first ayah starts mid-ayah and/or last ayah ends mid-ayah
+  const firstForms = tokenFormsList[0];
+  const N0 = firstForms.length;
+  let firstStart = 0;
+  let firstScore = -1;
+  let firstTailLen = entries[0].normNoSpace.length;
+
+  for (let s = 0; s < N0; s++) {
+    const tailNS = firstForms.slice(s).join("");
+    if (tailNS.length < 4) break;
+    if (tailNS.length > normInputNS.length + 6) continue;
+    const prefixTarget = normInputNS.slice(0, Math.min(normInputNS.length, tailNS.length));
+    const m = scoreNoSpaceMatch(prefixTarget, tailNS);
+    const sc = m.score;
+    if (sc > firstScore + 0.005) {
+      firstScore = sc;
+      firstStart = s;
+      firstTailLen = tailNS.length;
+    }
+  }
+  const firstIsPartial = firstScore >= 0.78 && firstStart > 0;
+  const effectiveFirstStart = firstIsPartial ? firstStart : 0;
+  const consumedFirstLen = firstIsPartial ? firstTailLen : entries[0].normNoSpace.length;
+
+  const midLen = entries
+    .slice(1, entries.length - 1)
+    .reduce((acc, e) => acc + e.normNoSpace.length, 0);
+
+  const lastIdx = entries.length - 1;
+  const lastForms = tokenFormsList[lastIdx];
+  const NL = lastForms.length;
+  const estRemainStart = Math.max(0, consumedFirstLen + midLen);
+  const remainNS = normInputNS.slice(Math.max(0, estRemainStart - 2));
+
+  let lastEnd = NL - 1;
+  let lastScore = -1;
+
+  if (remainNS.length >= 4 && remainNS.length < entries[lastIdx].normNoSpace.length * 0.92) {
+    for (let e = 0; e < NL; e++) {
+      const headNS = lastForms.slice(0, e + 1).join("");
+      if (headNS.length < 4) continue;
+      if (headNS.length > remainNS.length + 8) break;
+      const m = scoreNoSpaceMatch(remainNS, headNS);
+      const lenMatch =
+        1 - Math.min(0.4, Math.abs(remainNS.length - headNS.length) / Math.max(10, remainNS.length));
+      const sc = m.score * 0.85 + lenMatch * 0.15;
+      if (sc > lastScore) {
+        lastScore = sc;
+        lastEnd = e;
+      }
+    }
+  }
+  const lastIsPartial = lastScore >= 0.78 && lastEnd < NL - 1;
+  const effectiveLastEnd = lastIsPartial ? lastEnd : Math.max(0, NL - 1);
+
+  return entries.map((e, i) => {
+    const N = tokenFormsList[i].length;
+    if (i === 0) {
+      return {
+        entry: e,
+        startWord0: effectiveFirstStart,
+        endWord0: Math.max(0, N - 1),
+        totalWords: N,
+        isPartial: firstIsPartial,
+      };
+    }
+    if (i === lastIdx) {
+      return {
+        entry: e,
+        startWord0: 0,
+        endWord0: effectiveLastEnd,
+        totalWords: N,
+        isPartial: lastIsPartial,
+      };
+    }
+    return {
+      entry: e,
+      startWord0: 0,
+      endWord0: Math.max(0, N - 1),
+      totalWords: N,
+      isPartial: false,
+    };
+  });
+}
+
+async function buildAyahPayload(
+  entry: FullQuranEntry,
+  reciter: string,
+  everyAyahFolder: string,
+  partialSpan?: { startWord0: number; endWord0: number; totalWords: number; isPartial: boolean }
+) {
+  let directUrl = buildEveryAyahUrl(entry.surahNumber, entry.ayahNumber, everyAyahFolder);
+  const backupUrl = entry.globalAyahNumber
+    ? buildIslamicNetworkAudioUrl(entry.globalAyahNumber, reciter)
+    : directUrl;
+
+  let isPartialClip = false;
+  let clipStartMs = 0;
+  let clipEndMs = 0;
+  let partialWordCount = partialSpan?.isPartial
+    ? Math.max(1, partialSpan.endWord0 - partialSpan.startWord0 + 1)
+    : entry.rawTokens?.length || entry.tokens.length;
+  let wordTimings: Array<{ wordIndex: number; startMs: number; endMs: number; confidence: string }> | undefined;
+
+  if (partialSpan?.isPartial && partialSpan.totalWords > 0) {
+    const qSegData = await getQuranComAyahSegments(entry.surahNumber, entry.ayahNumber, reciter);
+    if (qSegData && qSegData.segments.length > 0 && qSegData.maxWordNum > 0) {
+      const N = partialSpan.totalWords;
+      const M = qSegData.maxWordNum;
+      const mappedStart1 =
+        M === N
+          ? partialSpan.startWord0 + 1
+          : Math.max(1, Math.min(M, Math.floor((partialSpan.startWord0 / N) * M) + 1));
+      const mappedEnd1 =
+        M === N
+          ? partialSpan.endWord0 + 1
+          : Math.max(
+              mappedStart1,
+              Math.min(M, Math.ceil(((partialSpan.endWord0 + 1) / N) * M))
+            );
+
+      const segByWord = new Map<number, { startMs: number; endMs: number }>();
+      for (const s of qSegData.segments) {
+        const prev = segByWord.get(s.wordNum);
+        if (!prev) {
+          segByWord.set(s.wordNum, { startMs: s.startMs, endMs: s.endMs });
+        } else {
+          segByWord.set(s.wordNum, {
+            startMs: Math.min(prev.startMs, s.startMs),
+            endMs: Math.max(prev.endMs, s.endMs),
+          });
+        }
+      }
+
+      const sliceSegs: Array<{ startMs: number; endMs: number }> = [];
+      for (let w1 = mappedStart1; w1 <= mappedEnd1; w1++) {
+        const found = segByWord.get(w1);
+        if (found) sliceSegs.push(found);
+      }
+
+      if (sliceSegs.length > 0) {
+        directUrl = qSegData.audioUrl;
+        isPartialClip = true;
+        clipStartMs =
+          partialSpan.startWord0 === 0
+            ? 0
+            : Math.max(0, sliceSegs[0].startMs - 55);
+        clipEndMs =
+          partialSpan.endWord0 >= N - 1
+            ? 0
+            : sliceSegs[sliceSegs.length - 1].endMs + 115;
+
+        const targetTokenSlice = (entry.rawTokens || []).slice(
+          partialSpan.startWord0,
+          partialSpan.endWord0 + 1
+        );
+        if (targetTokenSlice.length > 0) {
+          wordTimings = targetTokenSlice.map((_, i) => {
+            const segIdx = Math.min(
+              sliceSegs.length - 1,
+              Math.floor((i / targetTokenSlice.length) * sliceSegs.length)
+            );
+            return {
+              wordIndex: i,
+              startMs: sliceSegs[segIdx].startMs,
+              endMs: sliceSegs[segIdx].endMs,
+              confidence: "quran-com-segments",
+            };
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    surahNumber: entry.surahNumber,
+    surahName: entry.surahNameAr,
+    ayahNumber: entry.ayahNumber,
+    globalAyahNumber: entry.globalAyahNumber,
+    uthmaniText: entry.text,
+    normalizedWordCount: partialWordCount,
+    partialWordCount,
+    isPartialClip,
+    clipStartMs,
+    clipEndMs,
+    wordTimings,
+    reciterId: reciter,
+    audioUrl: `/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`,
+    directAudioUrl: directUrl,
+    backupAudioUrl: backupUrl,
+  };
+}
+
+async function buildVerifiedResponseFromEntries(
+  entries: FullQuranEntry[],
+  reciter: string,
+  everyAyahFolder: string,
+  confidence: number,
+  normInputNS = ""
+) {
+  const first = entries[0];
+  const last = entries[entries.length - 1];
+  const spans = alignWrittenTokensToEntries(entries, normInputNS);
+  const ayahList = await Promise.all(
+    entries.map((e, idx) => buildAyahPayload(e, reciter, everyAyahFolder, spans[idx]))
+  );
+  const primary = ayahList[0];
+  return {
+    verified: true,
+    confidence: Number(confidence.toFixed(3)),
+    surahNumber: first.surahNumber,
+    surahName: first.surahNameAr,
+    ayahNumber: first.ayahNumber,
+    endAyahNumber: last.ayahNumber,
+    globalAyahNumber: first.globalAyahNumber,
+    uthmaniText: entries.map((e) => e.text).join(" ۝ "),
+    reciterId: reciter,
+    audioUrl: primary.audioUrl,
+    directAudioUrl: primary.directAudioUrl,
+    backupAudioUrl: primary.backupAudioUrl,
+    ayahList,
+  };
+}
+
+function maybeFlipRtlDigits(num: number, maxAllowed: number): number[] {
+  if (!num || num <= 0) return [];
+  const candidates = [num];
+  if (num >= 10 && num <= 999) {
+    const rev = Number(String(num).split("").reverse().join(""));
+    if (rev > 0 && rev !== num && rev <= maxAllowed) {
+      candidates.push(rev);
+    }
+  }
+  return candidates.filter((n) => n >= 1 && n <= maxAllowed);
+}
+
+async function verifySingleQuranVerse(params: {
+  text?: string;
+  surahHint?: number;
+  ayahHint?: number;
+  endAyahHint?: number;
+  hasQuranBrackets?: boolean;
+  isQcfMushaf?: boolean;
+  reciter?: string;
+}) {
+  const reciter = String(params.reciter || "ar.abdurrahmaansudais");
+  const everyAyahFolder =
+    RECITER_FOLDER_MAP[reciter] || "Abdurrahmaan_As-Sudais_192kbps";
+
+  const store = await getFullQuranIndex();
+  const rawText = String(params.text || "").trim();
+  const rawNoTash = rawText.replace(/[\u064B-\u065F\u0670]/g, "");
+  const hasBrackets =
+    Boolean(params.hasQuranBrackets) ||
+    rawText.includes("﴿") ||
+    rawText.includes("﴾");
+  const isQcfMushaf = Boolean(params.isQcfMushaf);
+
+  // Guard unbracketed quotes so author duas, Hadiths, TOC & bibliography items are NEVER misclassified as Quran
+  if (!hasBrackets && !isQcfMushaf) {
+    const isExcludedNonQuran =
+      /[«»]/.test(rawText) ||
+      /^\s*[٠-٩۰-۹\d]{1,3}\s*[-–—۔.]/.test(rawNoTash) ||
+      /(?:وآخر\s+دعوانا|وصلى\s+الله\s+وسلم\s+على\s+نبينا|مدارج\s+السالكين|الناشر\s*:|عدد\s+الأجزاء)/.test(
+        rawNoTash
+      ) ||
+      /^(?:حدثنا|أخبرنا|عن\s|رواه|أخرجه|متفق\s+عليه|قال\s+رسول\s+الله|قال\s+النبي|اللهم)/.test(
+        rawNoTash
+      );
+    if (isExcludedNonQuran) {
+      return {
+        verified: false,
+        confidence: 0,
+        reason: "Excluded non-Quranic quote (Hadith, Dua, TOC, or Bibliography).",
+      };
+    }
+  }
+
+  const normInput = normalizeArabicForQuranMatch(rawText);
+  const normInputNS = normalizeQuranOrthographicNoSpace(normInput);
+  const sHint = Number(params.surahHint || 0);
+  const aHintRaw = Number(params.ayahHint || 0);
+  const eHintRaw = Number(params.endAyahHint || 0);
+
+  // 1. If Footnote Citation or Inline [Surah: Ayah] provided:
+  if (sHint >= 1 && sHint <= 114 && aHintRaw >= 1) {
+    const maxAy = store.surahMaxAyah.get(sHint) || 300;
+    const startCandidates = maybeFlipRtlDigits(aHintRaw, maxAy);
+
+    // For undecoded King Fahd Mushaf QCF glyphs (e.g., P24 [غافر: ٦٥]), resolve directly to authentic Uthmani verse(s)
+    if (isQcfMushaf) {
+      const qcfStart = startCandidates[0] || aHintRaw;
+      const qcfEnd =
+        eHintRaw > qcfStart && eHintRaw <= maxAy && eHintRaw - qcfStart <= 10
+          ? eHintRaw
+          : qcfStart;
+      const qcfSlice: FullQuranEntry[] = [];
+      for (let a = qcfStart; a <= qcfEnd; a++) {
+        const idx = store.byKey.get(`${sHint}:${a}`);
+        if (idx !== undefined) qcfSlice.push(store.ayahs[idx]);
+      }
+      if (qcfSlice.length > 0) {
+        return await buildVerifiedResponseFromEntries(
+          qcfSlice,
+          reciter,
+          everyAyahFolder,
+          0.99,
+          ""
+        );
+      }
+    }
+
+    let bestHintSlice: FullQuranEntry[] | null = null;
+    let bestHintScore = -1;
+
+    for (const st of startCandidates) {
+      const ends = [st];
+      if (eHintRaw > 0 && eHintRaw !== aHintRaw) {
+        const endCandidates = maybeFlipRtlDigits(eHintRaw, maxAy);
+        for (const en of endCandidates) {
+          if (en >= st && en - st <= 10 && !ends.includes(en)) {
+            ends.push(en);
           }
         }
-      } catch {
-        // Fall through
+      }
+
+      for (const en of ends) {
+        const slice: FullQuranEntry[] = [];
+        for (let a = st; a <= en; a++) {
+          const idx = store.byKey.get(`${sHint}:${a}`);
+          if (idx !== undefined) slice.push(store.ayahs[idx]);
+        }
+        if (slice.length === 0) continue;
+
+        if (!normInputNS || normInputNS.length < 8) {
+          if (bestHintSlice === null) {
+            bestHintSlice = slice;
+            bestHintScore = 0.92;
+          }
+          continue;
+        }
+
+        const joinedNS = slice.map((e) => e.normNoSpace).join("");
+        const m = scoreNoSpaceMatch(normInputNS, joinedNS);
+        const lenDiffBonus =
+          1 - Math.min(0.4, Math.abs(normInputNS.length - joinedNS.length) / Math.max(20, normInputNS.length, joinedNS.length));
+        const sc = m.score * 0.88 + lenDiffBonus * 0.12;
+        if (sc > bestHintScore) {
+          bestHintScore = sc;
+          bestHintSlice = slice;
+        }
       }
     }
 
-    const normInput = normalizeArabicForQuranMatch(text || "");
-    const normInputNoSpace = normInput.replace(/\s+/g, "");
-    if (!normInput || normInput.length < 8) {
-      return res.json({ verified: false, reason: "Text too short for strict Quran verification" });
+    const bestHintJoinedLen = bestHintSlice
+      ? bestHintSlice.reduce((acc, e) => acc + e.normNoSpace.length, 0)
+      : 0;
+    const hintCoversFullInput =
+      bestHintJoinedLen === 0 || normInputNS.length <= bestHintJoinedLen * 1.22;
+    const hintThreshold =
+      normInputNS.length < 18 ? (hasBrackets ? 0.45 : 0.65) : 0.86;
+    if (bestHintSlice && bestHintScore >= hintThreshold && hintCoversFullInput) {
+      return await buildVerifiedResponseFromEntries(
+        bestHintSlice,
+        reciter,
+        everyAyahFolder,
+        Math.min(1.0, Math.max(0.9, bestHintScore)),
+        normInputNS
+      );
     }
+  }
 
-    for (const item of CANONICAL_QURAN_INDEX) {
-      const keyNoSpace = item.normalizedKey.replace(/\s+/g, "");
-      if (
-        normInput.includes(item.normalizedKey) ||
-        (item.normalizedKey.includes(normInput) && normInput.length >= 14) ||
-        normInputNoSpace.includes(keyNoSpace) ||
-        (keyNoSpace.includes(normInputNoSpace) && normInputNoSpace.length >= 14)
-      ) {
-        const directUrl = buildEveryAyahUrl(item.surahNumber, item.ayahNumber, everyAyahFolder);
-        return res.json({
-          verified: true,
-          confidence: 0.99,
-          surahNumber: item.surahNumber,
-          surahName: item.surahNameAr,
-          ayahNumber: item.ayahNumber,
-          globalAyahNumber: item.globalAyahNumber,
-          uthmaniText: item.uthmaniText,
-          reciterId: reciter,
-          audioUrl: `/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`,
-          directAudioUrl: directUrl,
-          backupAudioUrl: buildIslamicNetworkAudioUrl(item.globalAyahNumber, reciter),
-        });
+  if (!normInputNS || normInputNS.length < 8) {
+    return { verified: false, confidence: 0, reason: "Text too short for strict Quran verification" };
+  }
+
+  // 2. Full 6,236-Ayah Local Inverted-Token + Character-4gram Search
+  const candidateScores = new Map<number, number>();
+  const inputTokens = normInput.split(" ").filter((w) => w.length >= 3);
+
+  for (const tk of inputTokens) {
+    const list = store.wordIndex.get(tk);
+    if (!list) continue;
+    // Rare words weigh much higher than common words ("الله", "الذين", "من")
+    const weight = list.length <= 5 ? 6 : list.length <= 30 ? 3.5 : list.length <= 150 ? 1.5 : 0.4;
+    for (const ayIdx of list) {
+      candidateScores.set(ayIdx, (candidateScores.get(ayIdx) || 0) + weight);
+    }
+  }
+
+  // 4-gram fallback for PDFs with split Arabic words (e.g. "السيِ ئات", "ذ لِك")
+  if (normInputNS.length >= 8) {
+    const step = normInputNS.length > 90 ? 4 : 2;
+    for (let k = 0; k <= normInputNS.length - 4; k += step) {
+      const g4 = normInputNS.slice(k, k + 4);
+      const list = store.gram4Index.get(g4);
+      if (!list || list.length > 180) continue;
+      const gWeight = list.length <= 12 ? 1.8 : 0.6;
+      for (const ayIdx of list) {
+        candidateScores.set(ayIdx, (candidateScores.get(ayIdx) || 0) + gWeight);
       }
     }
+  }
 
-    try {
-      const searchWords = normInput
-        .split(" ")
-        .filter((w) => w.length >= 3)
-        .slice(0, 5)
-        .join(" ");
+  // Rank top 40 candidate Ayah positions (+ prioritize sHint surah if given)
+  const rankedStartIndices = [...candidateScores.entries()]
+    .map(([idx, rawSc]) => {
+      const bonus = sHint > 0 && store.ayahs[idx]?.surahNumber === sHint ? 4.0 : 0;
+      return { idx, sc: rawSc + bonus };
+    })
+    .sort((a, b) => b.sc - a.sc)
+    .slice(0, 40)
+    .map((x) => x.idx);
+
+  // Also include exact `normNoSpace` containment scan when short/partial verse wasn't caught cleanly by tokens
+  if (rankedStartIndices.length === 0 && normInputNS.length >= 12) {
+    for (let i = 0; i < store.ayahs.length; i++) {
+      const aNS = store.ayahs[i].normNoSpace;
+      if (aNS.includes(normInputNS) || normInputNS.includes(aNS)) {
+        rankedStartIndices.push(i);
+        if (rankedStartIndices.length >= 15) break;
+      }
+    }
+  }
+
+  let bestSlice: FullQuranEntry[] | null = null;
+  let bestCombinedScore = 0;
+  let bestContainment = 0;
+
+  for (const startIdx of rankedStartIndices) {
+    const startEntry = store.ayahs[startIdx];
+    if (!startEntry) continue;
+
+    // Try single ayah AND multi-ayah spans (1..6 consecutive ayahs in the same Surah)
+    let accumNS = "";
+    const span: FullQuranEntry[] = [];
+    for (let k = 0; k < 6; k++) {
+      const curr = store.ayahs[startIdx + k];
+      if (!curr || curr.surahNumber !== startEntry.surahNumber) break;
+      span.push(curr);
+      accumNS += curr.normNoSpace;
+
+      const m = scoreNoSpaceMatch(normInputNS, accumNS);
+
+      // True minimal multi-ayah span check: e.g. end of ayah N + start/all of ayah N+1 (like 39:2-3 or 76:11-12)
+      let isMinimalMultiAyahContainment = false;
+      if (k > 0 && accumNS.includes(normInputNS)) {
+        const firstTail = span[0].normNoSpace.slice(-Math.min(6, span[0].normNoSpace.length));
+        const lastHead = curr.normNoSpace.slice(0, Math.min(6, curr.normNoSpace.length));
+        const withoutLast = accumNS.slice(0, accumNS.length - curr.normNoSpace.length);
+        const withoutFirst = accumNS.slice(span[0].normNoSpace.length);
+        if (
+          !withoutLast.includes(normInputNS) &&
+          !withoutFirst.includes(normInputNS) &&
+          normInputNS.includes(firstTail) &&
+          normInputNS.includes(lastHead)
+        ) {
+          isMinimalMultiAyahContainment = true;
+        }
+      }
+
+      // Penalize adding extra ayahs that go well beyond normInputNS length (unless truly minimal contiguous span)
+      const overshootPenalty = isMinimalMultiAyahContainment
+        ? 0
+        : k > 0 && accumNS.length > normInputNS.length * 1.25
+        ? Math.min(0.25, (accumNS.length - normInputNS.length * 1.25) / Math.max(40, accumNS.length))
+        : 0;
+      const multiAyahBonus = isMinimalMultiAyahContainment ? 0.06 : 0;
+      const finalScore = isMinimalMultiAyahContainment
+        ? Math.max(m.score, 0.975)
+        : m.score - overshootPenalty + multiAyahBonus;
+
+      if (finalScore > bestCombinedScore) {
+        bestCombinedScore = finalScore;
+        bestContainment = m.containment;
+        bestSlice = [...span];
+      }
+
+      // Stop extending span once accumulated text is well past the input text length
+      if (accumNS.length >= normInputNS.length * 1.35 && !accumNS.includes(normInputNS)) break;
+      if (isMinimalMultiAyahContainment) break;
+    }
+  }
+
+  // Strict precision gate:
+  // - Inside explicit Quran brackets ﴿...﴾: accept >= 0.64 (handles OCR noise / split cross-page fragments / multi-ayah spans)
+  // - Unbracketed Arabic quote candidate: require very strict >= 0.86 AND at least 18 chars so Hadiths NEVER match falsely!
+  const threshold = hasBrackets ? 0.64 : 0.86;
+  const minChars = hasBrackets ? 8 : 18;
+
+  if (
+    bestSlice &&
+    normInputNS.length >= minChars &&
+    (bestCombinedScore >= threshold || (hasBrackets && bestContainment >= 0.86 && normInputNS.length >= 12))
+  ) {
+    const conf = Math.min(0.999, Math.max(bestCombinedScore, bestContainment * 0.96));
+    return await buildVerifiedResponseFromEntries(bestSlice, reciter, everyAyahFolder, conf, normInputNS);
+  }
+
+  // 3. Final live fallback via AlQuran.cloud search API ONLY when offline index didn't resolve & input has >= 3 words
+  try {
+    const searchWords = normInput
+      .split(" ")
+      .filter((w) => w.length >= 3)
+      .slice(0, 5)
+      .join(" ");
+    if (searchWords.length >= 8) {
       const searchUrl = `https://api.alquran.cloud/v1/search/${encodeURIComponent(searchWords)}/all/quran-simple-clean`;
-      const sRes = await fetch(searchUrl);
+      const sRes = await fetch(searchUrl, { signal: AbortSignal.timeout(4500) });
       if (sRes.ok) {
         const sData: any = await sRes.json();
         const matches = sData?.data?.matches || [];
         for (const m of matches) {
           const normMatch = normalizeArabicForQuranMatch(m.text || "");
-          const normMatchNoSpace = normMatch.replace(/\s+/g, "");
-          if (
-            normMatch &&
-            (normInput.includes(normMatch) ||
-              normMatch.includes(normInput) ||
-              normInputNoSpace.includes(normMatchNoSpace) ||
-              normMatchNoSpace.includes(normInputNoSpace) ||
-              tokenOverlapRatio(normInput, normMatch) >= 0.72)
-          ) {
-            const sNum = m.surah?.number;
-            const aNum = m.numberInSurah;
-            const gNum = m.number;
+          const normMatchNS = normalizeQuranOrthographicNoSpace(normMatch);
+          const sc = scoreNoSpaceMatch(normInputNS, normMatchNS);
+          if (sc.score >= 0.74 || (hasBrackets && sc.containment >= 0.85)) {
+            const sNum = Number(m.surah?.number);
+            const aNum = Number(m.numberInSurah);
+            const gNum = Number(m.number);
             if (sNum && aNum) {
-              const directUrl = buildEveryAyahUrl(sNum, aNum, everyAyahFolder);
-              return res.json({
-                verified: true,
-                confidence: 0.94,
+              const rawTokens = normMatch.split(" ").filter(Boolean);
+              const entry: FullQuranEntry = {
                 surahNumber: sNum,
-                surahName: m.surah?.name || `سورة ${sNum}`,
+                surahNameAr: m.surah?.name || `سورة ${sNum}`,
                 ayahNumber: aNum,
-                globalAyahNumber: gNum,
-                uthmaniText: m.text,
-                audioUrl: `/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`,
-                directAudioUrl: directUrl,
-                backupAudioUrl: gNum ? buildIslamicNetworkAudioUrl(gNum, reciter) : directUrl,
-              });
+                globalAyahNumber: gNum || 0,
+                text: m.text,
+                norm: normMatch,
+                normNoSpace: normMatchNS,
+                tokens: rawTokens.filter((w) => w.length >= 2),
+                rawTokens,
+              };
+              return await buildVerifiedResponseFromEntries([entry], reciter, everyAyahFolder, 0.93, normInputNS);
             }
           }
         }
       }
-    } catch {
-      // Ignore network search failure
     }
+  } catch {
+    // Ignore network search failure
+  }
 
-    return res.json({
-      verified: false,
-      confidence: 0,
-      reason: "Ayah not verified with 100% certainty; refusing to guess recording.",
+  return {
+    verified: false,
+    confidence: Number(bestCombinedScore.toFixed(3)),
+    reason: "Ayah not verified with 100% certainty; refusing to guess recording.",
+  };
+}
+
+// ─── 2. POST /api/reader/verify-quran — Authentic Quranic Verse Verification (Full 6,236-Ayah Engine) ───
+intelligentReaderRouter.post("/verify-quran", express.json({ limit: "512kb" }), async (req, res) => {
+  try {
+    const {
+      text,
+      surahHint,
+      ayahHint,
+      endAyahHint,
+      hasQuranBrackets,
+      isQcfMushaf,
+      reciter = "ar.abdurrahmaansudais",
+    } = req.body || {};
+
+    const result = await verifySingleQuranVerse({
+      text,
+      surahHint,
+      ayahHint,
+      endAyahHint,
+      hasQuranBrackets,
+      isQcfMushaf,
+      reciter,
     });
+    return res.json(result);
   } catch (err: any) {
     return res.status(500).json({ verified: false, error: err?.message || "Verification error" });
   }
 });
 
-function tokenOverlapRatio(a: string, b: string): number {
-  const tokensA = a.split(" ").filter((w) => w.length > 1);
-  const tokensB = new Set(b.split(" ").filter((w) => w.length > 1));
-  if (tokensA.length === 0 || tokensB.size === 0) return 0;
-  let hits = 0;
-  for (const t of tokensA) {
-    if (tokensB.has(t)) hits++;
+// ─── 2b. POST /api/reader/verify-quran-batch — Single-Round-Trip Batch Verification for Entire Page ───
+intelligentReaderRouter.post("/verify-quran-batch", express.json({ limit: "2mb" }), async (req, res) => {
+  try {
+    const { items = [], reciter = "ar.abdurrahmaansudais" } = req.body || {};
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ ok: false, error: "Expected items array" });
+    }
+    const capped = items.slice(0, 60);
+    const results = await Promise.all(
+      capped.map(async (item: any, idx: number) => {
+        const verified = await verifySingleQuranVerse({
+          text: item?.text,
+          surahHint: item?.surahHint,
+          ayahHint: item?.ayahHint,
+          endAyahHint: item?.endAyahHint,
+          hasQuranBrackets: item?.hasQuranBrackets,
+          isQcfMushaf: Boolean(item?.isQcfMushaf),
+          reciter: item?.reciter || reciter,
+        });
+        return {
+          id: item?.id ?? idx,
+          ...verified,
+        };
+      })
+    );
+    return res.json({ ok: true, results });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err?.message || "Batch verification error" });
   }
-  return hits / Math.min(tokensA.length, tokensB.size);
-}
+});
 
-// ─── 3. GET /api/reader/quran-audio — CORS-Safe Quran Recitation Audio Proxy ───
+// ─── 3. GET /api/reader/quran-audio — Cached & CORS-Safe Sudais Quran Recitation Proxy ───
+const quranAudioLruCache = new Map<string, { contentType: string; buf: Buffer }>();
+const MAX_QURAN_AUDIO_LRU = 120;
+
 intelligentReaderRouter.get("/quran-audio", async (req, res) => {
   try {
-    const rawUrl = String(req.query.url || "");
-    if (!rawUrl || !/^https:\/\/(everyayah\.com|cdn\.islamic\.network)\//i.test(rawUrl)) {
+    const rawUrl = String(req.query.url || "").trim();
+    if (!rawUrl || !/^https:\/\/(everyayah\.com|cdn\.islamic\.network|verses\.quran\.com|audio\.qurancdn\.com)\//i.test(rawUrl)) {
       return res.status(400).send("Invalid Quran audio CDN URL");
     }
-    const upstream = await fetch(rawUrl);
+
+    const cached = quranAudioLruCache.get(rawUrl);
+    if (cached) {
+      // Refresh LRU position
+      quranAudioLruCache.delete(rawUrl);
+      quranAudioLruCache.set(rawUrl, cached);
+      res.setHeader("Content-Type", cached.contentType);
+      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+      res.setHeader("X-Audio-Cache", "HIT");
+      return res.send(cached.buf);
+    }
+
+    const upstream = await fetch(rawUrl, { signal: AbortSignal.timeout(8000) });
     if (!upstream.ok) {
       return res.status(upstream.status).send("Upstream audio unavailable");
     }
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mpeg");
-    res.setHeader("Cache-Control", "public, max-age=604800");
-    const arrayBuf = await upstream.arrayBuffer();
-    return res.send(Buffer.from(arrayBuf));
+    const contentType = upstream.headers.get("content-type") || "audio/mpeg";
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    if (buf.length > 256) {
+      if (quranAudioLruCache.size >= MAX_QURAN_AUDIO_LRU) {
+        const oldestKey = quranAudioLruCache.keys().next().value;
+        if (oldestKey) quranAudioLruCache.delete(oldestKey);
+      }
+      quranAudioLruCache.set(rawUrl, { contentType, buf });
+    }
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    res.setHeader("X-Audio-Cache", "MISS");
+    return res.send(buf);
   } catch (err: any) {
     return res.status(502).send(err?.message || "Failed to proxy Quran audio");
   }
@@ -1248,27 +2200,221 @@ function pcmBase64ToWavAndTimings(
   };
 }
 
+export interface TtsProsodyOptions {
+  preset?: "scholarly" | "measured" | "narrative" | string;
+  enabled?: boolean;
+  arabicTashkeel?: boolean;
+  urduProofread?: boolean;
+  hadithRateDelta?: number;
+  pitchDeltaHz?: number;
+}
+
+function canonicalizeShaddaOrderServer(text: string): string {
+  return String(text || "")
+    .replace(/\s+([\u064B-\u065F\u0670]+)/g, "$1")
+    .replace(/([\u064B-\u0650\u0652\u0670]+)\u0651/g, "\u0651$1")
+    .replace(/([\u064B-\u0652\u0670])\1+/g, "$1")
+    .replace(/ا([\u064B-\u0652]*)\u0654/g, "أ$1")
+    .replace(/ا([\u064B-\u0652]*)\u0655/g, "إ$1");
+}
+
+/**
+ * Arabic Tashkeel Normalization & Scholarly Vocalization Proofreading for TTS:
+ * - Preserves author wording while fixing decomposed/misordered diacritics and expanding honorifics
+ *   with complete Classical Arabic vocalization (tashkeel) so `ar-SA-HamedNeural` articulates clearly.
+ */
+export function proofreadArabicTashkeelForTts(text: string, segmentType = "arabic_quote"): string {
+  if (!text) return "";
+  let s = canonicalizeShaddaOrderServer(canonicalizeTextForLanguageServer(text, true));
+
+  // Normalize common unvocalized or typoed Islamic honorifics, Hadith chains & scholarly expressions
+  s = s
+    .replace(/ﷺ/g, " صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ ")
+    .replace(/ﷻ/g, " جَلَّ جَلَالُهُ ")
+    .replace(/(?:^|\s)صلى\s+الله\s+عليه\s+وسلم(?=\s|$|[۔.،؛؟!:])/g, " صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ")
+    .replace(/(?:^|\s)عز\s+وجل(?=\s|$|[۔.،؛؟!:])/g, " عَزَّ وَجَلَّ")
+    .replace(/(?:^|\s)رضي\s+الله\s+عنهما(?=\s|$|[۔.،؛؟!:])/g, " رَضِيَ اللَّهُ عَنْهُمَا")
+    .replace(/(?:^|\s)رضي\s+الله\s+عنهم(?=\s|$|[۔.،؛؟!:])/g, " رَضِيَ اللَّهُ عَنْهُمْ")
+    .replace(/(?:^|\s)رضي\s+الله\s+عنها(?=\s|$|[۔.،؛؟!:])/g, " رَضِيَ اللَّهُ عَنْهَا")
+    .replace(/(?:^|\s)رضي\s+الله\s+عنه(?=\s|$|[۔.،؛؟!:])/g, " رَضِيَ اللَّهُ عَنْهُ")
+    .replace(/(?:^|\s)رحمه\s+الله(?=\s|$|[۔.،؛؟!:])/g, " رَحِمَهُ اللَّهُ")
+    .replace(/(?:^|\s)رحمهم\s+الله(?=\s|$|[۔.،؛؟!:])/g, " رَحِمَهُمُ اللَّهُ")
+    .replace(/(?:^|\s)عليه\s+السلام(?=\s|$|[۔.،؛؟!:])/g, " عَلَيْهِ السَّلَامُ")
+    .replace(/(?:^|\s)عليها\s+السلام(?=\s|$|[۔.،؛؟!:])/g, " عَلَيْهَا السَّلَامُ")
+    .replace(/(?:^|\s)عليهم\s+السلام(?=\s|$|[۔.،؛؟!:])/g, " عَلَيْهِمُ السَّلَامُ")
+    .replace(/(?:^|\s)سبحانه\s+وتعالى(?=\s|$|[۔.،؛؟!:])/g, " سُبْحَانَهُ وَتَعَالَى")
+    .replace(/(?:^|\s)أما\s+بعد(?=\s|$|[۔.،؛؟!:])/g, " أَمَّا بَعْدُ")
+    .replace(/وآخر\s+دعوانا\s+أن\s+الحمد\s+لله\s+رب\s+العالمين/g, "وَآخِرُ دَعْوَانَا أَنِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ")
+    .replace(/وصلى\s+الله\s+(?:وسلم\s+)?على\s+نبينا\s+محمد/g, "وَصَلَّى اللَّهُ وَسَلَّمَ عَلَى نَبِيِّنَا مُحَمَّدٍ")
+    .replace(/إن\s+شاء\s+الله/g, "إِنْ شَاءَ اللَّهُ")
+    .replace(/بسم\s+الله\s+الرحمن\s+الرحيم/g, "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ")
+    .replace(/الحمد\s+لله\s+رب\s+العالمين/g, "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ")
+    .replace(/إنما\s+الأعمال\s+بالنيات/g, "إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ")
+    .replace(/(?:^|\s)متفق\s+عليه(?=\s|$|[۔.،؛؟!:])/g, " مُتَّفَقٌ عَلَيْهِ")
+    .replace(/(?:^|\s)رواه\s+البخاري(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ الْبُخَارِيُّ")
+    .replace(/(?:^|\s)رواه\s+مسلم(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ مُسْلِمٌ")
+    .replace(/(?:^|\s)أخرجه\s+البخاري(?=\s|$|[۔.،؛؟!:])/g, " أَخْرَجَهُ الْبُخَارِيُّ")
+    .replace(/(?:^|\s)أخرجه\s+مسلم(?=\s|$|[۔.،؛؟!:])/g, " أَخْرَجَهُ مُسْلِمٌ")
+    .replace(/سبحان\s+الله/g, "سُبْحَانَ اللَّهِ")
+    .replace(/أعوذ\s+بالله/g, "أَعُوذُ بِاللَّهِ")
+    .replace(/بإذن\s+الله/g, "بِإِذْنِ اللَّهِ")
+    .replace(/في\s+سبيل\s+الله/g, "فِي سَبِيلِ اللَّهِ")
+    .replace(/(?:^|\s)صريح\s+الإيمان(?=\s|$|[۔.،؛؟!:])/g, " صَرِيحُ الْإِيمَانِ")
+    .replace(/(?:^|\s)الوسوسة(?=\s|$|[۔.،؛؟!:])/g, " الْوَسْوَسَة");
+
+  if (segmentType === "heading") {
+    s = s.replace(/^([٠-٩\d]+)\s*[-–—.]\s*/g, "$1، ");
+  }
+
+  // Add subtle prosodic comma pause after prophetic attribution / colon in Hadith, Quran & Dua segments
+  if (segmentType === "hadith" || segmentType === "dua" || segmentType === "quran") {
+    s = s.replace(/\s*[:：]\s*/g, "، ");
+  }
+
+  return s.replace(/\s+/g, " ").replace(/\s+([،؛.؟!])/g, "$1").trim();
+}
+
+/**
+ * Urdu Linguistic Proofreading for TTS:
+ * - Fixes canonical Pakistani Urdu glyphs (ک/ی/ہ + preserves diacritics like کِبر / لُغت / ذکرِ الٰہی),
+ *   expands honorifics cleanly in Pakistani Urdu articulation, and adds rhythmic comma phrasing.
+ */
+export function proofreadUrduLinguisticForTts(text: string): string {
+  if (!text) return "";
+  let s = canonicalizeShaddaOrderServer(canonicalizeTextForLanguageServer(text, false));
+
+  s = s
+    .replace(/^([٠-٩۰-۹\d]+)\s*[۔.]\s*/g, "$1، ")
+    .replace(/ا(اللہ|الله)/g, "اللہ")
+    .replace(/ﷺ/g, " صلی اللہ علیہ وسلم ")
+    .replace(/ﷻ/g, " جل جلالہ ")
+    .replace(/صلى\s+الله\s+عليه\s+وسلم/g, "صلی اللہ علیہ وسلم")
+    .replace(/رضي\s+الله\s+عنهم/g, "رضی اللہ عنہم")
+    .replace(/رضي\s+الله\s+عنها/g, "رضی اللہ عنہا")
+    .replace(/رضي\s+الله\s+عنه/g, "رضی اللہ عنہ")
+    .replace(/رحمه\s+الله/g, "رحمہ اللہ")
+    .replace(/عليه\s+السلام/g, "علیہ السلام")
+    .replace(/(^|\s)تعالی(?=\s|$|[۔.،؛؟!:])/g, "$1تعالیٰ")
+    .replace(/(^|\s)لہذا(?=\s|$|[۔.،؛؟!:])/g, "$1لہٰذا")
+    .replace(/(^|\s)مثلا(?=\s|$|[۔.،؛؟!:])/g, "$1مثلاً")
+    .replace(/(^|\s)عموما(?=\s|$|[۔.،؛؟!:])/g, "$1عموماً")
+    .replace(/(^|\s)خصوصا(?=\s|$|[۔.،؛؟!:])/g, "$1خصوصاً")
+    .replace(/(^|\s)فورا(?=\s|$|[۔.،؛؟!:])/g, "$1فوراً")
+    .replace(/(^|\s)تقریبا(?=\s|$|[۔.،؛؟!:])/g, "$1تقریباً")
+    .replace(/(^|\s)یقینا(?=\s|$|[۔.،؛؟!:])/g, "$1یقیناً")
+    .replace(/(^|\s)ان\s+شاء\s+اللہ(?=\s|$|[۔.،؛؟!:])/g, "$1ان شاء اللہ")
+    .replace(/(^|\s)ما\s+شاء\s+اللہ(?=\s|$|[۔.،؛؟!:])/g, "$1ما شاء اللہ")
+    .replace(/(^|\s)پیش\s+اب(?=\s|$|[۔.،؛؟!:])/g, "$1پیشاب")
+    .replace(/(^|\s)کے\s+لئے(?=\s|$|[۔.،؛؟!:])/g, "$1کے لیے")
+    .replace(/\s*[:：]\s*/g, "، ");
+
+  return s.replace(/\s+/g, " ").replace(/\s+([۔،؛.؟!])/g, "$1").trim();
+}
+
+function parsePercentDelta(val?: string): number {
+  const m = String(val || "0%").match(/([+-]?\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+function parseHzDelta(val?: string): number {
+  const m = String(val || "0Hz").match(/([+-]?\d+)/);
+  return m ? Number(m[1]) : 0;
+}
+
+export function resolveSegmentProsodyConfig(
+  baseCfg: { voice: string; rate?: string; pitch?: string },
+  segmentType: string,
+  prosody?: TtsProsodyOptions
+): {
+  voice: string;
+  rate: string;
+  pitch: string;
+  volume: string;
+  preset: string;
+  ratePercent: number;
+  pitchHz: number;
+} {
+  let rateNum = parsePercentDelta(baseCfg.rate);
+  let pitchNum = parseHzDelta(baseCfg.pitch);
+  const enabled = prosody?.enabled !== false;
+  const preset =
+    prosody?.preset === "measured" || prosody?.preset === "narrative"
+      ? prosody.preset
+      : "scholarly";
+
+  const customHadithRate = Number(prosody?.hadithRateDelta);
+  const customPitchHz = Number(prosody?.pitchDeltaHz);
+  const hasCustomHadithRate = Number.isFinite(customHadithRate);
+  const hasCustomPitch = Number.isFinite(customPitchHz);
+
+  if (enabled) {
+    if (segmentType === "hadith") {
+      rateNum += hasCustomHadithRate ? Math.max(-10, Math.min(4, customHadithRate)) : -3;
+      pitchNum += hasCustomPitch ? Math.max(-4, Math.min(2, customPitchHz)) : -1;
+    } else if (segmentType === "quran") {
+      rateNum += hasCustomHadithRate ? Math.max(-10, Math.min(4, customHadithRate)) - 3 : -6;
+      pitchNum += hasCustomPitch ? Math.max(-4, Math.min(2, customPitchHz)) : -1;
+    } else if (segmentType === "dua") {
+      rateNum += hasCustomHadithRate ? Math.max(-10, Math.min(4, customHadithRate)) - 2 : -5;
+      pitchNum += hasCustomPitch ? Math.max(-4, Math.min(2, customPitchHz)) : -1;
+    } else if (segmentType === "arabic_quote") {
+      rateNum -= 1;
+      if (hasCustomPitch) pitchNum += Math.round(Math.max(-4, Math.min(2, customPitchHz)) / 2);
+    } else if (segmentType === "heading") {
+      rateNum += 1;
+      pitchNum += 1;
+    } else if (hasCustomPitch) {
+      pitchNum += Math.round(Math.max(-4, Math.min(2, customPitchHz)) / 2);
+    }
+
+    if (preset === "measured") {
+      rateNum -= 5;
+      pitchNum -= 1;
+    } else if (preset === "narrative") {
+      rateNum += 5;
+      pitchNum += 0;
+    }
+  } else {
+    rateNum = 0;
+    pitchNum = 0;
+  }
+
+  const clampedRate = Math.max(-25, Math.min(15, rateNum));
+  const clampedPitch = Math.max(-7, Math.min(4, pitchNum));
+
+  return {
+    voice: baseCfg.voice,
+    rate: `${clampedRate >= 0 ? "+" : ""}${clampedRate}%`,
+    pitch: `${clampedPitch >= 0 ? "+" : ""}${clampedPitch}Hz`,
+    volume: "+0%",
+    preset: enabled ? preset : "flat",
+    ratePercent: clampedRate,
+    pitchHz: clampedPitch,
+  };
+}
+
 /**
  * Primary High-Fidelity Male Neural TTS Engine: Microsoft Edge Neural TTS (`msedge-tts`)
  *
  * - Provides studio-quality 24kHz 96kbps male Pakistani Urdu (`ur-PK-AsadNeural`, `ur-IN-SalmanNeural`)
  *   and Saudi/Egyptian Classical Arabic (`ar-SA-HamedNeural`, `ar-EG-ShakirNeural`) voices without API keys.
- * - Canonicalizes codepoints for the target language (`ar-SA` vs `ur-PK`) so `ar-SA-HamedNeural` never drops
- *   Indo-Pak characters (`ک`, `ی`, `ہ`, `ۃ`) and `ur-PK-AsadNeural` never stumbles on Arabic variants.
- * - Captures real hardware `WordBoundary` metadata events (`Offset` & `Duration` in 100ns ticks)
- *   and aligns them 1-to-1 with the client sentence `words` array for exact word highlight synchronization.
+ * - Canonicalizes codepoints & diacritics for the target language (`ar-SA` vs `ur-PK`), applies scholarly
+ *   segment-aware prosody (`hadith`, `dua`, `arabic_quote`, `heading`, `urdu_body`), and captures
+ *   hardware `WordBoundary` metadata events 1-to-1 with client `targetWords`.
  */
 async function synthesizeEdgeNeuralTts(
   cleanText: string,
   isArabicSegment: boolean,
   voiceId: string,
-  targetWords: string[]
+  targetWords: string[],
+  options: { segmentType?: string; prosody?: TtsProsodyOptions } = {}
 ): Promise<{
   audioBase64: string;
   mimeType: string;
   durationMs: number;
   wordTimings: Array<{ word: string; wordIndex: number; startMs: number; endMs: number; confidence: string }>;
   neuralVoice: string;
+  appliedProsody: { preset: string; rate: string; pitch: string };
 }> {
   const edgeVoiceMap: Record<string, { voice: string; rate?: string; pitch?: string }> = {
     pakistani_scholar_charon: { voice: "ur-PK-AsadNeural", rate: "-4%", pitch: "-1Hz" },
@@ -1283,7 +2429,7 @@ async function synthesizeEdgeNeuralTts(
     "arabic-reciter": { voice: "ar-SA-HamedNeural", rate: "-5%", pitch: "-1Hz" },
   };
 
-  const selectedCfg = isArabicSegment
+  const baseCfg = isArabicSegment
     ? edgeVoiceMap[voiceId]?.voice?.startsWith("ar-")
       ? edgeVoiceMap[voiceId]
       : { voice: "ar-SA-HamedNeural", rate: "-5%", pitch: "-1Hz" }
@@ -1291,8 +2437,13 @@ async function synthesizeEdgeNeuralTts(
     ? edgeVoiceMap[voiceId]
     : { voice: "ur-PK-AsadNeural", rate: "-4%", pitch: "-1Hz" };
 
-  // Canonicalize script codepoints for the target voice engine (Standard Arabic vs Standard Urdu)
-  const scriptCanonicalText = canonicalizeTextForLanguageServer(cleanText, isArabicSegment);
+  const segmentType = options.segmentType || (isArabicSegment ? "arabic_quote" : "urdu_body");
+  const selectedCfg = resolveSegmentProsodyConfig(baseCfg, segmentType, options.prosody);
+
+  // Canonicalize script codepoints & diacritics for the target voice engine (Standard Arabic vs Standard Urdu)
+  const scriptCanonicalText = canonicalizeShaddaOrderServer(
+    canonicalizeTextForLanguageServer(cleanText, isArabicSegment)
+  );
 
   // Escape XML special characters so SSML inside MsEdgeTTS never fails on quotes or symbols
   const ssmlSafeText = scriptCanonicalText
@@ -1302,7 +2453,8 @@ async function synthesizeEdgeNeuralTts(
     .replace(/"/g, " ")
     .replace(/'/g, " ")
     .replace(/[«»﴿﴾“”]/g, " ")
-    .replace(/ﷺ/g, isArabicSegment ? "صلى الله عليه وسلم" : "صلی اللہ علیہ وسلم")
+    .replace(/ﷺ/g, isArabicSegment ? "صَلَّى اللَّهُ عَلَيْهِ وَسَلَّمَ" : "صلی اللہ علیہ وسلم")
+    .replace(/ﷻ/g, isArabicSegment ? "جَلَّ جَلَالُهُ" : "جل جلالہ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -1321,8 +2473,9 @@ async function synthesizeEdgeNeuralTts(
     );
 
     const { audioStream, metadataStream } = tts.toStream(ssmlSafeText, {
-      rate: selectedCfg.rate || "-3%",
-      pitch: selectedCfg.pitch || "+0Hz",
+      rate: selectedCfg.rate,
+      pitch: selectedCfg.pitch,
+      volume: selectedCfg.volume,
     });
 
     const audioChunks: Buffer[] = [];
@@ -1376,7 +2529,9 @@ async function synthesizeEdgeNeuralTts(
     }> = [];
 
     if (rawBoundaries.length > 0 && targetWords.length > 0) {
-      const spokenCounts = targetWords.map((w) => (w.includes("ﷺ") ? 4 : 1));
+      const spokenCounts = targetWords.map((w) =>
+        w.includes("ﷺ") ? 4 : w.includes("ﷻ") ? 2 : 1
+      );
       const totalExpectedSpoken = spokenCounts.reduce((a, b) => a + b, 0);
 
       if (Math.abs(rawBoundaries.length - totalExpectedSpoken) <= 2) {
@@ -1468,6 +2623,11 @@ async function synthesizeEdgeNeuralTts(
       durationMs,
       wordTimings,
       neuralVoice: selectedCfg.voice,
+      appliedProsody: {
+        preset: selectedCfg.preset,
+        rate: selectedCfg.rate,
+        pitch: selectedCfg.pitch,
+      },
     };
   } finally {
     try {
@@ -1486,6 +2646,7 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
       voiceId = "pakistani_scholar_charon",
       provider = "edge-neural",
       words: clientWords = null,
+      prosody = {},
     } = req.body || {};
 
     const rawCleanText = rejoinFragmentedUrduArabicLettersServer(String(text || ""))
@@ -1517,7 +2678,26 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
         segmentType === "quran" ||
         !isUrduDetected);
 
-    const cleanText = canonicalizeTextForLanguageServer(rawCleanText, isArabicSegment);
+    const prosodyOpts: TtsProsodyOptions = {
+      preset: typeof prosody?.preset === "string" ? prosody.preset : "scholarly",
+      enabled: prosody?.enabled !== false,
+      arabicTashkeel: prosody?.arabicTashkeel !== false,
+      urduProofread: prosody?.urduProofread !== false,
+      hadithRateDelta: Number.isFinite(Number(prosody?.hadithRateDelta))
+        ? Number(prosody.hadithRateDelta)
+        : undefined,
+      pitchDeltaHz: Number.isFinite(Number(prosody?.pitchDeltaHz))
+        ? Number(prosody.pitchDeltaHz)
+        : undefined,
+    };
+
+    const cleanText = isArabicSegment
+      ? prosodyOpts.arabicTashkeel
+        ? proofreadArabicTashkeelForTts(rawCleanText, segmentType)
+        : canonicalizeShaddaOrderServer(canonicalizeTextForLanguageServer(rawCleanText, true))
+      : prosodyOpts.urduProofread
+      ? proofreadUrduLinguisticForTts(rawCleanText)
+      : canonicalizeShaddaOrderServer(canonicalizeTextForLanguageServer(rawCleanText, false));
 
     const words: string[] =
       Array.isArray(clientWords) && clientWords.length > 0
@@ -1532,13 +2712,20 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
       ? voiceId
       : "pakistani_scholar_charon";
 
+    const fallbackProsodyCfg = resolveSegmentProsodyConfig(
+      { voice: resolvedVoiceId, rate: isArabicSegment ? "-5%" : "-4%", pitch: "-1Hz" },
+      segmentType,
+      prosodyOpts
+    );
+
     // 1. Primary Provider: Microsoft Edge Neural Male TTS (ur-PK-AsadNeural / ar-SA-HamedNeural) with Hardware WordBoundaries
     try {
       const edgeAudio = await synthesizeEdgeNeuralTts(
         cleanText,
         isArabicSegment,
         resolvedVoiceId,
-        words
+        words,
+        { segmentType, prosody: prosodyOpts }
       );
       return res.json({
         ok: true,
@@ -1550,6 +2737,7 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
         audioBase64: edgeAudio.audioBase64,
         durationMs: edgeAudio.durationMs,
         wordTimings: edgeAudio.wordTimings,
+        appliedProsody: edgeAudio.appliedProsody,
       });
     } catch (edgeErr: any) {
       console.warn("[DAR AL TAWHID Edge Neural TTS Fallback]:", edgeErr?.message || edgeErr);
@@ -1606,12 +2794,19 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
           audioBase64: wavInfo.wavBase64,
           durationMs: wavInfo.durationMs,
           wordTimings: wavInfo.wordTimings,
+          appliedProsody: {
+            preset: fallbackProsodyCfg.preset,
+            rate: fallbackProsodyCfg.rate,
+            pitch: fallbackProsodyCfg.pitch,
+          },
         });
       }
     }
 
     // 3. Optional Google Cloud TTS API if GOOGLE_CLOUD_TTS_KEY is configured
     if (provider === "google-cloud-tts" && process.env.GOOGLE_CLOUD_TTS_KEY) {
+      const speakingRate = Math.max(0.7, Math.min(1.25, 1 + fallbackProsodyCfg.ratePercent / 100));
+      const gPitch = Math.max(-6, Math.min(4, fallbackProsodyCfg.pitchHz * 0.5));
       const gRes = await fetch(
         `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_CLOUD_TTS_KEY}`,
         {
@@ -1627,6 +2822,8 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
             audioConfig: {
               audioEncoding: "LINEAR16",
               sampleRateHertz: 24000,
+              speakingRate,
+              pitch: gPitch,
             },
           }),
         }
@@ -1644,6 +2841,11 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
             audioBase64: wavInfo.wavBase64,
             durationMs: wavInfo.durationMs,
             wordTimings: wavInfo.wordTimings,
+            appliedProsody: {
+              preset: fallbackProsodyCfg.preset,
+              rate: fallbackProsodyCfg.rate,
+              pitch: fallbackProsodyCfg.pitch,
+            },
           });
         }
       }
