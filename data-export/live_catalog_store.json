@@ -3,14 +3,14 @@
     "app_settings": [
       {
         "setting_key": "show_dev_nav",
-        "setting_value": "false",
+        "setting_value": "true",
         "setting_type": "boolean",
         "changed_by": "mstqymm4@gmail.com",
         "previous_value": "false",
         "description": null,
         "id": "6a2381e372ed11b00fb35443",
         "created_date": "2026-06-06T02:11:47.274000",
-        "updated_date": "2026-10-23T14:15:16.090000",
+        "updated_date": "2026-11-23T16:01:09.184Z",
         "created_by_id": "69c8e483a69a0d215eee4ef8",
         "created_by": "mstqymm4@gmail.com",
         "is_sample": false
@@ -31,14 +31,14 @@
       },
       {
         "description": null,
-        "setting_value": "false",
+        "setting_value": "true",
         "setting_key": "dark_mode",
-        "previous_value": "true",
-        "changed_by": "admin",
+        "previous_value": "false",
+        "changed_by": "mstqymm4@gmail.com",
         "setting_type": "text",
-        "id": "dark_mode",
-        "created_date": "2020-01-01T00:00:00.000Z",
-        "updated_date": "2026-11-24T17:19:11.467Z",
+        "id": "set_dark_mode",
+        "created_date": "2026-06-06T02:11:47.274000",
+        "updated_date": "2026-11-23T01:49:17.515Z",
         "created_by_id": "69c8e483a69a0d215eee4ef8",
         "created_by": "mstqymm4@gmail.com",
         "is_sample": false
@@ -863,14 +863,14 @@
       },
       {
         "description": null,
-        "setting_value": "light",
+        "setting_value": "dark",
         "setting_key": "theme_mode",
-        "previous_value": "dark",
-        "changed_by": "admin",
+        "previous_value": "auto",
+        "changed_by": "mstqymm4@gmail.com",
         "setting_type": "text",
-        "id": "theme_mode",
-        "created_date": "2020-01-01T00:00:00.000Z",
-        "updated_date": "2026-11-24T17:19:11.464Z",
+        "id": "set_theme_mode",
+        "created_date": "2026-06-10T02:57:40.696000",
+        "updated_date": "2026-11-23T01:49:17.453Z",
         "created_by_id": "69c8e483a69a0d215eee4ef8",
         "created_by": "mstqymm4@gmail.com",
         "is_sample": false
@@ -1331,5 +1331,5 @@
     ]
   },
   "deletedIds": [],
-  "updatedAt": "2026-11-24T17:23:20.906Z"
+  "updatedAt": "2026-11-24T23:22:53.572Z"
 }
