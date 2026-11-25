@@ -191,6 +191,12 @@ export default function ProBookViewer({
   const touchStartX = useRef(null);
   const touchStartY = useRef(null);
   const autoContinueNextPageRef = useRef(null);
+  const pageDataMapRef = useRef(pageDataMap);
+  const isPassiveScrollRef = useRef(false);
+
+  useEffect(() => {
+    pageDataMapRef.current = pageDataMap;
+  }, [pageDataMap]);
 
   const themeCfg = READER_THEMES[theme] || READER_THEMES.light;
 
@@ -295,7 +301,7 @@ export default function ProBookViewer({
           bookId,
           autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
           forceOcr,
-          reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
+          reciterId: readerSettings.quranReciterId || "ar.saoodshuraym",
           bookMetadata: effectiveBook,
         });
         setActivePageData(data);
@@ -323,7 +329,8 @@ export default function ProBookViewer({
 
   //Persist page progress
   const updateCurrentPage = useCallback(
-    (nextPage, shouldScrollStream = true) => {
+    (nextPage, shouldScrollStream = true, isPassiveScroll = false) => {
+      isPassiveScrollRef.current = Boolean(isPassiveScroll);
       setCurrentPage((prevPage) => {
         const maxPage = totalPages > 0 ? totalPages : 999999;
         const clamped = Math.min(Math.max(1, Number(nextPage) || 1), maxPage);
@@ -331,6 +338,20 @@ export default function ProBookViewer({
           setScrollTriggerPage({ page: clamped, seq: Date.now() });
         }
         if (clamped !== prevPage) {
+          // If this is an explicit user page turn (Next/Prev/GoTo/TOC) while audio is playing or loading,
+          // cancel stale audio from the old page immediately and continue from sentence 0 of the new page.
+          if (!isPassiveScroll) {
+            const snap = intelligentAudioEngine.getSnapshot();
+            if (snap.playerState === "playing" || snap.playerState === "loading") {
+              if (!autoContinueNextPageRef.current) {
+                autoContinueNextPageRef.current = {
+                  targetSentencePosition: "first",
+                  targetSegmentCategory: null,
+                };
+              }
+              intelligentAudioEngine.cancelCurrentAudioForPageTransition();
+            }
+          }
           onPageChange?.(clamped);
           saveReadingPosition(bookId, {
             bookId,
@@ -346,7 +367,7 @@ export default function ProBookViewer({
   );
 
   const goToPage = useCallback(
-    (p) => updateCurrentPage(p, true),
+    (p) => updateCurrentPage(p, true, false),
     [updateCurrentPage]
   );
 
@@ -365,51 +386,65 @@ export default function ProBookViewer({
     if (!shouldExtractCurrentPage) return;
 
     let cancelled = false;
+    const isPassive = isPassiveScrollRef.current;
 
     const processCurrentPage = async () => {
-      setIsRunningOcr(true);
-      intelligentAudioEngine.setContext({
-        book: effectiveBook,
-        pageNumber: currentPage,
-        totalPages:
-          totalPages ||
-          effectiveBook?.pages_count ||
-          effectiveBook?.page_count ||
-          1,
-        isExtractingPage: true,
-        onRequestPageTurn: (targetPage, opts) => {
-          if (opts?.autoContinueAudio) {
-            autoContinueNextPageRef.current = {
-              targetSentencePosition: opts.targetSentencePosition || "first",
-              targetSegmentCategory: opts.targetSegmentCategory || null,
-            };
-          }
-          goToPage(targetPage);
-        },
-        onEnsurePageExtracted: async (pageNum) => {
-          return await ensurePageExtracted(pageNum || currentPage, false);
-        },
-      });
-      try {
-        const data = await extractAndProcessPdfPage({
-          pdfDoc,
+      const cachedInMemory = pageDataMapRef.current?.[currentPage];
+      const onRequestPageTurnHandler = (targetPage, opts) => {
+        if (opts?.autoContinueAudio) {
+          autoContinueNextPageRef.current = {
+            targetSentencePosition: opts.targetSentencePosition || "first",
+            targetSegmentCategory: opts.targetSegmentCategory || null,
+          };
+        }
+        goToPage(targetPage);
+      };
+      const onEnsurePageExtractedHandler = async (pageNum) => {
+        return await ensurePageExtracted(pageNum || currentPage, false);
+      };
+
+      if (!cachedInMemory) {
+        setIsRunningOcr(true);
+        intelligentAudioEngine.setContext({
+          book: effectiveBook,
           pageNumber: currentPage,
-          bookId,
-          autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
-          forceOcr: false,
-          reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
-          bookMetadata: effectiveBook,
+          totalPages:
+            totalPages ||
+            effectiveBook?.pages_count ||
+            effectiveBook?.page_count ||
+            1,
+          isExtractingPage: true,
+          isPassiveScroll: isPassive,
+          onRequestPageTurn: onRequestPageTurnHandler,
+          onEnsurePageExtracted: onEnsurePageExtractedHandler,
         });
+      }
+
+      try {
+        const data =
+          cachedInMemory ||
+          (await extractAndProcessPdfPage({
+            pdfDoc,
+            pageNumber: currentPage,
+            bookId,
+            autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
+            forceOcr: false,
+            reciterId: readerSettings.quranReciterId || "ar.saoodshuraym",
+            bookMetadata: effectiveBook,
+          }));
         if (cancelled) return;
         setActivePageData(data);
-        if (data) {
+        if (data && !cachedInMemory) {
           setPageDataMap((prev) => ({ ...prev, [currentPage]: data }));
         }
 
         // Background-extract adjacent pages (currentPage + 1 and currentPage - 1) so vertical stream word clicking is ready on neighboring pages
         if (pdfDoc) {
           const adjPages = [currentPage + 1, currentPage - 1].filter(
-            (p) => p >= 1 && p <= (totalPages || 9999)
+            (p) =>
+              p >= 1 &&
+              p <= (totalPages || 9999) &&
+              !pageDataMapRef.current?.[p]
           );
           for (const adjP of adjPages) {
             extractAndProcessPdfPage({
@@ -418,7 +453,7 @@ export default function ProBookViewer({
               bookId,
               autoOcrEnabled: false,
               forceOcr: false,
-              reciterId: readerSettings.quranReciterId || "ar.abdurrahmaansudais",
+              reciterId: readerSettings.quranReciterId || "ar.saoodshuraym",
               bookMetadata: effectiveBook,
             })
               .then((adjData) => {
@@ -442,18 +477,9 @@ export default function ProBookViewer({
             1,
           pageData: data,
           isExtractingPage: false,
-          onRequestPageTurn: (targetPage, opts) => {
-            if (opts?.autoContinueAudio) {
-              autoContinueNextPageRef.current = {
-                targetSentencePosition: opts.targetSentencePosition || "first",
-                targetSegmentCategory: opts.targetSegmentCategory || null,
-              };
-            }
-            goToPage(targetPage);
-          },
-          onEnsurePageExtracted: async (pageNum) => {
-            return await ensurePageExtracted(pageNum || currentPage, false);
-          },
+          isPassiveScroll: isPassive,
+          onRequestPageTurn: onRequestPageTurnHandler,
+          onEnsurePageExtracted: onEnsurePageExtractedHandler,
         });
 
         if (autoContinueNextPageRef.current) {
@@ -470,7 +496,11 @@ export default function ProBookViewer({
               if (!s) return false;
               if (cat === "quran") return s.segmentType === "quran";
               if (cat === "hadith") {
-                return s.segmentType === "hadith" || s.segmentType === "dua" || s.segmentType === "arabic_quote";
+                return (
+                  s.segmentType === "hadith" ||
+                  s.segmentType === "dua" ||
+                  s.segmentType === "arabic_quote"
+                );
               }
               return s.segmentType === "urdu_body" || s.segmentType === "heading";
             };
@@ -541,25 +571,17 @@ export default function ProBookViewer({
   }, [syncAnnotationMeta, isAnnotationActive, annotationRevision]);
 
   const nextPage = useCallback(() => {
-    setCurrentPage((prev) => {
-      const step = viewMode === "spread" ? 2 : 1;
-      const maxPage = totalPages > 0 ? totalPages : prev + step;
-      const clamped = Math.min(maxPage, prev + step);
-      setScrollTriggerPage({ page: clamped, seq: Date.now() });
-      if (clamped !== prev) onPageChange?.(clamped);
-      return clamped;
-    });
-  }, [viewMode, totalPages, onPageChange]);
+    const step = viewMode === "spread" ? 2 : 1;
+    const maxPage = totalPages > 0 ? totalPages : currentPage + step;
+    const clamped = Math.min(maxPage, currentPage + step);
+    updateCurrentPage(clamped, true, false);
+  }, [viewMode, totalPages, currentPage, updateCurrentPage]);
 
   const prevPage = useCallback(() => {
-    setCurrentPage((prev) => {
-      const step = viewMode === "spread" ? 2 : 1;
-      const clamped = Math.max(1, prev - step);
-      setScrollTriggerPage({ page: clamped, seq: Date.now() });
-      if (clamped !== prev) onPageChange?.(clamped);
-      return clamped;
-    });
-  }, [viewMode, onPageChange]);
+    const step = viewMode === "spread" ? 2 : 1;
+    const clamped = Math.max(1, currentPage - step);
+    updateCurrentPage(clamped, true, false);
+  }, [viewMode, currentPage, updateCurrentPage]);
 
   const handleUpdateReaderSettings = useCallback((partial) => {
     const updated = saveReaderSettings(partial);
@@ -886,7 +908,7 @@ export default function ProBookViewer({
             pdfDoc={pdfDoc}
             totalPages={totalPages}
             currentPage={currentPage}
-            onVisiblePageChange={(p) => updateCurrentPage(p, false)}
+            onVisiblePageChange={(p) => updateCurrentPage(p, false, true)}
             zoom={zoom}
             fitMode={fitMode}
             theme={theme}
@@ -1162,12 +1184,10 @@ export default function ProBookViewer({
             if (!next && audioSnapshot.playerState === "playing") {
               intelligentAudioEngine.pause("immediate");
             } else if (next && audioSnapshot.playerState !== "playing") {
-              setTimeout(() => {
-                intelligentAudioEngine.playFrom({
-                  sentenceIndex: audioSnapshot.sentenceIndex || 0,
-                  wordIndex: audioSnapshot.wordIndex || 0,
-                });
-              }, 40);
+              intelligentAudioEngine.playFrom({
+                sentenceIndex: audioSnapshot.sentenceIndex || 0,
+                wordIndex: audioSnapshot.wordIndex || 0,
+              });
             }
             return next;
           });

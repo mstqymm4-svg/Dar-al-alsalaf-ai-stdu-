@@ -29,6 +29,10 @@ import {
   getReaderCacheStats,
   clearReaderCache,
 } from "@/lib/intelligentReader/cacheManager";
+import {
+  WEB_SPEECH_ARTICULATION_PRESETS,
+  WEB_SPEECH_DIALECTS,
+} from "@/lib/intelligentReader/webSpeechService";
 import { formatBytes } from "@/lib/offlineDB";
 
 const SAMPLE_URDU_TEST_TEXT =
@@ -603,8 +607,96 @@ export default function ReaderSettingsModal({
                     </div>
                   </div>
 
+                  {/* Web Speech API Specialized Makharij, Tashkeel & Dialect Presets */}
+                  <div className="pt-2 border-t border-[#E2E8F0]/70 dark:border-slate-800/80 space-y-2.5">
+                    <div className="text-[11px] font-bold text-[#155E75] dark:text-[#A5F3FC]">
+                      وحدة التحكم المتخصصة في Web Speech API (مخارج الحروف واللهجات المعتمدة):
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold mb-1">
+                        إعداد مخارج الحروف والتشكيل (Makharij & Tashkeel Preset):
+                      </label>
+                      <select
+                        value={settings.webSpeechArticulationPreset || "tajweed_articulatory"}
+                        onChange={(e) =>
+                          onUpdateSettings({
+                            webSpeechArticulationPreset: e.target.value,
+                          })
+                        }
+                        className={`w-full px-3 py-2 rounded-xl border text-xs font-medium ${
+                          darkMode
+                            ? "bg-slate-900 border-slate-700"
+                            : "bg-[#F8FAFC] border-[#E2E8F0]"
+                        }`}
+                      >
+                        {WEB_SPEECH_ARTICULATION_PRESETS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1">
+                          لهجة النطق العربي (الفصحى):
+                        </label>
+                        <select
+                          value={settings.webSpeechArabicDialect || "ar-SA"}
+                          onChange={(e) =>
+                            onUpdateSettings({
+                              webSpeechArabicDialect: e.target.value,
+                            })
+                          }
+                          className={`w-full px-2.5 py-1.5 rounded-xl border text-xs font-medium ${
+                            darkMode
+                              ? "bg-slate-900 border-slate-700"
+                              : "bg-[#F8FAFC] border-[#E2E8F0]"
+                          }`}
+                        >
+                          {Object.values(WEB_SPEECH_DIALECTS)
+                            .filter((d) => d.language === "ar")
+                            .map((d) => (
+                              <option key={d.code} value={d.code}>
+                                {d.label}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold mb-1">
+                          لهجة النطق الأردي (نستعليق):
+                        </label>
+                        <select
+                          value={settings.webSpeechUrduDialect || "ur-PK"}
+                          onChange={(e) =>
+                            onUpdateSettings({
+                              webSpeechUrduDialect: e.target.value,
+                            })
+                          }
+                          className={`w-full px-2.5 py-1.5 rounded-xl border text-xs font-medium ${
+                            darkMode
+                              ? "bg-slate-900 border-slate-700"
+                              : "bg-[#F8FAFC] border-[#E2E8F0]"
+                          }`}
+                        >
+                          {Object.values(WEB_SPEECH_DIALECTS)
+                            .filter((d) => d.language === "ur")
+                            .map((d) => (
+                              <option key={d.code} value={d.code}>
+                                {d.label}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
                   <p className="text-[11px] opacity-75">
-                    ملاحظة: الآيات القرآنية المحققة تُشغّل دائماً بالتلاوة المسجلة المعتمدة (الشيخ عبد الرحمن السديس)، ويُطبَّق تنغيم القراءة الموقّرة على أي شواهد أو مقتطفات نصية.
+                    ملاحظة: الآيات القرآنية المحققة تُشغّل دائماً بالتلاوة المسجلة المعتمدة (الشيخ سعود الشريم)، ويُطبَّق تنغيم القراءة الموقّرة على أي شواهد أو مقتطفات نصية.
                   </p>
                 </div>
               </div>

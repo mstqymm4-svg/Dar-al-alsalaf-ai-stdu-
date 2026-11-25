@@ -25,6 +25,7 @@ import {
   detectIsUrduScript,
   canonicalizeTextForLanguage,
 } from "./textProcessor";
+import { webSpeechService } from "./webSpeechService";
 
 class IntelligentAudioEngine {
   constructor() {
@@ -263,6 +264,42 @@ class IntelligentAudioEngine {
   }
 
   /**
+   * Immediately cancel active/pending audio during an explicit page change
+   * so stale audio from a previous page never plays on the new page.
+   */
+  cancelCurrentAudioForPageTransition() {
+    this._playSessionId++;
+    if (this._abortController) {
+      try {
+        this._abortController.abort();
+      } catch {}
+    }
+    if (this.audioEl) {
+      this.audioEl.pause();
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
+    }
+    this._activeQuranQueue = null;
+    this._activeQuranAyahIdx = 0;
+    this._activeQuranWordRanges = [];
+    this._activeClipStartMs = 0;
+    this._activeClipEndMs = 0;
+    this._clipEndTriggered = false;
+    this._loadedSentenceKey = null;
+    this.sentenceIndex = 0;
+    this.wordIndex = 0;
+    this.currentTimeSec = 0;
+    this.durationSec = 0;
+    if (this.playerState === "playing" || this.playerState === "loading") {
+      this.playerState = "paused";
+    }
+    this._emit();
+  }
+
+  /**
    * Bind current book and extracted page data (Single Source of Truth sync)
    */
   setContext({
@@ -271,6 +308,7 @@ class IntelligentAudioEngine {
     totalPages,
     pageData,
     isExtractingPage,
+    isPassiveScroll = false,
     onRequestPageTurn,
     onEnsurePageExtracted,
   }) {
@@ -278,6 +316,26 @@ class IntelligentAudioEngine {
     const incomingPageNum = Number(pageNumber || 1);
     const isSameBookAndPage =
       this.bookId === incomingBookId && this.pageNumber === incomingPageNum;
+
+    // If the user is passively scrolling in VerticalPageStream while audio is actively playing/loading
+    // on another page, keep the active audio page context locked so playback and highlighting never desync.
+    if (
+      !isSameBookAndPage &&
+      isPassiveScroll &&
+      this.bookId === incomingBookId &&
+      (this.playerState === "playing" || this.playerState === "loading")
+    ) {
+      return;
+    }
+
+    // If the page explicitly changed while audio was playing or loading, immediately cancel stale audio
+    // from the previous page so old audio never plays over the new page.
+    if (
+      !isSameBookAndPage &&
+      (this.playerState === "playing" || this.playerState === "loading")
+    ) {
+      this.cancelCurrentAudioForPageTransition();
+    }
 
     this.book = book;
     this.bookId = incomingBookId;
@@ -542,7 +600,7 @@ class IntelligentAudioEngine {
 
         this._lastRecitedQuranVerseKey = `${currentVerseId}:page${this.pageNumber}`;
 
-        const reciterId = "ar.abdurrahmaansudais";
+        const reciterId = "ar.saoodshuraym";
         const ayahQueue =
           Array.isArray(meta.ayahList) && meta.ayahList.length > 0
             ? meta.ayahList
@@ -644,26 +702,37 @@ class IntelligentAudioEngine {
         : "pakistani_scholar_charon";
       const languageCode = isArabic ? "ar-SA" : "ur-PK";
 
+      // Explicit 4-Engine Separation (Section 11: B. Hadith Engine, C. Arabic General Engine, D. Urdu Engine)
+      const isHadithOrDua =
+        isArabic &&
+        (sentence.segmentType === "hadith" || sentence.segmentType === "dua");
+      const activeEngineId = isHadithOrDua
+        ? "hadith_engine"
+        : isArabic
+        ? "arabic_general_engine"
+        : "urdu_engine";
+
       const badgeLabelMap = {
-        hadith: "حديث نبوي شريف • صوت رجالي عربي تلقائي",
-        dua: "دعاء مأثور • صوت رجالي عربي تلقائي",
-        arabic_quote: "نص عربي • صوت رجالي عربي تلقائي",
+        hadith: "محرك الحديث النبوي • صوت رجالي عربي (ar-SA)",
+        dua: "محرك الحديث والدعاء • صوت رجالي عربي (ar-SA)",
+        arabic_quote: "محرك النص العربي • صوت رجالي عربي (ar-SA)",
         heading: isArabic
-          ? "عنوان عربي • صوت رجالي تلقائي"
-          : "عنوان أردي • صوت رجالي تلقائي (ur-PK)",
+          ? "محرك النص العربي • عنوان عربي (ar-SA)"
+          : "محرك اللغة الأردية • عنوان أردي (ur-PK)",
         urdu_body: isArabic
-          ? "نص عربي • صوت رجالي عربي تلقائي"
-          : "نص أردي • صوت رجالي أردي تلقائي (ur-PK)",
+          ? "محرك النص العربي • صوت رجالي عربي (ar-SA)"
+          : "محرك اللغة الأردية • صوت رجالي أردي (ur-PK)",
       };
 
       this.currentSegmentInfo = {
+        engineId: activeEngineId,
         segmentType: sentence.segmentType,
         language: languageCode,
         badgeLabel:
           badgeLabelMap[sentence.segmentType] ||
           (isArabic
-            ? "نص عربي • صوت رجالي عربي تلقائي"
-            : "نص أردي • صوت رجالي أردي تلقائي (ur-PK)"),
+            ? "محرك النص العربي • صوت رجالي عربي (ar-SA)"
+            : "محرك اللغة الأردية • صوت رجالي أردي (ur-PK)"),
         provider: "edge-neural-tts",
         voiceId,
       };
@@ -807,19 +876,20 @@ class IntelligentAudioEngine {
   _buildSudaisAudioUrlsForAyah(ayahObj) {
     const sPad = String(ayahObj.surahNumber || 1).padStart(3, "0");
     const aPad = String(ayahObj.ayahNumber || 1).padStart(3, "0");
-    const sudaisEveryAyah = `https://everyayah.com/data/Abdurrahmaan_As-Sudais_192kbps/${sPad}${aPad}.mp3`;
-    const isSudaisDirect =
+    const shuraymQuranCom = `https://verses.quran.com/Shuraym/mp3/${sPad}${aPad}.mp3`;
+    const shuraymEveryAyah = `https://everyayah.com/data/Saood_ash-Shuraym_128kbps/${sPad}${aPad}.mp3`;
+    const isShuraymDirect =
       typeof ayahObj.directAudioUrl === "string" &&
-      (ayahObj.directAudioUrl.includes("Abdurrahmaan_As-Sudais") ||
-        ayahObj.directAudioUrl.includes("Sudais/"));
-    const primaryDirect = isSudaisDirect ? ayahObj.directAudioUrl : sudaisEveryAyah;
+      (ayahObj.directAudioUrl.includes("Saood_ash-Shuraym") ||
+        ayahObj.directAudioUrl.includes("Shuraym/"));
+    const primaryDirect = isShuraymDirect ? ayahObj.directAudioUrl : shuraymQuranCom;
     const primaryProxy = `/api/reader/quran-audio?url=${encodeURIComponent(primaryDirect)}`;
     const backupDirect =
-      primaryDirect !== sudaisEveryAyah
-        ? sudaisEveryAyah
+      primaryDirect !== shuraymEveryAyah
+        ? shuraymEveryAyah
         : ayahObj.backupAudioUrl ||
           (ayahObj.globalAyahNumber
-            ? `https://cdn.islamic.network/quran/audio/128/ar.abdurrahmaansudais/${ayahObj.globalAyahNumber}.mp3`
+            ? `https://cdn.islamic.network/quran/audio/64/ar.saoodshuraym/${ayahObj.globalAyahNumber}.mp3`
             : primaryDirect);
     const backupProxy = `/api/reader/quran-audio?url=${encodeURIComponent(backupDirect)}`;
     return { primaryProxy, backupProxy, primaryDirect, backupDirect };
@@ -853,9 +923,10 @@ class IntelligentAudioEngine {
         : `${ayahObj.surahName} (${ayahObj.ayahNumber})`;
 
     this.currentSegmentInfo = {
+      engineId: "quran_engine",
       segmentType: "quran",
       language: "ar",
-      badgeLabel: `تلاوة قرآنية • الشيخ عبد الرحمن السديس • ${ayahLabel}`,
+      badgeLabel: `محرك القرآن • الشيخ سعود الشريم • ${ayahLabel}`,
       provider: "quran-authentic-recording",
       voiceId: reciterId,
       quranMeta: sentence.quranMeta,
@@ -1232,55 +1303,41 @@ class IntelligentAudioEngine {
   }
 
   _tryBrowserSpeechFallback(sentence, startAtWordIndex = 0, sessionId = this._playSessionId) {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    if (!webSpeechService.isSupported()) {
       return false;
     }
-    try {
-      window.speechSynthesis.cancel();
-      const baseNormalized = normalizeUrduTextForPronunciation(
-        sentence.cleanedPronunciationText || sentence.originalText
-      );
-      const isUrdu = detectIsUrduScript(baseNormalized);
-      const isArabic = !isUrdu;
-      const spokenText = canonicalizeTextForLanguage(
-        baseNormalized,
-        isArabic ? "ar" : "ur"
-      );
-      const utter = new SpeechSynthesisUtterance(spokenText);
-      utter.lang = isArabic ? "ar-SA" : "ur-PK";
-      utter.rate = this.playbackRate;
-      utter.volume = this.volume;
-
-      utter.onstart = () => {
+    const settings = loadReaderSettings();
+    return webSpeechService.speakSentence({
+      sentence,
+      startAtWordIndex,
+      settings,
+      playbackRate: this.playbackRate,
+      volume: this.volume,
+      onStart: (meta) => {
         if (sessionId !== this._playSessionId) return;
         this.playerState = "playing";
         this.wordIndex = startAtWordIndex;
-        this._emit();
-      };
-      utter.onboundary = (e) => {
-        if (sessionId !== this._playSessionId) return;
-        if (e.name === "word") {
-          const words = sentence.words || [];
-          if (this.wordIndex < words.length - 1) {
-            this.wordIndex++;
-            this._emit();
-          }
+        if (meta?.estimatedDurationMs) {
+          this.durationSec = Math.round((meta.estimatedDurationMs / 1000) * 10) / 10;
         }
-      };
-      utter.onend = () => {
+        this._emit();
+      },
+      onWordBoundary: (nextWordIdx) => {
+        if (sessionId !== this._playSessionId) return;
+        if (nextWordIdx !== this.wordIndex) {
+          this.wordIndex = nextWordIdx;
+          this._emit();
+        }
+      },
+      onEnd: () => {
         if (sessionId !== this._playSessionId) return;
         this._handleSentenceEnded();
-      };
-      utter.onerror = () => {
+      },
+      onError: () => {
         if (sessionId !== this._playSessionId) return;
-        this._setError("TTS_FAILED", "تعذر تشغيل محرك النطق المحلي.");
-      };
-
-      window.speechSynthesis.speak(utter);
-      return true;
-    } catch {
-      return false;
-    }
+        this._setError("TTS_FAILED", "تعذر تشغيل محرك النطق المحلي (Web Speech API).");
+      },
+    });
   }
 
   _startHighResSyncLoop() {
@@ -1352,7 +1409,7 @@ class IntelligentAudioEngine {
             nextQIdx,
             nextRange.startIdx,
             sentence,
-            "ar.abdurrahmaansudais",
+            "ar.saoodshuraym",
             sessionId
           );
           return;
@@ -1442,11 +1499,7 @@ class IntelligentAudioEngine {
     if (this.audioEl) {
       this.audioEl.pause();
     }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.pause();
-      } catch {}
-    }
+    webSpeechService.pause();
     this.playerState = "paused";
     this._persistPosition();
     this._emit();
@@ -1464,11 +1517,7 @@ class IntelligentAudioEngine {
       this.audioEl.pause();
       this.audioEl.currentTime = 0;
     }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {}
-    }
+    webSpeechService.cancel();
     this._activeClipStartMs = 0;
     this._activeClipEndMs = 0;
     this._clipEndTriggered = false;

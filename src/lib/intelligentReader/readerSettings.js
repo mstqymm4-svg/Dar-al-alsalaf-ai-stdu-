@@ -65,6 +65,11 @@ export const ARABIC_VOICES = [
 
 export const QURAN_RECITERS = [
   {
+    id: "ar.saoodshuraym",
+    label: "الشيخ سعود الشريم (تلاوة مسجلة معتمدة)",
+    folder: "Saood_ash-Shuraym_128kbps",
+  },
+  {
     id: "ar.abdurrahmaansudais",
     label: "الشيخ عبد الرحمن السديس (تلاوة مسجلة معتمدة)",
     folder: "Abdurrahmaan_As-Sudais_192kbps",
@@ -142,12 +147,12 @@ export const PROSODY_PRESETS = [
   },
 ];
 
-// Locked automatic optimal defaults (Male voices + Sheikh Abdul Rahman Al-Sudais + Auto language detection + Auto highlighting)
+// Locked automatic optimal defaults (Male voices + Sheikh Saud Al-Shuraim + Auto language detection + Auto highlighting)
 const LOCKED_AUTOMATIC_OVERRIDES = {
   defaultUrduVoice: "pakistani_scholar_charon",
   urduVoiceId: "pakistani_scholar_charon",
   defaultArabicVoice: "arabic_hadith_charon",
-  quranReciterId: "ar.abdurrahmaansudais",
+  quranReciterId: "ar.saoodshuraym",
   readingLanguage: "auto",
   wordHighlightEnabled: true,
   sentenceHighlightEnabled: true,
@@ -166,6 +171,9 @@ export const DEFAULT_READER_SETTINGS = {
   prosodyPreset: "scholarly",
   hadithProsodyRateDelta: -3,
   prosodyPitchDeltaHz: -1,
+  webSpeechArticulationPreset: "tajweed_articulatory",
+  webSpeechArabicDialect: "ar-SA",
+  webSpeechUrduDialect: "ur-PK",
   defaultSpeed: 1,
   volume: 1,
   highlightColorId: "cyan",
@@ -180,6 +188,19 @@ function sanitizeProsodySettings(candidate) {
       : "scholarly";
   const rawRate = Number(candidate?.hadithProsodyRateDelta);
   const rawPitch = Number(candidate?.prosodyPitchDeltaHz);
+  const wsPreset =
+    candidate?.webSpeechArticulationPreset === "hadith_muhaqqaq" ||
+    candidate?.webSpeechArticulationPreset === "urdu_nastaliq_fasih" ||
+    candidate?.webSpeechArticulationPreset === "fluent_sard"
+      ? candidate.webSpeechArticulationPreset
+      : "tajweed_articulatory";
+  const arDialect =
+    candidate?.webSpeechArabicDialect === "ar-EG" ||
+    candidate?.webSpeechArabicDialect === "ar-AE"
+      ? candidate.webSpeechArabicDialect
+      : "ar-SA";
+  const urDialect =
+    candidate?.webSpeechUrduDialect === "ur-IN" ? "ur-IN" : "ur-PK";
   return {
     prosodyEnabled: candidate?.prosodyEnabled !== false,
     arabicTashkeelEnabled: candidate?.arabicTashkeelEnabled !== false,
@@ -187,6 +208,9 @@ function sanitizeProsodySettings(candidate) {
     prosodyPreset: preset,
     hadithProsodyRateDelta: Number.isFinite(rawRate) ? Math.max(-10, Math.min(4, Math.round(rawRate))) : -3,
     prosodyPitchDeltaHz: Number.isFinite(rawPitch) ? Math.max(-4, Math.min(2, Math.round(rawPitch))) : -1,
+    webSpeechArticulationPreset: wsPreset,
+    webSpeechArabicDialect: arDialect,
+    webSpeechUrduDialect: urDialect,
   };
 }
 

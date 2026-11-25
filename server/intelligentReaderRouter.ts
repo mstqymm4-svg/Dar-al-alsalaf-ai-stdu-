@@ -269,7 +269,7 @@ function normalizeQuranOrthographicNoSpace(normalizedText: string): string {
 function buildEveryAyahUrl(
   surahNumber: number,
   ayahNumber: number,
-  reciterFolder = "Abdurrahmaan_As-Sudais_192kbps"
+  reciterFolder = "Saood_ash-Shuraym_128kbps"
 ): string {
   const s = String(surahNumber).padStart(3, "0");
   const a = String(ayahNumber).padStart(3, "0");
@@ -278,12 +278,14 @@ function buildEveryAyahUrl(
 
 function buildIslamicNetworkAudioUrl(
   globalAyahNumber: number,
-  edition = "ar.abdurrahmaansudais"
+  edition = "ar.saoodshuraym"
 ): string {
-  return `https://cdn.islamic.network/quran/audio/128/${edition}/${globalAyahNumber}.mp3`;
+  const bitrate = edition === "ar.saoodshuraym" ? 64 : 128;
+  return `https://cdn.islamic.network/quran/audio/${bitrate}/${edition}/${globalAyahNumber}.mp3`;
 }
 
 const RECITER_FOLDER_MAP: Record<string, string> = {
+  "ar.saoodshuraym": "Saood_ash-Shuraym_128kbps",
   "ar.abdurrahmaansudais": "Abdurrahmaan_As-Sudais_192kbps",
   "ar.alafasy": "Alafasy_128kbps",
   "ar.abdulbasitmurattal": "Abdul_Basit_Murattal_192kbps",
@@ -292,6 +294,7 @@ const RECITER_FOLDER_MAP: Record<string, string> = {
 };
 
 const RECITER_QURAN_COM_ID: Record<string, number> = {
+  "ar.saoodshuraym": 10,
   "ar.abdurrahmaansudais": 3,
   "ar.alafasy": 7,
   "ar.abdulbasitmurattal": 2,
@@ -310,9 +313,9 @@ const _quranComSegmentsCache = new Map<string, QuranComAyahSegmentsData | null>(
 async function getQuranComAyahSegments(
   surahNumber: number,
   ayahNumber: number,
-  reciter = "ar.abdurrahmaansudais"
+  reciter = "ar.saoodshuraym"
 ): Promise<QuranComAyahSegmentsData | null> {
-  const qId = RECITER_QURAN_COM_ID[reciter] || 3;
+  const qId = RECITER_QURAN_COM_ID[reciter] || 10;
   const cacheKey = `${qId}:${surahNumber}:${ayahNumber}`;
   if (_quranComSegmentsCache.has(cacheKey)) {
     return _quranComSegmentsCache.get(cacheKey) || null;
@@ -1662,9 +1665,9 @@ async function verifySingleQuranVerse(params: {
   isQcfMushaf?: boolean;
   reciter?: string;
 }) {
-  const reciter = String(params.reciter || "ar.abdurrahmaansudais");
+  const reciter = String(params.reciter || "ar.saoodshuraym");
   const everyAyahFolder =
-    RECITER_FOLDER_MAP[reciter] || "Abdurrahmaan_As-Sudais_192kbps";
+    RECITER_FOLDER_MAP[reciter] || "Saood_ash-Shuraym_128kbps";
 
   const store = await getFullQuranIndex();
   const rawText = String(params.text || "").trim();
@@ -1680,7 +1683,7 @@ async function verifySingleQuranVerse(params: {
     const isExcludedNonQuran =
       /[«»]/.test(rawText) ||
       /^\s*[٠-٩۰-۹\d]{1,3}\s*[-–—۔.]/.test(rawNoTash) ||
-      /(?:وآخر\s+دعوانا|وصلى\s+الله\s+وسلم\s+على\s+نبينا|مدارج\s+السالكين|الناشر\s*:|عدد\s+الأجزاء)/.test(
+      /(?:وآخر\s+دعوانا|وصلى\s+الله\s+وسلم\s+على\s+نبينا|الصلاة\s+والسلام\s+على|أشرف\s+الأنبياء\s+والمرسلين|مدارج\s+السالكين|الناشر\s*:|عدد\s+الأجزاء)/.test(
         rawNoTash
       ) ||
       /^(?:حدثنا|أخبرنا|عن\s|رواه|أخرجه|متفق\s+عليه|قال\s+رسول\s+الله|قال\s+النبي|اللهم)/.test(
@@ -1895,8 +1898,8 @@ async function verifySingleQuranVerse(params: {
         bestSlice = [...span];
       }
 
-      // Stop extending span once accumulated text is well past the input text length
-      if (accumNS.length >= normInputNS.length * 1.35 && !accumNS.includes(normInputNS)) break;
+      // Stop extending span once accumulated text is well past the input text length (after checking at least 2 consecutive ayahs for cross-ayah excerpts like 65:2-3)
+      if (k >= 1 && accumNS.length >= normInputNS.length * 1.35 && !accumNS.includes(normInputNS)) break;
       if (isMinimalMultiAyahContainment) break;
     }
   }
@@ -1977,7 +1980,7 @@ intelligentReaderRouter.post("/verify-quran", express.json({ limit: "512kb" }), 
       endAyahHint,
       hasQuranBrackets,
       isQcfMushaf,
-      reciter = "ar.abdurrahmaansudais",
+      reciter = "ar.saoodshuraym",
     } = req.body || {};
 
     const result = await verifySingleQuranVerse({
@@ -1998,7 +2001,7 @@ intelligentReaderRouter.post("/verify-quran", express.json({ limit: "512kb" }), 
 // ─── 2b. POST /api/reader/verify-quran-batch — Single-Round-Trip Batch Verification for Entire Page ───
 intelligentReaderRouter.post("/verify-quran-batch", express.json({ limit: "2mb" }), async (req, res) => {
   try {
-    const { items = [], reciter = "ar.abdurrahmaansudais" } = req.body || {};
+    const { items = [], reciter = "ar.saoodshuraym" } = req.body || {};
     if (!Array.isArray(items)) {
       return res.status(400).json({ ok: false, error: "Expected items array" });
     }

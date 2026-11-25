@@ -22,7 +22,7 @@ import { useT } from "@/lib/i18n";
 
 const SEGMENT_BADGE_MAP = {
   quran: {
-    label: "تلاوة قرآنية مسجلة • الشيخ عبد الرحمن السديس",
+    label: "تلاوة قرآنية مسجلة • الشيخ سعود الشريم",
     cls: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
   },
   hadith: {
@@ -433,7 +433,7 @@ export default function IntelligentAudioPlayer({
               type="button"
               disabled={!hasSentences}
               onClick={() => intelligentAudioEngine.jumpToSegmentType("quran", 1)}
-              title="الانتقال السريع إلى الآية القرآنية (بصوت الشيخ السديس)"
+              title="الانتقال السريع إلى الآية القرآنية (بصوت الشيخ سعود الشريم)"
               className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-bold transition cursor-pointer disabled:opacity-35 ${
                 currentSentence?.segmentType === "quran"
                   ? "bg-emerald-500/25 border-emerald-400/50 text-emerald-200"

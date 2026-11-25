@@ -34,7 +34,7 @@ import {
 export const READER_ERROR_CODES = {
   PDF_LOAD_FAILED: {
     code: "PDF_LOAD_FAILED",
-    titleAr: "فشل تحميل PDF",
+    titleAr: "PDF غير متوفر",
     messageAr: "تعذر تحميل ملف الكتاب (PDF). يرجى التحقق من الملف أو إعادة المحاولة.",
   },
   TEXT_EXTRACTION_FAILED: {
@@ -49,7 +49,7 @@ export const READER_ERROR_CODES = {
   },
   INVALID_TEXT: {
     code: "INVALID_TEXT",
-    titleAr: "النص غير صالح",
+    titleAr: "نص غير صالح",
     messageAr: "النص المستخرج يحتوي على رموز تالفة أو حروف مقطعة غير صالحة للقراءة الصوتية.",
   },
   UNSUPPORTED_LANGUAGE: {
@@ -62,15 +62,30 @@ export const READER_ERROR_CODES = {
     titleAr: "فشل TTS",
     messageAr: "تعذر توليد الصوت من محرك النطق (TTS). يرجى إعادة المحاولة.",
   },
+  QURAN_AUDIO_LOAD_FAILED: {
+    code: "QURAN_AUDIO_LOAD_FAILED",
+    titleAr: "فشل تحميل التسجيل القرآني",
+    messageAr: "تعذر تحميل التسجيل الصوتي للآية القرآنية بصوت الشيخ سعود الشريم.",
+  },
   AUDIO_LOAD_FAILED: {
     code: "AUDIO_LOAD_FAILED",
     titleAr: "فشل تحميل الصوت",
     messageAr: "تعذر تحميل أو تشغيل المقطع الصوتي.",
   },
+  QURAN_MATCH_FAILED: {
+    code: "QURAN_MATCH_FAILED",
+    titleAr: "فشل مطابقة الآية",
+    messageAr: "تعذر التحقق من مطابقة الآية القرآنية في المصحف العثماني؛ لن يتم تشغيل تسجيل غير مؤكد.",
+  },
   SYNC_FAILED: {
     code: "SYNC_FAILED",
     titleAr: "فشل المزامنة",
     messageAr: "حدث خلل في مزامنة تظليل الكلمات مع الصوت.",
+  },
+  HIGHLIGHT_FAILED: {
+    code: "HIGHLIGHT_FAILED",
+    titleAr: "فشل التظليل",
+    messageAr: "تعذر مطابقة إحداثيات تظليل الكلمات على صفحة الكتاب.",
   },
   NETWORK_OFFLINE: {
     code: "NETWORK_OFFLINE",
@@ -706,11 +721,13 @@ export function detectIsUrduScript(text) {
   if (!s) return false;
 
   // Normalize Indo-Pak/Arabic variants (ك -> ک, ى/ي -> ی, ه -> ہ) before matching exclusive Urdu words
-  // so Urdu text using Arabic Kaf/Alef Maksura (e.g. "مطبع كى معلومات", "اس كامقام") is 100% recognized!
+  // EXCEPT Arabic pronoun "هو" ("ه" + "و") so Arabic sentences like "الإخلاص هو حقيقة الدين" are never misclassified as Urdu "ہو"!
   const sUrNorm = s
     .replace(/\u0643/g, "\u06A9")
     .replace(/[\u0649\u064A]/g, "\u06CC")
-    .replace(/\u0647/g, "\u06C1");
+    .replace(/(^|\s)ه([\u064B-\u0652]*و)(?=\s|$|[۔.،؛؟!:])/g, "$1__AR_HUWA__")
+    .replace(/\u0647/g, "\u06C1")
+    .replace(/__AR_HUWA__/g, "هو");
 
   const strictUrduChars = (s.match(STRICT_URDU_ONLY_CHARS_REGEX) || []).length;
   const exclusiveUrduWords = (sUrNorm.match(EXCLUSIVE_URDU_WORDS_REGEX) || []).length;
@@ -745,7 +762,7 @@ export function detectIsUrduScript(text) {
   const sWithoutQuotes = sUrNorm.replace(/«[^»]*»|﴿[^﴾]*﴾/g, " ").trim();
   const outerUrduWords = (sWithoutQuotes.match(EXCLUSIVE_URDU_WORDS_REGEX) || []).length;
   const wordCount = sWithoutQuotes.split(/\s+/).filter(Boolean).length;
-  if ((exclusiveUrduWords >= 1 || outerUrduWords >= 1) && (strictUrduChars >= 1 || wordCount <= 8) && tashkeelCount < 4) {
+  if ((exclusiveUrduWords >= 1 || outerUrduWords >= 1) && (strictUrduChars >= 1 || (wordCount <= 8 && arabicAlMatches <= 1)) && tashkeelCount < 4) {
     return true;
   }
 
@@ -926,9 +943,9 @@ export function segmentBlockIntoSentences(block, blockIndex = 0) {
   }
 
   // Step 1: Split out inline Quranic verses ﴿...﴾ (including cross-page unclosed ﴿... at end or ...﴾ at start)
-  // and (when block contains Urdu) inline quotes «...» / "..." / “...” (including unclosed «... at end of page or ...» at start of page)
+  // and (when block contains Urdu) inline quotes «...» / "..." / “...” (excluding any span that crosses ﴿ or ﴾ so multi-sentence Urdu quotes never swallow Quranic verses!)
   const tokenRegex = blockContainsUrdu
-    ? /(﴿[^﴾]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*|﴿[^﴾]{2,}$|^[^﴿]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*|«[^»]{6,}»[۔.؟!،؛]*|«[^»]{6,}$|^[^«]{6,}»[۔.؟!،؛]*|"[^"]{8,}"[۔.؟!،؛]*|“[^”]{8,}”[۔.؟!،؛]*)/g
+    ? /(﴿[^﴾]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*|﴿[^﴾]{2,}$|^[^﴿]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*|«[^»﴿﴾]{6,}»[۔.؟!،؛]*|«[^»﴿﴾]{6,}$|^[^«﴿﴾]{6,}»[۔.؟!،؛]*|"[^"﴿﴾]{8,}"[۔.؟!،؛]*|“[^”﴿﴾]{8,}”[۔.؟!،؛]*)/g
     : /(﴿[^﴾]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*|﴿[^﴾]{2,}$|^[^﴿]{2,}﴾(?:\s*[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\s*\)\s*[\d٠-٩۰-۹]+\s*\()?[۔.؟!،؛]*)/g;
   const parts = [];
   let lastIdx = 0;
@@ -1022,10 +1039,15 @@ export function segmentBlockIntoSentences(block, blockIndex = 0) {
         .replace(/\s*(?:[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\)\s*[\d٠-٩۰-۹]+\s*\()\s*[۔.؟!،؛]*$/, "")
         .replace(/[۔.؟!،؛]+$/, "")
         .trim();
-      if (detectIsUrduScript(cleanVerse) && !/[\uFB50-\uFDCF]/.test(cleanVerse)) {
+      if (detectIsUrduScript(cleanVerse) && !/[ۓ\uFB50-\uFDCF]/.test(cleanVerse)) {
         parts.push({ text: cleanVerse.replace(/[﴿﴾]/g, "").trim(), forcedType: null });
       } else {
         parts.push({ text: cleanVerse, forcedType: "quran", footnoteNum, inlineCitationHint });
+      }
+      if (inlineCiteMatch) {
+        lastIdx = match.index + match[0].length + inlineCiteMatch[0].length;
+        tokenRegex.lastIndex = lastIdx;
+        continue;
       }
     } else {
       const inner = token
@@ -1089,7 +1111,7 @@ export function segmentBlockIntoSentences(block, blockIndex = 0) {
         (part.text.split(/\s+/).length <= 5 ? footnoteQuranMap.__first : null) ||
         null;
       const partBareLettersLen = part.text.replace(/[﴿﴾\s\d٠-٩۰-۹\(\)\[\]۔.،؛؟!]/g, "").length;
-      const isQcfMushaf = Boolean(part.inlineCitationHint && /[\uFB50-\uFDCF]/.test(part.text));
+      const isQcfMushaf = Boolean(part.inlineCitationHint && /[ۓ\uFB50-\uFDCF]/.test(part.text));
       const isCrossPageIncomplete =
         Boolean(block?.crossPageQuranText) &&
         (!(part.text.includes("﴿") && part.text.includes("﴾")) && partBareLettersLen < 26);
@@ -1201,9 +1223,7 @@ function buildSentenceObject(text, block, blockIndex, forcedSegmentType = null) 
 
   const resolvedSegmentType =
     forcedSegmentType ||
-    (block?.blockType === "quran" && resolvedLanguage === "ar" && !detectIsUrduScript(text)
-      ? "quran"
-      : classification.segmentType === "quran" && detectIsUrduScript(text)
+    (classification.segmentType === "quran" && detectIsUrduScript(text)
       ? "urdu_body"
       : classification.segmentType);
 
@@ -1539,15 +1559,47 @@ function reconstructSpatialRtlFontItems(spatialGlyphs) {
   const outItems = [];
   for (const ln of lines) {
     const marks = ln.gs.filter((gl) => isCombiningMarkGlyph(gl));
-    // For Traditional Arabic, phantom c===3 space glyphs sometimes appear inline before diacritics;
-    // keep c===3 as explicit separator only in Muhammadi Quranic (saleem_quran), and use spatial gaps for both!
-    const bases = ln.gs
-      .filter((gl) => {
-        if (isCombiningMarkGlyph(gl)) return false;
-        if (gl.c === 3 && gl.fontKind === "trad_arabic") return false;
-        return gl.trueU.length > 0;
-      })
+    // Pre-absorb decorative Tatweel/Kashida glyphs (c === 186 in Traditional Arabic, where trueU === "" and w > 0)
+    // into the adjacent Arabic base glyph so elongated words like "ا٤بػػػدخل" -> "المدخل" never split across false spatial gaps!
+    const nonMarkOrdered = [...ln.gs]
+      .filter((gl) => !isCombiningMarkGlyph(gl))
       .sort((a, b) => b.x + b.w / 2 - (a.x + a.w / 2));
+
+    const bases = [];
+    for (const gl of nonMarkOrdered) {
+      if (gl.trueU.length === 0) {
+        if (bases.length > 0 && (gl.w || 0) > 0) {
+          const prevB = bases[bases.length - 1];
+          const minX = Math.min(prevB.x, gl.x);
+          const maxX = Math.max(prevB.x + prevB.w, gl.x + gl.w);
+          prevB.x = minX;
+          prevB.w = maxX - minX;
+        }
+        continue;
+      }
+      if (gl.c === 3 && gl.fontKind === "trad_arabic") {
+        // Mark c===3 in Traditional Arabic so we can strip phantom spaces directly before a word-final ة suffix (e.g. "الصلا ة", "الدعو ة", "أُمَّ ة")
+        const prevB = bases.length > 0 ? bases[bases.length - 1] : null;
+        if (prevB && /[\u0621-\u064A\u064B-\u065F\u0670]$/.test(prevB.trueU)) {
+          gl._beforeTaMarbutaCandidate = true;
+        }
+      }
+      bases.push({ ...gl });
+    }
+    // Filter out phantom space glyphs directly before word-final "ة" (like "الصلا ة", "الدعو ة", "أُمَّ ة", "سُمْعَ ةً", "بِشَفَاعَ ةِ")
+    for (let bi = bases.length - 2; bi >= 1; bi--) {
+      if (
+        bases[bi]._beforeTaMarbutaCandidate &&
+        /^ة(?:[\u064B-\u065F\u0670]*)$/.test(bases[bi + 1]?.trueU || "")
+      ) {
+        const prevB = bases[bi - 1];
+        const minX = Math.min(prevB.x, bases[bi].x);
+        const maxX = Math.max(prevB.x + prevB.w, bases[bi].x + bases[bi].w);
+        prevB.x = minX;
+        prevB.w = maxX - minX;
+        bases.splice(bi, 1);
+      }
+    }
 
     if (bases.length === 0) continue;
 
@@ -2138,7 +2190,30 @@ export function recoverTrueGlyphTextItems(items, opList, commonObjs = null) {
       spatialArabicItems.length > 0 &&
       (itemFontKind === "trad_arabic" || itemFontKind === "saleem_quran")
     ) {
+      // Advance gCursor past contiguous spatial Arabic glyphs so subsequent Urdu/Noori items stay synchronized!
+      while (
+        gCursor < glyphStream.length &&
+        (glyphStream[gCursor].fontKind === "trad_arabic" ||
+          glyphStream[gCursor].fontKind === "saleem_quran")
+      ) {
+        gCursor++;
+      }
       continue;
+    }
+
+    // Also skip any remaining spatial Arabic glyphs at gCursor before searching for a non-spatial item
+    if (
+      spatialArabicItems.length > 0 &&
+      itemFontKind !== "trad_arabic" &&
+      itemFontKind !== "saleem_quran"
+    ) {
+      while (
+        gCursor < glyphStream.length &&
+        (glyphStream[gCursor].fontKind === "trad_arabic" ||
+          glyphStream[gCursor].fontKind === "saleem_quran")
+      ) {
+        gCursor++;
+      }
     }
 
     const revStrNoSpace = [...str].reverse().join("").replace(/\s+/g, "");
@@ -2148,17 +2223,33 @@ export function recoverTrueGlyphTextItems(items, opList, commonObjs = null) {
     let isReversed = false;
 
     const candidates = [];
-    for (let s = gCursor; s < Math.min(glyphStream.length, gCursor + 180); s++) {
+    for (let s = gCursor; s < glyphStream.length; s++) {
+      if (
+        itemFontKind &&
+        glyphStream[s].fontKind &&
+        glyphStream[s].fontKind !== itemFontKind &&
+        glyphStream[s].fontKind !== "alvi"
+      ) {
+        continue;
+      }
       candidates.push(s);
     }
-    for (let s = Math.max(0, gCursor - 24); s < gCursor; s++) {
+    for (let s = Math.max(0, gCursor - 40); s < gCursor; s++) {
+      if (
+        itemFontKind &&
+        glyphStream[s].fontKind &&
+        glyphStream[s].fontKind !== itemFontKind &&
+        glyphStream[s].fontKind !== "alvi"
+      ) {
+        continue;
+      }
       candidates.push(s);
     }
 
     for (const start of candidates) {
       let acc = "";
       const slice = [];
-      for (let k = start; k < Math.min(glyphStream.length, start + 120); k++) {
+      for (let k = start; k < Math.min(glyphStream.length, start + 140); k++) {
         const g = glyphStream[k];
         if (
           acc.length === 0 &&
@@ -2169,10 +2260,10 @@ export function recoverTrueGlyphTextItems(items, opList, commonObjs = null) {
           break;
         }
         if (
-          item.fontName &&
-          g.fontName &&
-          g.fontName !== item.fontName &&
-          (g.fontKind === "trad_arabic" || g.fontKind === "saleem_quran")
+          itemFontKind &&
+          g.fontKind &&
+          g.fontKind !== itemFontKind &&
+          g.fontKind !== "alvi"
         ) {
           break;
         }
@@ -2203,7 +2294,7 @@ export function recoverTrueGlyphTextItems(items, opList, commonObjs = null) {
             break;
           } else if (
             acc.length === strNoSpace.length &&
-            (g.fontKind === "saleem_quran" || g.fontKind === "trad_arabic") &&
+            (g.fontKind === "saleem_quran" || g.fontKind === "trad_arabic" || g.fontKind === "alvi") &&
             sortChars(acc) === sortChars(strNoSpace)
           ) {
             matchedSlice = slice;
@@ -2262,16 +2353,25 @@ export function polishDecodedNastaliqLine(rawLine) {
   let s = decodeIslamicHonorificPua(String(rawLine));
   // Strip decorative Word/InPage "=" border runs
   s = s.replace(/={2,}/g, " ").replace(/^\s*=+\s*|\s*=+\s*$/g, " ");
+  // Convert QCF_BSML "چ" brackets around King Fahd Mushaf QCF_P* glyphs (e.g. P24 "چۓۓ ﮲...﮿ چ [غافر: ٦٥]") into ﴿...﴾
+  s = s.replace(/چ(\s*[ۓڎڈژ\uFB50-\uFDCF\s]{2,}?)چ/g, "﴿$1﴾");
+  s = s.replace(/چ(?=\s*[ۓ\uFB50-\uFDCF]{2,})/g, "﴿").replace(/(?<=[ۓ\uFB50-\uFDCF]\s*)چ/g, "﴾");
+  // Normalize visually reversed guillemets » ... « into canonical « ... » (fixes P4, P205 Hadiths)
+  s = s.replace(/»\s*([^«»\n]{3,}?)\s*«/g, "«$1»");
   // Replace King Fahd Mushaf Page 458 (QCF_P458) cover calligraphy verse with authentic Unicode text (Surah Az-Zumar 39:2)
   // while keeping non-458 QCF Mushaf verses followed by [سورة: آية] identifiable via their citation!
   s = s.replace(
-    /﴿\s*[ڎڈژ\uFB50-\uFDCF\s]+\s*﴾(?!\s*(?:\[\s*|[\(\[]\s*)[^\]]+[:：])/g,
+    /﴿\s*[ۓڎڈژ\uFB50-\uFDCF\s]+\s*﴾(?!\s*(?:\[\s*|[\(\[]\s*)[^\]]+[:：])/g,
     "﴿فَاعْبُدِ اللَّهَ مُخْلِصًا لَّهُ الدِّينَ﴾"
   );
   // Strip table-of-contents dot leaders (2+ consecutive periods/dots)
   s = s.replace(/\.{2,}|…+/g, " ");
-  // Rejoin Noon Ghunna (ں) or Bari Ye (ے) when separated by a space from its stem
-  s = s.replace(/([\u0621-\u06D3])\s+([ںے])(?=\s|$|[۔.،؛؟!:])/g, "$1$2");
+  // Rejoin Noon Ghunna (ں), Bari Ye (ے), or Ta-Marbuta (ة/ۃ) when separated by a space from its stem (including before parentheses or brackets)
+  s = s
+    .replace(/([\u0621-\u06D3][\u064B-\u065F\u0670]*)\s+([ںےةۃ][\u064B-\u065F\u0670]*)(?=\s|$|[۔.،؛؟!:\(\)\[\]«»"'])/g, "$1$2")
+    .replace(/(^|\s)ےہ(?=\s|$|[۔.،؛؟!:])/g, "$1ہے")
+    .replace(/لادینیت\s+کو\s*سا[كک]ی\s*ئٹ/g, "لادینیت کی ویب سائٹ")
+    .replace(/سا[كک]ی\s*ئٹ/g, "سائٹ");
   // Rejoin isolated initial Alif before known stems where Nastaliq kerning left a small gap
   s = s
     .replace(/(^|\s)ا\s+(خلاص|سلام|عتبار|حساس|نسان|یمان|مت|عمال|حادیث|حادىث|سلاف|طاعت|ختیار|ہمیت|مید|سلوب|لفاظ|مور|حکام|نبیاء|نبىاء)(?=\s|$|[۔.،؛؟!:])/g, "$1ا$2")
@@ -2387,8 +2487,15 @@ export function polishDecodedNastaliqLine(rawLine) {
     .replace(/ا([\u064B-\u0652]*)\u0655/g, "إ$1");
 
   s = s
-    .replace(/الهْمَِ/g, "الْهَمِّ")
+    .replace(/(^|\s)لا\s*ہو\s*ر(?=\s|$|[۔.،؛؟!:])/g, "$1لاہور")
+    .replace(/المحم\s+د([ىی])/g, "المحمد$1")
+    .replace(/الهْمَِ|الْهمَِ/g, "الْهَمِّ")
     .replace(/الحَْزَنِ/g, "الْحَزَنِ")
+    .replace(/إِنِيّ/g, "إِنِّي")
+    .replace(/الرِجَالِ/g, "الرِّجَالِ")
+    .replace(/بِضارِهِم/g, "بِضَارِّهِمْ")
+    .replace(/باِذِٕنِ|باِذْنِ/g, "بِإِذْنِ")
+    .replace(/الأَعْمَالُبِالنِّيَّاتِ|الأَعْمَالُبِالنِّيَّاتِ/g, "الأَعْمَالُ بِالنِّيَّاتِ")
     .replace(/(?:^|\s)َ?\s*عْنَ\s*ْنِ\s*عُمَر\s*(?:بْنِ|ِب)\s*(?:الْخَطَّابِِ?|الخَْط\s*َّاب)/g, " عَنْ عُمَرَ بْنِ الْخَطَّابِ")
     .replace(/عْنَْنِ\s+عُمَربْنِ\s+الْخَطَّابِِ?/g, "عَنْ عُمَرَ بْنِ الْخَطَّابِ")
     .replace(/عْنَ\s*ْنِ\s*عُمَر/g, "عَنْ عُمَرَ")
@@ -2452,7 +2559,7 @@ export async function extractAndProcessPdfPage({
   bookId,
   autoOcrEnabled = true,
   forceOcr = false,
-  reciterId = "ar.abdurrahmaansudais",
+  reciterId = "ar.saoodshuraym",
   bookMetadata = null,
 }) {
   // Check cache first (only return cached data if not forcing fresh OCR and cached page has current pipelineVersion)
@@ -2957,7 +3064,12 @@ export function analyzeNativePdfTextLayer(items, viewport, separatorY = null) {
     const str = rawStr.replace(/\.{3,}|…+/g, " ");
     const tx = item.transform ? item.transform[4] : 0;
     const ty = item.transform ? item.transform[5] : 0;
-    const w = item.width || str.length * 5.5;
+    // Never assign str.length * 5.5 to zero-width trailing RTL Nastaliq items (e.g. P394 "یقیناً  \u00a0" w=0),
+    // or normX + normW jumps rightward across adjacent items on the line!
+    const w =
+      typeof item.width === "number" && item.width > 0
+        ? item.width
+        : Math.min(18, Math.max(2, str.trim().length * 2.2));
     const h = item.height || Math.abs(item.transform?.[3] || 14);
 
     // Keep explicit whitespace items so coalesceRtlLineItems knows where a PDF space sat between words!
@@ -3084,7 +3196,8 @@ export function analyzeNativePdfTextLayer(items, viewport, separatorY = null) {
     const tokens = ln.text.split(/\s+/).filter(Boolean);
     totalTokenCount += tokens.length;
     for (const tk of tokens) {
-      if (tk.length === 1 && /[\u0600-\u06FF]/.test(tk) && tk !== "و") {
+      const strippedTk = tk.replace(/[۔.،؛؟!:"'«»﴿﴾\(\)\[\]—–-]/g, "");
+      if (strippedTk.length === 1 && /[\u0600-\u06FF]/.test(strippedTk) && strippedTk !== "و") {
         singleCharTokenCount++;
       }
       if (/[\uE000-\uF8FF\uFFFD]/.test(tk)) {
@@ -3166,6 +3279,16 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
   const bodyMedianFontH =
     fontHeights[Math.floor(fontHeights.length / 2)] || 18;
 
+  const lineGaps = [];
+  for (let i = 1; i < orderedLines.length; i++) {
+    const g = orderedLines[i].box2d[0] - orderedLines[i - 1].box2d[2];
+    if (g >= 2 && g <= 30) lineGaps.push(g);
+  }
+  lineGaps.sort((a, b) => a - b);
+  const bodyMedianLineGap =
+    lineGaps.length > 0 ? lineGaps[Math.floor(lineGaps.length / 2)] : 15;
+  const distinctHeadingGapThreshold = Math.max(22, Math.round(bodyMedianLineGap * 1.32));
+
   const isStructuralHeadingText = (txt) =>
     /^(?:الباب|الفصل|المبحث|المطلب|مقدمة|تقديم|تقريظ|خاتمة|المراجع|المصادر|الفهرس|فهرس|تمهيد|شكر\s+وتقدير|تنبيه|فائدة|مثال)\b|^(?:[\(\[]?\s*[٠-٩۰-۹\d]{1,2}\s*[\)\]]|[٠-٩۰-۹\d]{1,2}\s*[۔\-–])\s*(?:[^\n]{3,95})$/.test(
       String(txt || "").trim()
@@ -3198,7 +3321,7 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       !hasLargerFont &&
       !structuralTitle &&
       !/[:：؟!]$/.test(combinedText) &&
-      gapBefore < 16;
+      gapBefore < distinctHeadingGapThreshold;
     const endsWithMidClausePunct = /[،,;]$/.test(combinedText);
     const isSingleShortStandalone =
       currentLines.length === 1 &&
@@ -3206,7 +3329,11 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       !/[۔.]$/.test(combinedText) &&
       !endsWithMidClausePunct &&
       !isBottomTruncatedBody &&
-      (hasLargerFont || structuralTitle || /[:：؟]$/.test(combinedText) || gapAfter >= 14 || gapBefore >= 14);
+      (hasLargerFont ||
+        structuralTitle ||
+        /[:：؟]$/.test(combinedText) ||
+        gapAfter >= distinctHeadingGapThreshold ||
+        gapBefore >= distinctHeadingGapThreshold);
     const isMultiOrLongHeading =
       currentLines.length <= 2 &&
       combinedText.length <= 130 &&
@@ -3249,7 +3376,12 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
     const lastOpenQ = accText.lastIndexOf("﴿");
     const isInsideUnclosedQuran = lastOpenQ >= 0 && !accText.slice(lastOpenQ).includes("﴾");
     const lastOpenH = accText.lastIndexOf("«");
-    const isInsideUnclosedHadith = lastOpenH >= 0 && !accText.slice(lastOpenH).includes("»");
+    const isInsideUnclosedHadith =
+      lastOpenH >= 0 &&
+      !accText.slice(lastOpenH).includes("»") &&
+      !accText.slice(lastOpenH).includes("﴿") &&
+      !line.text.includes("﴿") &&
+      currentLines.length < 5;
     const isInsideUnclosedQuote = isInsideUnclosedQuran || isInsideUnclosedHadith;
 
     const prevIsUrdu = prev ? detectIsUrduScript(prev.text) : false;
@@ -3258,9 +3390,13 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       ? /[۔؟!\.:﴾»]$/.test(prev.text.replace(/\(\s*[\d٠-٩۰-۹]+\s*\)\s*$/, "").trim())
       : false;
     const prevIsHeadingCandidate = prev
-      ? (prev.maxFontH >= bodyMedianFontH * 1.07 ||
+      ? !prev.text.includes("﴿") &&
+        !isInsideUnclosedQuran &&
+        (prev.maxFontH >= bodyMedianFontH * 1.07 ||
           isStructuralHeadingText(prev.text) ||
-          (prev.text.length < 70 && verticalGap >= 14 && !/[،,;]$/.test(prev.text)))
+          (prev.text.length < 65 &&
+            verticalGap >= distinctHeadingGapThreshold &&
+            !/[،,;]$/.test(prev.text)))
       : false;
     const currStartsHeadingCandidate =
       line.maxFontH >= bodyMedianFontH * 1.07 ||
@@ -3276,12 +3412,13 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
     if (
       prev &&
       !isInsideUnclosedQuote &&
-      (verticalGap > 24 ||
+      (verticalGap > Math.max(24, distinctHeadingGapThreshold) ||
         line.isFootnoteArea !== prev.isFootnoteArea ||
         languageSwitched ||
         (prevIsHeadingCandidate && verticalGap >= 12) ||
         (currStartsHeadingCandidate && verticalGap >= 12) ||
-        /[۔؟!\.:]$/.test(prev.text))
+        /[۔؟!\.]$/.test(prev.text) ||
+        (/:$/.test(prev.text) && !line.text.includes("﴿")))
     ) {
       flushBlock(i - 1);
       blockStartLineIdx = i;
@@ -3444,7 +3581,7 @@ export async function finalizeStructuredBlocks({
   ocrWarningMessage,
   detectedAnomalies = [],
   rawPdfLayerText = "",
-  reciterId = "ar.abdurrahmaansudais",
+  reciterId = "ar.saoodshuraym",
 }) {
   const preSentences = [];
   let totalWordsCount = 0;
@@ -3556,7 +3693,7 @@ export async function finalizeStructuredBlocks({
     const isNonQuranExcluded =
       /[«»]/.test(cleanOrig) ||
       /^\s*[٠-٩۰-۹\d]{1,3}\s*[-–—۔.]/.test(cleanNoTash) ||
-      /(?:وآخر\s+دعوانا|وصلى\s+الله\s+وسلم\s+على\s+نبينا|مدارج\s+السالكين|الناشر\s*:|عدد\s+الأجزاء)/.test(
+      /(?:وآخر\s+دعوانا|وصلى\s+الله\s+وسلم\s+على\s+نبينا|الصلاة\s+والسلام\s+على|أشرف\s+الأنبياء\s+والمرسلين|مدارج\s+السالكين|الناشر\s*:|عدد\s+الأجزاء)/.test(
         cleanNoTash
       ) ||
       /^(?:حدثنا|أخبرنا|عن\s|رواه|أخرجه|متفق\s+عليه|قال\s+رسول\s+الله|قال\s+النبي|اللهم)/.test(
@@ -3630,10 +3767,23 @@ export async function finalizeStructuredBlocks({
     }
   }
 
-  const allSentences = preSentences.map((s, idx) => ({
-    ...s,
-    sentenceIndex: idx,
-  }));
+  const allSentences = preSentences.map((s, idx) => {
+    let engineId = "urdu_engine";
+    if (s.segmentType === "quran" && s.quranMeta?.verified) {
+      engineId = "quran_engine";
+    } else if (s.segmentType === "hadith" || s.segmentType === "dua") {
+      engineId = "hadith_engine";
+    } else if (s.language === "ar") {
+      engineId = "arabic_general_engine";
+    } else {
+      engineId = "urdu_engine";
+    }
+    return {
+      ...s,
+      engineId,
+      sentenceIndex: idx,
+    };
+  });
 
   return {
     pipelineVersion: READER_PIPELINE_VERSION,
@@ -3783,10 +3933,10 @@ const CLIENT_CANONICAL_QURAN_INDEX = [
 
 export async function verifyQuranBatchClient(
   candidates = [],
-  reciterId = "ar.abdurrahmaansudais"
+  reciterId = "ar.saoodshuraym"
 ) {
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
-  const reciter = reciterId || "ar.abdurrahmaansudais";
+  const reciter = reciterId || "ar.saoodshuraym";
   const results = new Array(candidates.length).fill(null);
   const uncachedPayload = [];
 
@@ -3849,7 +3999,7 @@ export async function verifyQuranVerseClient(
   text,
   surahHint = 0,
   ayahHint = 0,
-  reciterId = "ar.abdurrahmaansudais",
+  reciterId = "ar.saoodshuraym",
   endAyahHint = 0,
   hasQuranBrackets = false
 ) {
@@ -3889,13 +4039,14 @@ export async function verifyQuranVerseClient(
   } catch {}
 
   const reciterFolderMap = {
+    "ar.saoodshuraym": "Saood_ash-Shuraym_128kbps",
     "ar.abdurrahmaansudais": "Abdurrahmaan_As-Sudais_192kbps",
     "ar.alafasy": "Alafasy_128kbps",
     "ar.abdulbasitmurattal": "Abdul_Basit_Murattal_192kbps",
     "ar.husary": "Husary_128kbps",
     "ar.minshawi": "Minshawy_Murattal_128kbps",
   };
-  const folder = reciterFolderMap[reciterId] || "Abdurrahmaan_As-Sudais_192kbps";
+  const folder = reciterFolderMap[reciterId] || "Saood_ash-Shuraym_128kbps";
 
   const norm = normalizeForQuickArabicMatch(text)
     .replace(/[\(\)\[\]\{\}]\s*[٠-٩۰-۹\d]+\s*[\(\)\[\]\{\}]/g, " ")
