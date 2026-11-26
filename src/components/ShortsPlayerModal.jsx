@@ -17,6 +17,7 @@ import {
   Check,
 } from "lucide-react";
 import { extractYoutubeId, getThumbnail } from "@/lib/youtubeMeta";
+import { apiUrl } from "@/lib/apiBase";
 import { toast } from "sonner";
 import { useT } from "@/lib/i18n";
 import { catLabel } from "@/lib/i18n-terms";
@@ -226,14 +227,14 @@ export default function ShortsPlayerModal({
   useEffect(() => {
     if (!isOpen || !activeVidId || !ytEmbedError || offlineBlobUrl) return;
     let cancelled = false;
-    fetch(`/api/youtube-stream?id=${encodeURIComponent(activeVidId)}`)
+    fetch(apiUrl(`/api/youtube-stream?id=${encodeURIComponent(activeVidId)}`))
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled) return;
         const resolvedUrl =
-          data?.proxyUrl ||
+          (data?.proxyUrl ? apiUrl(data.proxyUrl) : null) ||
           (data?.url
-            ? `/api/youtube-download?url=${encodeURIComponent(data.url)}`
+            ? apiUrl(`/api/youtube-download?url=${encodeURIComponent(data.url)}`)
             : null);
         if (resolvedUrl) {
           setServerFallbackStreamUrl(resolvedUrl);

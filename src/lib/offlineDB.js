@@ -19,6 +19,7 @@ import initialVideos from "../../data-export/Videos.json";
 import initialVideoChannels from "../../data-export/VideoChannels.json";
 import initialSocialChannels from "../../data-export/SocialChannels.json";
 import initialSettings from "../../data-export/AppSettings.json";
+import { apiUrl } from "./apiBase.js";
 
 const DB_NAME = "dar_al_ulum_offline";
 const DB_VERSION = 3;
@@ -809,7 +810,7 @@ export async function downloadVideoForOffline(video, onProgress) {
   const thumbUrl = video.thumbnail || video.thumbnail_url || "";
   if (thumbUrl) {
     try {
-      const proxiedThumb = `/api/proxy-image?url=${encodeURIComponent(thumbUrl)}`;
+      const proxiedThumb = apiUrl(`/api/proxy-image?url=${encodeURIComponent(thumbUrl)}`);
       const tRes = await fetch(proxiedThumb);
       if (tRes.ok) {
         const tBlob = await tRes.blob();
@@ -830,8 +831,8 @@ export async function downloadVideoForOffline(video, onProgress) {
       rawUrl.startsWith("data:video/"));
 
   const downloadEndpoint = isDirect
-    ? `/api/youtube-download?directUrl=${encodeURIComponent(rawUrl)}`
-    : `/api/youtube-download?url=${encodeURIComponent(rawUrl)}`;
+    ? apiUrl(`/api/youtube-download?directUrl=${encodeURIComponent(rawUrl)}`)
+    : apiUrl(`/api/youtube-download?url=${encodeURIComponent(rawUrl)}`);
 
   let videoBlob = null;
   let mimeType = "video/mp4";

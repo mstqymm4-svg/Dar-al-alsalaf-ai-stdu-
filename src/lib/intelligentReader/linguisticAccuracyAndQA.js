@@ -24,7 +24,49 @@
  *      and clear user warning generation.
  */
 
+import { sanitizeIntraSentenceSyntacticPauses } from "./linguisticLinker";
+
 // ─── 1. Urdu Compound Words & Phonological Normalization Rules ────────────────
+
+/**
+ * Common Nastaliq glued Urdu words (verb+auxiliary or postposition+clitic/noun) that occasionally
+ * survive raw PDF extraction and must be cleanly spaced for accurate Urdu TTS pronunciation.
+ */
+const URDU_GLUED_WORD_REPAIRS = [
+  { pattern: /(^|\s)کیاجاتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کیا جاتا ہے" },
+  { pattern: /(^|\s)دیاجاتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1دیا جاتا ہے" },
+  { pattern: /(^|\s)لیاجاتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1لیا جاتا ہے" },
+  { pattern: /(^|\s)ہوجاتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1ہو جاتا ہے" },
+  { pattern: /(^|\s)ہوسکتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1ہو سکتا ہے" },
+  { pattern: /(^|\s)کرسکتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کر سکتا ہے" },
+  { pattern: /(^|\s)کردیتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کر دیتا ہے" },
+  { pattern: /(^|\s)کرلیتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کر لیتا ہے" },
+  { pattern: /(^|\s)کرتارہتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کرتا رہتا ہے" },
+  { pattern: /(^|\s)ہوتارہتاہے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1ہوتا رہتا ہے" },
+  { pattern: /(^|\s)کےلیے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے لیے" },
+  { pattern: /(^|\s)کےلئے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے لیے" },
+  { pattern: /(^|\s)اسلیے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1اس لیے" },
+  { pattern: /(^|\s)اسلئے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1اس لیے" },
+  { pattern: /(^|\s)کےساتھ(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے ساتھ" },
+  { pattern: /(^|\s)کےبعد(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے بعد" },
+  { pattern: /(^|\s)کےبغیر(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے بغیر" },
+  { pattern: /(^|\s)کےپاس(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے پاس" },
+  { pattern: /(^|\s)کےبارے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے بارے" },
+  { pattern: /(^|\s)کےذریعے(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے ذریعے" },
+  { pattern: /(^|\s)کےمطابق(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے مطابق" },
+  { pattern: /(^|\s)کےخلاف(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے خلاف" },
+  { pattern: /(^|\s)کےتحت(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے تحت" },
+  { pattern: /(^|\s)کےدرمیان(?=\s|$|[۔.،؛؟!:])/g, replace: "$1کے درمیان" },
+  { pattern: /(^|\s)(کو|سے|میں|پر|نے|تو|یہ|وہ)بھی(?=\s|$|[۔.،؛؟!:])/g, replace: "$1$2 بھی" },
+];
+
+function canonicalizeShaddaOrderLocal(str) {
+  return String(str || "")
+    .replace(/\u0640/g, "")
+    .replace(/\s+([\u064B-\u065F\u0670]+)/g, "$1")
+    .replace(/([\u064B-\u0650\u0652\u0670]+)\u0651/g, "\u0651$1")
+    .replace(/([\u064B-\u0652\u0670])\1+/g, "$1");
+}
 
 /**
  * Urdu compound suffixes (لاحقے) that form compound words (مركبات).
@@ -114,8 +156,20 @@ const URDU_TTS_PRONUNCIATION_FIXES = [
   { pattern: /(^|\s)تعالی(?=\s|$|[۔.،؛؟!:])/g, tts: "$1تعالیٰ", flag: "taala" },
   { pattern: /(^|\s)زکوٰۃ|زکوۃ(?=\s|$|[۔.،؛؟!:])/g, tts: "$1زکات", flag: "zakat_phonetic" },
   { pattern: /(^|\s)صلوٰۃ|صلوۃ(?=\s|$|[۔.،؛؟!:])/g, tts: "$1صلات", flag: "salat_phonetic" },
+  { pattern: /(^|\s)حیوٰۃ|حیوۃ(?=\s|$|[۔.،؛؟!:])/g, tts: "$1حیات", flag: "hayat_phonetic" },
   { pattern: /(^|\s)مشکوٰۃ(?=\s|$|[۔.،؛؟!:])/g, tts: "$1مشکات", flag: "mishkat_phonetic" },
   { pattern: /(^|\s)توراۃ|تورٰۃ(?=\s|$|[۔.،؛؟!:])/g, tts: "$1تورات", flag: "tawrat_phonetic" },
+  { pattern: /(^|\s)مثلا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1مثلاً", flag: "tanwin_masalan" },
+  { pattern: /(^|\s)عموما(?=\s|$|[۔.،؛؟!:])/g, tts: "$1عموماً", flag: "tanwin_umuman" },
+  { pattern: /(^|\s)خصوصا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1خصوصاً", flag: "tanwin_khususan" },
+  { pattern: /(^|\s)فورا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1فوراً", flag: "tanwin_fauran" },
+  { pattern: /(^|\s)تقریبا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1تقریباً", flag: "tanwin_taqriban" },
+  { pattern: /(^|\s)یقینا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1یقیناً", flag: "tanwin_yaqinan" },
+  { pattern: /(^|\s)قطعا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1قطعاً", flag: "tanwin_qatan" },
+  { pattern: /(^|\s)اصلا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1اصلاً", flag: "tanwin_aslan" },
+  { pattern: /(^|\s)عقلا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1عقلاً", flag: "tanwin_aqlan" },
+  { pattern: /(^|\s)نقلا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1نقلاً", flag: "tanwin_naqlan" },
+  { pattern: /(^|\s)شرعا(?=\s|$|[۔.،؛؟!:])/g, tts: "$1شرعاً", flag: "tanwin_sharan" },
 ];
 
 /**
@@ -133,15 +187,22 @@ export function processUrduLinguisticsAndPhonetics(ocrCorrectedText) {
     };
   }
 
-  let linguistic = String(ocrCorrectedText)
+  let linguistic = canonicalizeShaddaOrderLocal(String(ocrCorrectedText))
     // Canonicalize Urdu letters (ك -> ک, ي/ى -> ی, ه -> ہ)
     .replace(/\u0643/g, "\u06A9")
     .replace(/[\u0649\u064A]/g, "\u06CC")
     .replace(/\u0647/g, "\u06C1")
-    // Normalize Urdu Teh Marbuta (ة -> ۃ/ہ in Urdu loanwords like مسئلة -> مسئلہ, فائدة -> فائدہ, عقیدة -> عقیدہ)
+    // Normalize Urdu Teh Marbuta (ة -> ہ in Urdu loanwords like مسئلة -> مسئلہ, فائدة -> فائدہ, عقیدة -> عقیدہ)
     .replace(/(مسئل|فائد|قاعد|عقید|دائر|معامل|مرتب|طریق|وسوس|حاشي|حاشی|مقدم|نتیج|ذریع)\u0629/g, "$1ہ");
 
   const detectedCompounds = [];
+
+  for (const rule of URDU_GLUED_WORD_REPAIRS) {
+    if (rule.pattern.test(linguistic)) {
+      rule.pattern.lastIndex = 0;
+      linguistic = linguistic.replace(rule.pattern, rule.replace);
+    }
+  }
 
   for (const rule of URDU_COMPOUND_SUFFIX_RULES) {
     if (rule.pattern.test(linguistic)) {
@@ -194,7 +255,9 @@ export function processUrduLinguisticsAndPhonetics(ocrCorrectedText) {
     }
   }
 
-  tts = tts
+  // Strip any misplaced PDF commas sitting inside connected Urdu syntactic constructions!
+  const pauseSanitized = sanitizeIntraSentenceSyntacticPauses(tts, "ur");
+  tts = (pauseSanitized.text || tts)
     .replace(/\s+([۔،؛؟!:])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
@@ -268,7 +331,34 @@ const ARABIC_UNVOCALIZED_LEXICON = new Map([
   ["تعالى", "تَعَالَى"],
   ["اللهم", "اللَّهُمَّ"],
   ["إنما", "إِنَّمَا"],
-  ["الأعمال", "الأَعْمَالُ"],
+  ["الأعمال", "الْأَعْمَالُ"],
+  ["النفاق", "النِّفَاق"],
+  ["البدعة", "الْبِدْعَة"],
+  ["العقيدة", "الْعَقِيدَة"],
+  ["القلب", "الْقَلْب"],
+  ["النفس", "النَّفْس"],
+  ["الرسالة", "الرِّسَالَة"],
+  ["الهجرة", "الْهِجْرَة"],
+  ["العلم", "الْعِلْم"],
+  ["العمل", "الْعَمَل"],
+  ["الصدق", "الصِّدْق"],
+  ["الكذب", "الْكَذِب"],
+  ["الذكر", "الذِّكْر"],
+  ["الدعاء", "الدُّعَاء"],
+  ["الاستغفار", "الِاسْتِغْفَار"],
+  ["التوبة", "التَّوْبَة"],
+  ["النسائي", "النَّسَائِيّ"],
+  ["داود", "دَاوُدَ"],
+  ["أنس", "أَنَسٍ"],
+  ["جابر", "جَابِرٍ"],
+  ["عمر", "عُمَرَ"],
+  ["عثمان", "عُثْمَانَ"],
+  ["حدثنا", "حَدَّثَنَا"],
+  ["أخبرنا", "أَخْبَرَنَا"],
+  ["فقال", "فَقَالَ"],
+  ["قال", "قَالَ"],
+  ["يقول", "يَقُولُ"],
+  ["روى", "رَوَى"],
 ]);
 
 const ARABIC_PREPOSITIONS = new Set([
@@ -303,8 +393,8 @@ export function processArabicLinguisticsAndVocalization(ocrCorrectedText, segmen
     };
   }
 
-  // Canonicalize Arabic codepoints without touching any diacritics
-  let canonical = String(ocrCorrectedText)
+  // Canonicalize Arabic codepoints & Shadda order without dropping any author diacritics
+  let canonical = canonicalizeShaddaOrderLocal(String(ocrCorrectedText))
     .replace(/\u06C1/g, "\u0647") // ہ -> ه
     .replace(/\u06A9/g, "\u0643") // ک -> ك
     .replace(/\u06CC/g, "\u064A") // ی -> ي
@@ -444,6 +534,9 @@ export function processArabicLinguisticsAndVocalization(ocrCorrectedText, segmen
     .replace(/\)\s*[\u064B-\u065F\u0670\u06D6-\u06ED\s]*[\d٠-٩۰-۹]+\s*\(/g, " ")
     // Strip decorative guillemets/brackets
     .replace(/[«»"“”﴿﴾~^|¦§¨©ª¬®°±²³´µ¶·¸¹º¼½¾¿×÷]+/g, " ")
+  // Strip any misplaced PDF commas sitting inside connected Arabic syntactic constructions!
+  const pauseSanitized = sanitizeIntraSentenceSyntacticPauses(tts, "ar");
+  tts = (pauseSanitized.text || tts)
     .replace(/\s+([.،؛؟!:])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();

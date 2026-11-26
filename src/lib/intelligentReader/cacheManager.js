@@ -7,10 +7,10 @@
  * 3. `quran_meta`: Verified Quran verse metadata & audio URLs
  */
 
-const CACHE_DB_NAME = "dat_intelligent_reader_cache_v9";
+const CACHE_DB_NAME = "dat_intelligent_reader_cache_v11";
 const CACHE_DB_VERSION = 1;
-export const PIPELINE_CACHE_VERSION = "v9";
-export const READER_PIPELINE_VERSION = 15;
+export const PIPELINE_CACHE_VERSION = "v11";
+export const READER_PIPELINE_VERSION = 17;
 
 const LEGACY_DB_NAMES = [
   "dat_intelligent_reader_cache_v1",
@@ -21,6 +21,8 @@ const LEGACY_DB_NAMES = [
   "dat_intelligent_reader_cache_v6",
   "dat_intelligent_reader_cache_v7",
   "dat_intelligent_reader_cache_v8",
+  "dat_intelligent_reader_cache_v9",
+  "dat_intelligent_reader_cache_v10",
   "dar_al_tawhid_intelligent_reader_v1",
 ];
 

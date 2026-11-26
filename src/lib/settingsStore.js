@@ -10,6 +10,7 @@
 import { entities } from "@/lib/dataSource";
 import { toast } from "sonner";
 import { TRANSLATIONS } from "@/lib/i18n";
+import { apiUrl } from "@/lib/apiBase";
 
 // ─── Default settings (initialized from the user's saved AppSettings export) ─
 export const DEFAULT_SETTINGS = {
@@ -799,7 +800,7 @@ export async function loadSettings(userEmail) {
             updated_date: readKeyTimestamps()[k] || new Date().toISOString(),
           }));
         if (itemsToPush.length > 0) {
-          fetch("/api/catalog-store/app_settings", {
+          fetch(apiUrl("/api/catalog-store/app_settings"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items: itemsToPush }),

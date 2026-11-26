@@ -18,6 +18,7 @@ import {
   setCachedQuranVerification,
   READER_PIPELINE_VERSION,
 } from "./cacheManager";
+import { apiUrl } from "../../lib/apiBase.js";
 import { WASWASA_STRUCTURED_PAGES } from "./sampleUrduBook";
 import {
   NOORI_GID_TO_UNI,
@@ -1187,7 +1188,7 @@ export function segmentBlockIntoSentences(block, blockIndex = 0) {
         : part.text.replace(/(^|\n)(\s*[٠-٩۰-۹\d]{1,3}\s*[۔.])\s+/g, "$1$2\u00A0");
 
     // Split on major sentence terminators: Urdu full stop (۔), question mark (؟), exclamation (!), period (.), newline (\n)
-    const rawChunks = (
+    const initialChunks = (
       block?.blockType === "heading"
         ? [protectedPartText]
         : protectedPartText.split(/(?<=[۔؟!\.\n]) +/)
@@ -1195,37 +1196,218 @@ export function segmentBlockIntoSentences(block, blockIndex = 0) {
       .map((c) => c.replace(/\u00A0/g, " ").replace(/^[۔.،؛:\s—–-]+/, "").trim())
       .filter((c) => c && hasSpeakableLetters(c));
 
+    // Step 2: Intra-sentence & intra-paragraph mixed-language splitter:
+    // If any chunk contains an inline transition between Urdu and Arabic (or Hadith matn + trailing Takhrij),
+    // split it into ordered language-accurate sub-segments so Arabic is NEVER sent to Urdu TTS or vice versa.
+    const rawChunks = [];
+    for (const ic of initialChunks) {
+      const subSegs = splitMixedLanguageSubSegments(ic, block);
+      for (const sub of subSegs) {
+        if (sub && sub.text && hasSpeakableLetters(sub.text)) {
+          rawChunks.push(sub);
+        }
+      }
+    }
+
     let buffer = "";
+    let bufferForcedType = null;
     for (let i = 0; i < rawChunks.length; i++) {
-      const chunk = rawChunks[i];
+      const chunkObj = rawChunks[i];
+      const chunk = chunkObj.text;
+      const chunkForcedType = chunkObj.forcedType || null;
 
       if (!buffer) {
         buffer = chunk;
+        bufferForcedType = chunkForcedType;
         continue;
       }
 
       const bufferIsUrdu = detectIsUrduScript(buffer);
       const chunkIsUrdu = detectIsUrduScript(chunk);
       const sameLanguage = bufferIsUrdu === chunkIsUrdu;
+      const sameForcedType = bufferForcedType === chunkForcedType;
 
-      // Only merge short clauses if they share the EXACT SAME language (never merge Urdu into Arabic!)
+      // Only merge short clauses if they share the EXACT SAME language and forced segment type (never merge Urdu into Arabic!)
       if (
         sameLanguage &&
+        sameForcedType &&
+        !bufferForcedType &&
         buffer.length + chunk.length < 155 &&
         (!/[۔؟!\.]$/.test(buffer) || buffer.length < 22)
       ) {
         buffer = `${buffer} ${chunk}`;
       } else {
-        sentences.push(buildSentenceObject(buffer, block, blockIndex));
+        sentences.push(buildSentenceObject(buffer, block, blockIndex, bufferForcedType));
         buffer = chunk;
+        bufferForcedType = chunkForcedType;
       }
     }
     if (buffer && hasSpeakableLetters(buffer)) {
-      sentences.push(buildSentenceObject(buffer, block, blockIndex));
+      sentences.push(buildSentenceObject(buffer, block, blockIndex, bufferForcedType));
     }
   }
 
   return sentences;
+}
+
+/**
+ * Multi-Level Intra-Sentence & Intra-Paragraph Language Splitter:
+ * Detects transitions between Urdu and Arabic within the same sentence/clause
+ * (e.g., Urdu commentary + unquoted Arabic Hadith/quote/dua, or Arabic Hadith + trailing Takhrij/Urdu explanation)
+ * and splits them into ordered, single-language sub-segments.
+ */
+function splitMixedLanguageSubSegments(chunkText, block = null) {
+  const cleaned = String(chunkText || "").trim();
+  if (!cleaned) return [];
+  if (block?.blockType === "heading") {
+    return [{ text: cleaned, forcedType: null }];
+  }
+
+  // 1. Separate trailing Hadith Takhrij / citation brackets at the end of a Hadith or Arabic sentence
+  // e.g. «إنما الأعمال بالنيات» [رواه البخاري ومسلم] or رواه البخاري (١)
+  const takhrijMatch = cleaned.match(
+    /^(.*?)\s*(\[(?:رواه|أخرجه|متفق\s+عليه|صحيح\s+البخاري|صحيح\s+مسلم|سنن\s+[^\]]+)[^\]]*\]|\((?:رواه|أخرجه|متفق\s+عليه|صحيح\s+البخاري|صحيح\s+مسلم|سنن\s+[^\)]+)[^\)]*\))\s*[۔.؟!]*$/
+  );
+  if (takhrijMatch && takhrijMatch[1].trim().length >= 10) {
+    const mainBody = takhrijMatch[1].trim();
+    const takhrijPart = takhrijMatch[2].trim();
+    return [
+      ...splitMixedLanguageSubSegments(mainBody, block),
+      { text: takhrijPart, forcedType: "arabic_quote" },
+    ];
+  }
+
+  // 2. Token-level scan for intra-sentence language switches (Urdu <-> Arabic runs of >= 3 words)
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  if (words.length < 5) {
+    return [{ text: cleaned, forcedType: null }];
+  }
+
+  const classifyTokenLang = (w) => {
+    const bare = w.replace(/[۔.،؛؟!:"'«»﴿﴾\(\)\[\]—–\-]/g, "");
+    if (!bare) return "neutral";
+    const urNorm = bare
+      .replace(/\u0643/g, "\u06A9")
+      .replace(/[\u0649\u064A]/g, "\u06CC")
+      .replace(/\u0647/g, "\u06C1");
+    if (
+      new RegExp(STRICT_URDU_ONLY_CHARS_REGEX.source).test(bare) ||
+      new RegExp(EXCLUSIVE_URDU_WORDS_REGEX.source).test(urNorm) ||
+      /(?:وں|یں|ائ|ئے|ئی)$/.test(urNorm)
+    ) {
+      return "ur";
+    }
+    const bareNoTash = bare.replace(/[\u064B-\u065F\u0670]/g, "");
+    const hasDenseTashkeel = (bare.match(/[\u064B-\u0652\u0670]/g) || []).length >= 2;
+    if (
+      hasDenseTashkeel ||
+      /^(?:ال[\u0621-\u064A]{2,}|وال[\u0621-\u064A]{2,}|بال[\u0621-\u064A]{2,}|فال[\u0621-\u064A]{2,}|لل[\u0621-\u064A]{2,}|قال|فقال|يقول|عن|حدثنا|أخبرنا|رواه|أخرجه|اللهم|إنما|الذي|التي|الذين|وهو|وهي|وهم|هذا|هذه|ذلك|تلك|ليس|كان|كانت|يكون|رسول|النبي|صلى|وسلم|رضي|عنه|عنها|عنهما|عنهم)$/.test(
+        bareNoTash
+      )
+    ) {
+      return "ar";
+    }
+    return "neutral";
+  };
+
+  const tokenLangs = words.map(classifyTokenLang);
+  const hasExplicitUrdu = tokenLangs.includes("ur");
+  const hasExplicitArabic = tokenLangs.includes("ar");
+  if (!hasExplicitUrdu || !hasExplicitArabic) {
+    return [{ text: cleaned, forcedType: null }];
+  }
+
+  // Forward-backfill neutral tokens so contiguous runs are identified cleanly
+  const resolvedLangs = [...tokenLangs];
+  let currentRunLang = resolvedLangs.find((l) => l !== "neutral") || "ur";
+  for (let i = 0; i < resolvedLangs.length; i++) {
+    if (resolvedLangs[i] === "neutral") {
+      // Look ahead within 2 words to see if an Arabic phrase starts right here (e.g. preposition before Arabic noun)
+      const nextExplicit = resolvedLangs.slice(i + 1, i + 4).find((l) => l !== "neutral");
+      if (
+        nextExplicit === "ar" &&
+        /^(?:من|في|على|إلى|عن|مع|كل|غير|بعد|قبل|عند|بين|تحت|فوق|إن|أن|لا|ما|قد|لقد|يا|أيها)$/.test(
+          words[i].replace(/[\u064B-\u065F\u0670۔.،؛؟!:"'«»\(\)\[\]]/g, "")
+        )
+      ) {
+        currentRunLang = "ar";
+      }
+      resolvedLangs[i] = currentRunLang;
+    } else {
+      currentRunLang = resolvedLangs[i];
+    }
+  }
+
+  // Group into runs and only split if an embedded run has >= 3 words (to prevent splitting single borrowed Arabic loanwords inside Urdu like "قرآنِ کریم" or "رسول اللہ ﷺ")
+  const rawRuns = [];
+  for (let i = 0; i < words.length; i++) {
+    const lang = resolvedLangs[i];
+    if (rawRuns.length === 0 || rawRuns[rawRuns.length - 1].lang !== lang) {
+      rawRuns.push({ lang, words: [words[i]] });
+    } else {
+      rawRuns[rawRuns.length - 1].words.push(words[i]);
+    }
+  }
+
+  const mergedRuns = [];
+  for (let i = 0; i < rawRuns.length; i++) {
+    const run = rawRuns[i];
+    const runText = run.words.join(" ");
+    const runNoTash = runText.replace(/[\u064B-\u065F\u0670]/g, "");
+    const hasDenseTashkeelRun = (runText.match(/[\u064B-\u0652\u0670]/g) || []).length >= 4;
+    const isGenuineArabicClause =
+      hasDenseTashkeelRun ||
+      /^(?:قال|فقال|يقول|حدثنا|أخبرنا|سمعت|رواه|أخرجه|متفق\s+عليه|إنما|اللهم|أعوذ|سبحان|الحمد\s+لله)/.test(
+        runNoTash.replace(/^[٭•\-\s]+/, "")
+      ) ||
+      (run.words.length >= 6 &&
+        !/(?:رحمه\s+الله|حفظه\s+الله|رضي\s+الله|صلى\s+الله\s+عليه\s+وسلم|تعالى|تعالي)/.test(
+          runNoTash
+        ));
+
+    const isShortBorrowedArabicInUrdu =
+      run.lang === "ar" && !isGenuineArabicClause;
+
+    if (isShortBorrowedArabicInUrdu) {
+      if (mergedRuns.length > 0 && mergedRuns[mergedRuns.length - 1].lang === "ur") {
+        mergedRuns[mergedRuns.length - 1].words.push(...run.words);
+      } else {
+        mergedRuns.push({ lang: "ur", words: [...run.words] });
+      }
+    } else if (
+      mergedRuns.length > 0 &&
+      mergedRuns[mergedRuns.length - 1].lang === run.lang
+    ) {
+      mergedRuns[mergedRuns.length - 1].words.push(...run.words);
+    } else {
+      mergedRuns.push({ lang: run.lang, words: [...run.words] });
+    }
+  }
+
+  if (mergedRuns.length <= 1) {
+    return [{ text: cleaned, forcedType: null }];
+  }
+
+  return mergedRuns.map((r, idx) => {
+    const segText = r.words.join(" ").trim();
+    if (r.lang === "ar") {
+      const prevRunText = idx > 0 ? mergedRuns[idx - 1].words.join(" ") : "";
+      const segNoTash = segText.replace(/[\u064B-\u065F\u0670]/g, "");
+      const isDua = DUA_MARKER_REGEX.test(segText) || DUA_MARKER_REGEX.test(segNoTash);
+      const isHadith =
+        HADITH_URDU_INTRO_REGEX.test(prevRunText) ||
+        HADITH_ARABIC_MARKER_REGEX.test(segText) ||
+        HADITH_ARABIC_MARKER_REGEX.test(segNoTash);
+      return {
+        text: segText,
+        forcedType: isDua ? "dua" : isHadith ? "hadith" : "arabic_quote",
+      };
+    }
+    return {
+      text: segText,
+      forcedType: "urdu_body",
+    };
+  });
 }
 
 function buildSentenceObject(text, block, blockIndex, forcedSegmentType = null) {
@@ -3456,7 +3638,7 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
   const distinctHeadingGapThreshold = Math.max(22, Math.round(bodyMedianLineGap * 1.32));
 
   const isStructuralHeadingText = (txt) =>
-    /^(?:الباب|الفصل|المبحث|المطلب|مقدمة|تقديم|تقريظ|خاتمة|المراجع|المصادر|الفهرس|فهرس|تمهيد|شكر\s+وتقدير|تنبيه|فائدة|مثال)\b|^(?:[\(\[]?\s*[٠-٩۰-۹\d]{1,2}\s*[\)\]]|[٠-٩۰-۹\d]{1,2}\s*[۔\-–])\s*(?:[^\n]{3,95})$/.test(
+    /^(?:الباب|الفصل|المبحث|المطلب|مقدمة|المقدمة|تقديم|تقريظ|خاتمة|الخاتمة|المراجع|المصادر|الفهرس|فهرس|تمهيد|شكر\s+وتقدير|تنبيه|فائدة|مثال|قاعدة|مسألة|باب|فصل|مسئلہ|قاعدہ|پہلی\s+فصل|دوسری\s+فصل|تیسری\s+فصل|چوتھی\s+فصل|پانچویں\s+فصل|پہلا\s+باب|دوسرا\s+باب|تیسرا\s+باب|تمہید|مقدمہ|خاتمہ|خلاصہ|تنبیہ|فائدہ|ضابطہ|اعتراض|جواب)\b|^(?:[\(\[]?\s*[٠-٩۰-۹\d]{1,2}\s*[\)\]]|[٠-٩۰-۹\d]{1,2}\s*[۔\-–.])\s*(?:[^\n]{3,95})$/.test(
       String(txt || "").trim()
     );
 
@@ -3482,6 +3664,11 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
     const hasLargerFont = maxBlockFontH >= bodyMedianFontH * 1.07;
     const structuralTitle = isStructuralHeadingText(combinedText);
     const hasQuoteBrackets = /[﴿﴾«»]/.test(combinedText);
+    const isCenteredShortLine =
+      currentLines.length === 1 &&
+      combinedText.length <= 72 &&
+      minX > bodyLeftMarginMinX + 40 &&
+      maxX < bodyRightMarginMaxX - 35;
     const isBottomTruncatedBody =
       endLineIdx === orderedLines.length - 1 &&
       !hasLargerFont &&
@@ -3491,22 +3678,23 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
     const endsWithMidClausePunct = /[،,;]$/.test(combinedText);
     const isSingleShortStandalone =
       currentLines.length === 1 &&
-      combinedText.length < 75 &&
-      !/[۔.]$/.test(combinedText) &&
+      combinedText.length < 82 &&
+      (!/[۔.]$/.test(combinedText) || structuralTitle) &&
       !endsWithMidClausePunct &&
       !isBottomTruncatedBody &&
       (hasLargerFont ||
         structuralTitle ||
+        isCenteredShortLine ||
         /[:：؟]$/.test(combinedText) ||
         gapAfter >= distinctHeadingGapThreshold ||
         gapBefore >= distinctHeadingGapThreshold);
     const isMultiOrLongHeading =
       currentLines.length <= 2 &&
-      combinedText.length <= 130 &&
+      combinedText.length <= 135 &&
       !endsWithMidClausePunct &&
       !hasQuoteBrackets &&
       ((hasLargerFont && !/[۔.]$/.test(combinedText)) ||
-        (structuralTitle && !/[۔.]$/.test(combinedText)));
+        (structuralTitle && combinedText.length <= 95));
 
     const isHeading =
       !isFootnote &&
@@ -3601,12 +3789,17 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       : false;
     const currStartsHeadingCandidate =
       line.maxFontH >= bodyMedianFontH * 1.07 ||
-      (verticalGap >= 14 && isStructuralHeadingText(line.text));
+      (verticalGap >= 12 && isStructuralHeadingText(line.text));
+    const prevWordCount = prev ? prev.text.trim().split(/\s+/).filter(Boolean).length : 0;
+    const currWordCount = line.text.trim().split(/\s+/).filter(Boolean).length;
     const languageSwitched =
       !isInsideUnclosedQuote &&
       prev &&
       prevIsUrdu !== currIsUrdu &&
-      (prevEndsWithCloseOrPunct || prevIsHeadingCandidate) &&
+      ((prevWordCount >= 3 && currWordCount >= 3) ||
+        prevEndsWithCloseOrPunct ||
+        prevIsHeadingCandidate ||
+        currStartsHeadingCandidate) &&
       prev.text.length >= 6 &&
       line.text.length >= 6;
 
@@ -3653,7 +3846,7 @@ export async function runGeminiVisionOcrOnPdfPage(
   await pdfPage.render({ canvasContext: ctx, viewport }).promise;
   const imageBase64 = canvas.toDataURL("image/jpeg", 0.9);
 
-  const res = await fetch("/api/reader/ocr-page", {
+  const res = await fetch(apiUrl("/api/reader/ocr-page"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -3934,9 +4127,34 @@ export async function finalizeStructuredBlocks({
     const verifiedList = await verifyQuranBatchClient(batchCandidates, reciterId);
     for (let c = 0; c < batchCandidates.length; c++) {
       const cand = batchCandidates[c];
-      const qMeta = verifiedList[c];
+      let qMeta = verifiedList[c];
       const sent = preSentences[cand.idx];
       if (!sent) continue;
+
+      // Secondary normalized retry for explicit ﴿...﴾ Quran brackets if first pass didn't match
+      if (cand.isBracketedQuran && !qMeta?.verified) {
+        const cleanedRetryText = canonicalizeTextForLanguage(
+          String(cand.text || "")
+            .replace(/[﴿﴾«»"“”\(\)\[\]\d٠-٩۰-۹۔.،؛؟!:—–\-]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim(),
+          "ar"
+        );
+        if (cleanedRetryText.length >= 5) {
+          const retryMeta = await verifyQuranVerseClient(
+            cleanedRetryText,
+            cand.surahHint || 0,
+            cand.ayahHint || 0,
+            reciterId,
+            cand.endAyahHint || 0,
+            true
+          );
+          if (retryMeta?.verified) {
+            qMeta = retryMeta;
+          }
+        }
+      }
+
       if (cand.isBracketedQuran) {
         if (qMeta?.verified) {
           sent.quranMeta = qMeta;
@@ -3944,6 +4162,7 @@ export async function finalizeStructuredBlocks({
           sent.ayahNumber = qMeta.ayahNumber || sent.ayahNumber;
           sent.endAyahNumber = qMeta.endAyahNumber || qMeta.ayahNumber || sent.endAyahNumber;
           sent.segmentType = "quran";
+          sent.hasQuranBrackets = true;
           sent.language = "ar";
           // Replace undecoded QCF Mushaf glyph placeholder (e.g. P24 [غافر: ٦٥]) with authentic verified Unicode Uthmani text
           if (cand.isQcfMushaf && qMeta.uthmaniText) {
@@ -3961,11 +4180,14 @@ export async function finalizeStructuredBlocks({
             }));
           }
         } else {
-          sent.segmentType = "arabic_quote";
+          // NEVER downgrade an explicit ﴿...﴾ Quranic verse to TTS arabic_quote!
+          sent.segmentType = "quran";
+          sent.hasQuranBrackets = true;
+          sent.language = "ar";
           sent.quranUnverifiedNotice = true;
         }
-      } else if (qMeta?.verified && (qMeta.confidence || 0) >= 0.90) {
-        // Strict promotion: only promote unbracketed Arabic to Sheikh Al-Sudais when >= 0.90 verified
+      } else if (qMeta?.verified && (qMeta.confidence || 0) >= 0.87) {
+        // Promote verified unbracketed Quranic verses to Sheikh Saud Al-Shuraim
         sent.quranMeta = qMeta;
         sent.surahNumber = qMeta.surahNumber || 0;
         sent.ayahNumber = qMeta.ayahNumber || 0;
@@ -4045,6 +4267,37 @@ export async function finalizeStructuredBlocks({
   const effectiveWarningMessage =
     ocrWarningMessage || qaReport?.userWarningMessage || "";
 
+  // Build formal connected Reading Stream units for this page
+  const readingStream = allSentences.map((s, idx) => {
+    const verificationState =
+      s.segmentType === "quran"
+        ? s.quranMeta?.verified
+          ? "verified_quran"
+          : "unverified_quran_blocked"
+        : s.segmentType === "hadith"
+        ? "verified_hadith"
+        : "verified_text";
+    return {
+      streamId: `${bookId || "book"}::p${pageNumber}::s${idx}`,
+      pageNumber,
+      paragraphIndex: s.paragraphIndex ?? s.blockIndex ?? 0,
+      sentenceIndex: idx,
+      segmentType: s.segmentType,
+      contentType: s.contentType || s.segmentType,
+      language: s.language,
+      engineId: s.engineId,
+      originalText: s.originalText,
+      ttsInputText: s.ttsInputText || s.cleanedPronunciationText || s.originalText,
+      verificationState,
+      quranMeta: s.quranMeta || null,
+      box2d: s.box2d || null,
+      lineBoxes: s.lineBoxes || [],
+      continuesToNextPage: Boolean(s.continuesToNextPage),
+      isContinuationFromPrevPage: Boolean(s.isContinuationFromPrevPage),
+      pauseDurationMs: s.pauseDurationMs ?? 380,
+    };
+  });
+
   return {
     pipelineVersion: READER_PIPELINE_VERSION,
     bookId,
@@ -4066,6 +4319,7 @@ export async function finalizeStructuredBlocks({
     topics,
     crossPageInfo,
     sentences: allSentences,
+    readingStream,
   };
 }
 
@@ -4219,11 +4473,11 @@ export async function verifyQuranBatchClient(
   if (uncachedPayload.length === 0) return results;
 
   try {
-    const baseUrl =
+    const endpoint =
       typeof window !== "undefined" && window.location?.origin
-        ? ""
-        : "http://localhost:3000";
-    const res = await fetch(`${baseUrl}/api/reader/verify-quran-batch`, {
+        ? apiUrl("/api/reader/verify-quran-batch")
+        : "http://localhost:3000/api/reader/verify-quran-batch";
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4278,11 +4532,11 @@ export async function verifyQuranVerseClient(
   }
 
   try {
-    const baseUrl =
+    const endpoint =
       typeof window !== "undefined" && window.location?.origin
-        ? ""
-        : "http://localhost:3000";
-    const res = await fetch(`${baseUrl}/api/reader/verify-quran`, {
+        ? apiUrl("/api/reader/verify-quran")
+        : "http://localhost:3000/api/reader/verify-quran";
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4334,7 +4588,7 @@ export async function verifyQuranVerseClient(
         const sPad = String(item.surahNumber).padStart(3, "0");
         const aPad = String(item.ayahNumber).padStart(3, "0");
         const directUrl = `https://everyayah.com/data/${folder}/${sPad}${aPad}.mp3`;
-        const audioUrl = `/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`;
+        const audioUrl = apiUrl(`/api/reader/quran-audio?url=${encodeURIComponent(directUrl)}`);
         const backupUrl = `https://cdn.islamic.network/quran/audio/128/${reciterId}/${item.globalAyahNumber}.mp3`;
         const resolved = {
           verified: true,

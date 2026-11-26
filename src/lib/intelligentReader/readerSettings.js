@@ -165,6 +165,7 @@ const LOCKED_AUTOMATIC_OVERRIDES = {
 
 export const DEFAULT_READER_SETTINGS = {
   ...LOCKED_AUTOMATIC_OVERRIDES,
+  readHeadingsEnabled: true,
   prosodyEnabled: true,
   arabicTashkeelEnabled: true,
   urduProofreadEnabled: true,
@@ -202,6 +203,7 @@ function sanitizeProsodySettings(candidate) {
   const urDialect =
     candidate?.webSpeechUrduDialect === "ur-IN" ? "ur-IN" : "ur-PK";
   return {
+    readHeadingsEnabled: candidate?.readHeadingsEnabled !== false,
     prosodyEnabled: candidate?.prosodyEnabled !== false,
     arabicTashkeelEnabled: candidate?.arabicTashkeelEnabled !== false,
     urduProofreadEnabled: candidate?.urduProofreadEnabled !== false,

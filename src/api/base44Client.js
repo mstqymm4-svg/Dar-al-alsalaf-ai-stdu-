@@ -18,6 +18,7 @@ import {
 import firebaseConfig from "../../firebase-applet-config.json";
 import * as offlineDB from "@/lib/offlineDB";
 import { sendGmailMessage } from "@/lib/gmailService";
+import { apiUrl } from "@/lib/apiBase";
 
 import seedBooks from "../../data-export/Books.json";
 import seedVideos from "../../data-export/Videos.json";
@@ -222,7 +223,7 @@ function readLocalSettingValue(key) {
 async function fetchServerCatalogStore(collectionName) {
   try {
     const res = await Promise.race([
-      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`),
+      fetch(apiUrl(`/api/catalog-store/${encodeURIComponent(collectionName)}`)),
       new Promise((_, reject) => setTimeout(() => reject(new Error("server catalog timeout")), 2500)),
     ]);
     if (!res || !res.ok) return { items: [], deletedIds: [] };
@@ -239,7 +240,7 @@ async function fetchServerCatalogStore(collectionName) {
 async function saveToServerCatalogStore(collectionName, item) {
   try {
     const res = await Promise.race([
-      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+      fetch(apiUrl(`/api/catalog-store/${encodeURIComponent(collectionName)}`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ item }),
@@ -255,7 +256,7 @@ async function saveToServerCatalogStore(collectionName, item) {
 async function deleteFromServerCatalogStore(collectionName, docId) {
   try {
     const res = await Promise.race([
-      fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}`, {
+      fetch(apiUrl(`/api/catalog-store/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}`), {
         method: "DELETE",
       }),
       new Promise((_, reject) => setTimeout(() => reject(new Error("server delete timeout")), 3000)),
@@ -731,7 +732,7 @@ function createPublicCatalogEntity({
             return !serverKeys.has(k);
           });
           if (missingOnServer.length > 0) {
-            fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+            fetch(apiUrl(`/api/catalog-store/${encodeURIComponent(collectionName)}`), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ items: missingOnServer }),
@@ -1039,7 +1040,7 @@ function createPublicCatalogEntity({
             if (Array.isArray(remoteDocs) && remoteDocs.length > 0) {
               docs = remoteDocs;
               // Automatically back up any cloud records to the 100% free local server store (data-export/*.json)
-              fetch(`/api/catalog-store/${encodeURIComponent(collectionName)}`, {
+              fetch(apiUrl(`/api/catalog-store/${encodeURIComponent(collectionName)}`), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ items: remoteDocs }),
@@ -1933,7 +1934,7 @@ export async function fetchFirestorePdfBuffer(pdfUrl, onProgress, metadata = {})
 
   // 2. Check local Express server disk storage (/api/book-pdf/:fileId)
   try {
-    const diskRes = await fetch(`/api/book-pdf/${encodeURIComponent(fileId)}`);
+    const diskRes = await fetch(apiUrl(`/api/book-pdf/${encodeURIComponent(fileId)}`));
     if (diskRes.ok) {
       const diskBuf = await diskRes.arrayBuffer();
       if (diskBuf && diskBuf.byteLength > 100) {
@@ -2477,7 +2478,7 @@ async function handleLocalOrCloudUpload({ file, onProgress }) {
     await offlineDB.cachePdf(pdfUrl, buffer, pdfUrl, safeFileName).catch(() => {});
 
     // 2. Also persist complete PDF on the server disk (/api/upload-pdf) so it works with zero Firestore quota
-    fetch(`/api/upload-pdf?fileId=${encodeURIComponent(fileId)}`, {
+    fetch(apiUrl(`/api/upload-pdf?fileId=${encodeURIComponent(fileId)}`), {
       method: "POST",
       headers: { "Content-Type": "application/pdf" },
       body: buffer,

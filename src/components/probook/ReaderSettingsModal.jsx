@@ -34,6 +34,7 @@ import {
   WEB_SPEECH_DIALECTS,
 } from "@/lib/intelligentReader/webSpeechService";
 import { formatBytes } from "@/lib/offlineDB";
+import { apiUrl } from "@/lib/apiBase";
 
 const SAMPLE_URDU_TEST_TEXT =
   "الحمد للہ رب العالمین۔ وسوسہ شیطان کا ایک کمزور ہتھیار ہے اور ذکرِ الٰہی سے مومن کا دل مطمئن ہو جاتا ہے۔";
@@ -74,7 +75,7 @@ export default function ReaderSettingsModal({
     setTestingVoiceId(voiceId);
     setTestError("");
     try {
-      const res = await fetch("/api/reader/tts", {
+      const res = await fetch(apiUrl("/api/reader/tts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

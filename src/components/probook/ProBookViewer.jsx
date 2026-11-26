@@ -288,24 +288,38 @@ export default function ProBookViewer({
     initPdf();
   }, [initPdf]);
 
-  // Helper to run/ensure page extraction (with automatic OCR when needed)
+  // Helper to run/ensure page extraction (with automatic OCR when needed, or silent background pre-extraction for next page)
   const ensurePageExtracted = useCallback(
-    async (targetPageNumber = currentPage, forceOcr = false) => {
+    async (targetPageNumber = currentPage, forceOcr = false, options = {}) => {
       if (!pdfDoc && !effectiveBook?.structured_pages) return null;
-      setIsRunningOcr(true);
-      intelligentAudioEngine.setExtractingPage(true);
+      const isBackground = Boolean(options?.background);
+      if (!forceOcr && pageDataMapRef.current?.[targetPageNumber]) {
+        return pageDataMapRef.current[targetPageNumber];
+      }
+      if (!isBackground) {
+        setIsRunningOcr(true);
+        intelligentAudioEngine.setExtractingPage(true);
+      }
       try {
         const data = await extractAndProcessPdfPage({
           pdfDoc,
           pageNumber: targetPageNumber,
           bookId,
-          autoOcrEnabled: readerSettings.autoOcrNastaliq !== false,
+          autoOcrEnabled: isBackground
+            ? false
+            : readerSettings.autoOcrNastaliq !== false,
           forceOcr,
           reciterId: readerSettings.quranReciterId || "ar.saoodshuraym",
           bookMetadata: effectiveBook,
         });
-        setActivePageData(data);
+        if (!isBackground && targetPageNumber === currentPage) {
+          setActivePageData(data);
+        }
         if (data) {
+          pageDataMapRef.current = {
+            ...(pageDataMapRef.current || {}),
+            [targetPageNumber]: data,
+          };
           setPageDataMap((prev) => ({ ...prev, [targetPageNumber]: data }));
         }
         return data;
@@ -313,8 +327,10 @@ export default function ProBookViewer({
         console.warn("[DAR AL TAWHID Page Processor]:", e);
         return null;
       } finally {
-        setIsRunningOcr(false);
-        intelligentAudioEngine.setExtractingPage(false);
+        if (!isBackground) {
+          setIsRunningOcr(false);
+          intelligentAudioEngine.setExtractingPage(false);
+        }
       }
     },
     [
@@ -399,8 +415,8 @@ export default function ProBookViewer({
         }
         goToPage(targetPage);
       };
-      const onEnsurePageExtractedHandler = async (pageNum) => {
-        return await ensurePageExtracted(pageNum || currentPage, false);
+      const onEnsurePageExtractedHandler = async (pageNum, opts = {}) => {
+        return await ensurePageExtracted(pageNum || currentPage, false, opts);
       };
 
       if (!cachedInMemory) {

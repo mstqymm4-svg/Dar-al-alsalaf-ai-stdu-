@@ -1792,7 +1792,8 @@ async function verifySingleQuranVerse(params: {
     }
   }
 
-  if (!normInputNS || normInputNS.length < 8) {
+  const minAllowedInput = hasBrackets ? 5 : 8;
+  if (!normInputNS || normInputNS.length < minAllowedInput) {
     return { verified: false, confidence: 0, reason: "Text too short for strict Quran verification" };
   }
 
@@ -1835,7 +1836,8 @@ async function verifySingleQuranVerse(params: {
     .map((x) => x.idx);
 
   // Also include exact `normNoSpace` containment scan when short/partial verse wasn't caught cleanly by tokens
-  if (rankedStartIndices.length === 0 && normInputNS.length >= 12) {
+  const exactScanMinLen = hasBrackets ? 5 : 12;
+  if (rankedStartIndices.length === 0 && normInputNS.length >= exactScanMinLen) {
     for (let i = 0; i < store.ayahs.length; i++) {
       const aNS = store.ayahs[i].normNoSpace;
       if (aNS.includes(normInputNS) || normInputNS.includes(aNS)) {
@@ -1905,15 +1907,15 @@ async function verifySingleQuranVerse(params: {
   }
 
   // Strict precision gate:
-  // - Inside explicit Quran brackets ﴿...﴾: accept >= 0.64 (handles OCR noise / split cross-page fragments / multi-ayah spans)
+  // - Inside explicit Quran brackets ﴿...﴾: accept >= 0.60 (handles OCR noise / short excerpts / cross-page fragments / multi-ayah spans)
   // - Unbracketed Arabic quote candidate: require very strict >= 0.86 AND at least 18 chars so Hadiths NEVER match falsely!
-  const threshold = hasBrackets ? 0.64 : 0.86;
-  const minChars = hasBrackets ? 8 : 18;
+  const threshold = hasBrackets ? 0.60 : 0.86;
+  const minChars = hasBrackets ? 5 : 18;
 
   if (
     bestSlice &&
     normInputNS.length >= minChars &&
-    (bestCombinedScore >= threshold || (hasBrackets && bestContainment >= 0.86 && normInputNS.length >= 12))
+    (bestCombinedScore >= threshold || (hasBrackets && bestContainment >= 0.84 && normInputNS.length >= 5))
   ) {
     const conf = Math.min(0.999, Math.max(bestCombinedScore, bestContainment * 0.96));
     return await buildVerifiedResponseFromEntries(bestSlice, reciter, everyAyahFolder, conf, normInputNS);
@@ -2256,8 +2258,22 @@ export function proofreadArabicTashkeelForTts(text: string, segmentType = "arabi
     .replace(/(?:^|\s)متفق\s+عليه(?=\s|$|[۔.،؛؟!:])/g, " مُتَّفَقٌ عَلَيْهِ")
     .replace(/(?:^|\s)رواه\s+البخاري(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ الْبُخَارِيُّ")
     .replace(/(?:^|\s)رواه\s+مسلم(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ مُسْلِمٌ")
+    .replace(/(?:^|\s)رواه\s+الترمذي(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ التِّرْمِذِيُّ")
+    .replace(/(?:^|\s)رواه\s+أبو\s+داود(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ أَبُو دَاوُدَ")
+    .replace(/(?:^|\s)رواه\s+النسائي(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ النَّسَائِيُّ")
+    .replace(/(?:^|\s)رواه\s+ابن\s+ماجه(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ ابْنُ مَاجَهْ")
+    .replace(/(?:^|\s)رواه\s+أحمد(?=\s|$|[۔.،؛؟!:])/g, " رَوَاهُ أَحْمَدُ")
     .replace(/(?:^|\s)أخرجه\s+البخاري(?=\s|$|[۔.،؛؟!:])/g, " أَخْرَجَهُ الْبُخَارِيُّ")
     .replace(/(?:^|\s)أخرجه\s+مسلم(?=\s|$|[۔.،؛؟!:])/g, " أَخْرَجَهُ مُسْلِمٌ")
+    .replace(/(?:^|\s)قال\s+رسول\s+الله(?=\s|$|[۔.،؛؟!:])/g, " قَالَ رَسُولُ اللَّهِ")
+    .replace(/(?:^|\s)قال\s+النبي(?=\s|$|[۔.،؛؟!:])/g, " قَالَ النَّبِيُّ")
+    .replace(/(?:^|\s)عن\s+أبي\s+هريرة(?=\s|$|[۔.،؛؟!:])/g, " عَنْ أَبِي هُرَيْرَةَ")
+    .replace(/(?:^|\s)عن\s+عمر\s+بن\s+الخطاب(?=\s|$|[۔.،؛؟!:])/g, " عَنْ عُمَرَ بْنِ الْخَطَّابِ")
+    .replace(/(?:^|\s)عن\s+عبد\s+الله\s+بن\s+عمر(?=\s|$|[۔.،؛؟!:])/g, " عَنْ عَبْدِ اللَّهِ بْنِ عُمَرَ")
+    .replace(/(?:^|\s)عن\s+ابن\s+عباس(?=\s|$|[۔.،؛؟!:])/g, " عَنِ ابْنِ عَبَّاسٍ")
+    .replace(/(?:^|\s)عن\s+عائشة(?=\s|$|[۔.،؛؟!:])/g, " عَنْ عَائِشَةَ")
+    .replace(/(?:^|\s)عن\s+أنس(?=\s|$|[۔.،؛؟!:])/g, " عَنْ أَنَسٍ")
+    .replace(/لا\s+إله\s+إلا\s+الله/g, "لَا إِلَٰهَ إِلَّا اللَّهُ")
     .replace(/سبحان\s+الله/g, "سُبْحَانَ اللَّهِ")
     .replace(/أعوذ\s+بالله/g, "أَعُوذُ بِاللَّهِ")
     .replace(/بإذن\s+الله/g, "بِإِذْنِ اللَّهِ")
@@ -2305,10 +2321,19 @@ export function proofreadUrduLinguisticForTts(text: string): string {
     .replace(/(^|\s)فورا(?=\s|$|[۔.،؛؟!:])/g, "$1فوراً")
     .replace(/(^|\s)تقریبا(?=\s|$|[۔.،؛؟!:])/g, "$1تقریباً")
     .replace(/(^|\s)یقینا(?=\s|$|[۔.،؛؟!:])/g, "$1یقیناً")
+    .replace(/(^|\s)قطعا(?=\s|$|[۔.،؛؟!:])/g, "$1قطعاً")
+    .replace(/(^|\s)اصلا(?=\s|$|[۔.،؛؟!:])/g, "$1اصلاً")
+    .replace(/(^|\s)عقلا(?=\s|$|[۔.،؛؟!:])/g, "$1عقلاً")
+    .replace(/(^|\s)نقلا(?=\s|$|[۔.،؛؟!:])/g, "$1نقلاً")
+    .replace(/(^|\s)شرعا(?=\s|$|[۔.،؛؟!:])/g, "$1شرعاً")
+    .replace(/(^|\s)زکوٰۃ|زکوۃ(?=\s|$|[۔.،؛؟!:])/g, "$1زکات")
+    .replace(/(^|\s)صلوٰۃ|صلوۃ(?=\s|$|[۔.،؛؟!:])/g, "$1صلات")
+    .replace(/(^|\s)حیوٰۃ|حیوۃ(?=\s|$|[۔.،؛؟!:])/g, "$1حیات")
     .replace(/(^|\s)ان\s+شاء\s+اللہ(?=\s|$|[۔.،؛؟!:])/g, "$1ان شاء اللہ")
     .replace(/(^|\s)ما\s+شاء\s+اللہ(?=\s|$|[۔.،؛؟!:])/g, "$1ما شاء اللہ")
     .replace(/(^|\s)پیش\s+اب(?=\s|$|[۔.،؛؟!:])/g, "$1پیشاب")
-    .replace(/(^|\s)کے\s+لئے(?=\s|$|[۔.،؛؟!:])/g, "$1کے لیے")
+    .replace(/(^|\s)کے\s*لئے(?=\s|$|[۔.،؛؟!:])/g, "$1کے لیے")
+    .replace(/(^|\s)اس\s*لئے(?=\s|$|[۔.،؛؟!:])/g, "$1اس لیے")
     .replace(/\s*[:：]\s*/g, "، ");
 
   return s.replace(/\s+/g, " ").replace(/\s+([۔،؛.؟!])/g, "$1").trim();
@@ -2664,6 +2689,15 @@ intelligentReaderRouter.post("/tts", express.json({ limit: "2mb" }), async (req,
         ok: false,
         errorCode: "INVALID_TEXT",
         error: "النص المطلوب نطقه فارغ أو غير صالح.",
+      });
+    }
+
+    // HARD SERVER GUARD: Quranic verses MUST NEVER be read by TTS — exclusively Sheikh Saud Al-Shuraim!
+    if (segmentType === "quran" || /[﴿﴾]/.test(String(text || ""))) {
+      return res.status(422).json({
+        ok: false,
+        errorCode: "QURAN_REQUIRES_RECITER",
+        error: "الآيات القرآنية تُتلى حصرياً بصوت الشيخ سعود الشريم ولا يجوز تشغيلها عبر محرك النطق الآلي.",
       });
     }
 

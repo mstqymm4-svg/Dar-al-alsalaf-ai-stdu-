@@ -14,6 +14,7 @@
 
 import { getCachedTtsAudio, setCachedTtsAudio } from "./cacheManager";
 import { loadReaderSettings } from "./readerSettings";
+import { apiUrl } from "@/lib/apiBase";
 import {
   saveReadingPosition,
   computeFileFingerprint,
@@ -24,6 +25,7 @@ import {
   normalizeUrduTextForPronunciation,
   detectIsUrduScript,
   canonicalizeTextForLanguage,
+  verifyQuranVerseClient,
 } from "./textProcessor";
 import { webSpeechService } from "./webSpeechService";
 
@@ -672,13 +674,64 @@ class IntelligentAudioEngine {
 
     const settings = loadReaderSettings();
 
+    // Respect user heading-reading toggle (`readHeadingsEnabled: true` by default).
+    // If disabled, skip heading segments and move directly to the next sentence or page.
+    if (
+      settings.readHeadingsEnabled === false &&
+      sentence.segmentType === "heading" &&
+      sentences.length > 1
+    ) {
+      if (this.sentenceIndex < sentences.length - 1) {
+        this.sentenceIndex++;
+        this.wordIndex = 0;
+        await this._loadAndPlayCurrentSentence(0);
+        return;
+      } else {
+        this._handleSentenceEnded();
+        return;
+      }
+    }
+
+    // Identify ANY Quranic verse (tagged as quran, carrying Quran brackets ﴿...﴾, or already verified)
+    const isQuranVerse =
+      sentence.segmentType === "quran" ||
+      Boolean(sentence.hasQuranBrackets) ||
+      /[﴿﴾]/.test(String(sentence.originalText || ""));
+
     try {
-      // ─── Case 1: Verified Quranic Verse → Play Authentic Recorded Recitation ONLY (Sheikh Abdul Rahman Al-Sudais) ───
-      if (
-        sentence.segmentType === "quran" &&
-        sentence.quranMeta?.verified &&
-        (sentence.quranMeta?.audioUrl || sentence.quranMeta?.ayahList?.length > 0)
-      ) {
+      // ─── Case 1: Quranic Verse → MUST Play Authentic Recorded Recitation ONLY (Sheikh Saud Al-Shuraim) ───
+      // HARD RULE: Quranic verses are NEVER sent to Neural TTS or Web Speech API under any circumstance.
+      if (isQuranVerse) {
+        if (
+          !sentence.quranMeta?.verified ||
+          (!sentence.quranMeta?.audioUrl &&
+            !(Array.isArray(sentence.quranMeta?.ayahList) && sentence.quranMeta.ayahList.length > 0))
+        ) {
+          // On-demand live verification with Sheikh Saud Al-Shuraim before playback
+          const liveMeta = await verifyQuranVerseClient(
+            sentence.quranVerificationText || sentence.originalText || "",
+            sentence.surahNumber || 0,
+            sentence.ayahNumber || 0,
+            "ar.saoodshuraym",
+            sentence.endAyahNumber || 0,
+            true
+          );
+          if (sessionId !== this._playSessionId) return;
+          if (liveMeta?.verified) {
+            sentence.quranMeta = liveMeta;
+            sentence.segmentType = "quran";
+            sentence.surahNumber = liveMeta.surahNumber || sentence.surahNumber;
+            sentence.ayahNumber = liveMeta.ayahNumber || sentence.ayahNumber;
+            sentence.endAyahNumber = liveMeta.endAyahNumber || liveMeta.ayahNumber || sentence.endAyahNumber;
+          } else {
+            this._setError(
+              "AUDIO_LOAD_FAILED",
+              "تعذر التحقق من الآية القرآنية لتشغيلها بصوت الشيخ سعود الشريم — لن يتم قراءة الآيات عبر محرك النطق الآلي (TTS)."
+            );
+            return;
+          }
+        }
+
         const meta = sentence.quranMeta;
         const currentVerseId = `${this.bookId}:${meta.surahNumber}:${meta.ayahNumber}-${meta.endAyahNumber || meta.ayahNumber}`;
         const prevPageVerseKey = `${currentVerseId}:page${this.pageNumber - 1}`;
@@ -785,11 +838,17 @@ class IntelligentAudioEngine {
       }
 
       const baseNormalized = normalizeUrduTextForPronunciation(
-        speakableCandidate
+        speakableCandidate,
+        sentence.language || null
       );
 
-      // Automatic per-sentence language classification (Arabic vs Urdu)
-      const isUrdu = detectIsUrduScript(baseNormalized);
+      // Automatic per-sentence language classification (respect explicit Arabic Hadith/Dua/Quote tags)
+      const isUrdu =
+        sentence.segmentType === "hadith" ||
+        sentence.segmentType === "dua" ||
+        sentence.segmentType === "arabic_quote"
+          ? false
+          : detectIsUrduScript(baseNormalized);
       const isArabic = !isUrdu;
 
       // Canonicalize Unicode codepoints for the target language so Arabic TTS never drops Indo-Pak codepoints
@@ -876,7 +935,7 @@ class IntelligentAudioEngine {
       if (sessionId !== this._playSessionId) return;
 
       if (!ttsPayload) {
-        const res = await fetch("/api/reader/tts", {
+        const res = await fetch(apiUrl("/api/reader/tts"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: this._abortController.signal,
@@ -953,6 +1012,15 @@ class IntelligentAudioEngine {
         return;
       }
 
+      // HARD GUARD: NEVER use browser Web Speech API / TTS to recite a Quranic verse!
+      if (isQuranVerse) {
+        this._setError(
+          "AUDIO_LOAD_FAILED",
+          "تعذر تحميل تلاوة الشيخ سعود الشريم لهذه الآية — يرجى التحقق من اتصال الشبكة وإعادة المحاولة."
+        );
+        return;
+      }
+
       // Try Web Speech API offline fallback if browser supports ur-PK or ar-SA
       const usedOfflineSpeech = this._tryBrowserSpeechFallback(
         sentence,
@@ -992,21 +1060,29 @@ class IntelligentAudioEngine {
     const aPad = String(ayahObj.ayahNumber || 1).padStart(3, "0");
     const shuraymQuranCom = `https://verses.quran.com/Shuraym/mp3/${sPad}${aPad}.mp3`;
     const shuraymEveryAyah = `https://everyayah.com/data/Saood_ash-Shuraym_128kbps/${sPad}${aPad}.mp3`;
+    const shuraymIslamicNet = ayahObj.globalAyahNumber
+      ? `https://cdn.islamic.network/quran/audio/64/ar.saoodshuraym/${ayahObj.globalAyahNumber}.mp3`
+      : null;
     const isShuraymDirect =
       typeof ayahObj.directAudioUrl === "string" &&
       (ayahObj.directAudioUrl.includes("Saood_ash-Shuraym") ||
         ayahObj.directAudioUrl.includes("Shuraym/"));
     const primaryDirect = isShuraymDirect ? ayahObj.directAudioUrl : shuraymQuranCom;
-    const primaryProxy = `/api/reader/quran-audio?url=${encodeURIComponent(primaryDirect)}`;
     const backupDirect =
-      primaryDirect !== shuraymEveryAyah
-        ? shuraymEveryAyah
-        : ayahObj.backupAudioUrl ||
-          (ayahObj.globalAyahNumber
-            ? `https://cdn.islamic.network/quran/audio/64/ar.saoodshuraym/${ayahObj.globalAyahNumber}.mp3`
-            : primaryDirect);
-    const backupProxy = `/api/reader/quran-audio?url=${encodeURIComponent(backupDirect)}`;
-    return { primaryProxy, backupProxy, primaryDirect, backupDirect };
+      primaryDirect !== shuraymEveryAyah ? shuraymEveryAyah : shuraymQuranCom;
+    const tertiaryDirect = shuraymIslamicNet || backupDirect;
+
+    const primaryProxy = apiUrl(`/api/reader/quran-audio?url=${encodeURIComponent(primaryDirect)}`);
+    const backupProxy = apiUrl(`/api/reader/quran-audio?url=${encodeURIComponent(backupDirect)}`);
+    const tertiaryProxy = apiUrl(`/api/reader/quran-audio?url=${encodeURIComponent(tertiaryDirect)}`);
+    return {
+      primaryProxy,
+      backupProxy,
+      tertiaryProxy,
+      primaryDirect,
+      backupDirect,
+      tertiaryDirect,
+    };
   }
 
   async _playActiveQuranAyahAtIndex(
@@ -1084,7 +1160,8 @@ class IntelligentAudioEngine {
     const resolvedBlobOrUrl = await this._resolveAudioToBlobUrl(
       urls.primaryProxy,
       urls.backupProxy,
-      sessionId
+      sessionId,
+      urls.tertiaryProxy
     );
     if (sessionId !== this._playSessionId) return;
 
@@ -1144,7 +1221,7 @@ class IntelligentAudioEngine {
     return p;
   }
 
-  async _resolveAudioToBlobUrl(primaryUrl, backupUrl, sessionId) {
+  async _resolveAudioToBlobUrl(primaryUrl, backupUrl, sessionId, tertiaryUrl = null) {
     if (!primaryUrl) return null;
     if (primaryUrl.startsWith("blob:")) return primaryUrl;
     if (this._prefetchedAudioBlobUrls.has(primaryUrl)) {
@@ -1154,7 +1231,8 @@ class IntelligentAudioEngine {
       const awaited = await this._pendingAudioFetches.get(primaryUrl);
       if (awaited) return awaited;
     }
-    for (const candidateUrl of [primaryUrl, backupUrl].filter(Boolean)) {
+    const candidates = [...new Set([primaryUrl, backupUrl, tertiaryUrl].filter(Boolean))];
+    for (const candidateUrl of candidates) {
       if (sessionId !== this._playSessionId) return null;
       try {
         const res = await fetch(candidateUrl, {
@@ -1330,18 +1408,56 @@ class IntelligentAudioEngine {
   }
 
   _prefetchUpcomingSentences(currentIdx) {
-    // Prefetch up to 3 upcoming sentences in parallel so transitions between words, languages, Hadiths, and Quran verses are instant
+    // Prefetch up to 3 upcoming sentences on current page in parallel
     for (let offset = 1; offset <= 3; offset++) {
       this._prefetchNextSentence(currentIdx + offset);
     }
+    // Cross-Page Audio Queue Pre-Synthesis:
+    // When within the last 2 sentences of the current page, pre-extract and pre-synthesize
+    // the first 2 sentences of pageNumber + 1 so cross-page transition has near-zero latency!
+    const sentences = this.pageData?.sentences || [];
+    if (
+      currentIdx >= Math.max(0, sentences.length - 2) &&
+      this.pageNumber < this.totalPages
+    ) {
+      this._prefetchNextPageFirstSentences(this.pageNumber + 1);
+    }
+  }
+
+  async _prefetchNextPageFirstSentences(nextPageNum) {
+    if (
+      !nextPageNum ||
+      nextPageNum > this.totalPages ||
+      typeof this.onEnsurePageExtracted !== "function"
+    ) {
+      return;
+    }
+    const prefetchKey = `${this.bookId}::nextPagePrefetch::${nextPageNum}`;
+    if (this._lastNextPagePrefetchKey === prefetchKey) return;
+    this._lastNextPagePrefetchKey = prefetchKey;
+
+    try {
+      const nextPageData = await this.onEnsurePageExtracted(nextPageNum, {
+        background: true,
+      });
+      const nextSentences = nextPageData?.sentences || [];
+      for (let i = 0; i < Math.min(2, nextSentences.length); i++) {
+        await this._prefetchSentenceObject(nextSentences[i]);
+      }
+    } catch {}
   }
 
   async _prefetchNextSentence(nextIdx) {
     const sentences = this.pageData?.sentences || [];
     const nextSent = sentences[nextIdx];
     if (!nextSent) return;
+    await this._prefetchSentenceObject(nextSent);
+  }
 
-    // If upcoming sentence is a verified Quranic verse, prefetch Sudais MP3s into Blob URL memory cache for 0ms start!
+  async _prefetchSentenceObject(nextSent) {
+    if (!nextSent) return;
+
+    // If upcoming sentence is a verified Quranic verse, prefetch Shuraim MP3s into Blob URL memory cache for 0ms start!
     if (nextSent.segmentType === "quran" && nextSent.quranMeta?.verified) {
       const queue =
         Array.isArray(nextSent.quranMeta.ayahList) && nextSent.quranMeta.ayahList.length > 0
@@ -1353,11 +1469,29 @@ class IntelligentAudioEngine {
       }
       return;
     }
+    if (
+      nextSent.segmentType === "quran" ||
+      Boolean(nextSent.hasQuranBrackets) ||
+      /[﴿﴾]/.test(String(nextSent.originalText || ""))
+    ) {
+      return;
+    }
 
+    const rawCandidate =
+      nextSent.ttsInputText ||
+      nextSent.cleanedPronunciationText ||
+      nextSent.originalText ||
+      "";
     const baseNormalized = normalizeUrduTextForPronunciation(
-      nextSent.cleanedPronunciationText || nextSent.originalText
+      rawCandidate,
+      nextSent.language || null
     );
-    const isUrdu = detectIsUrduScript(baseNormalized);
+    const isUrdu =
+      nextSent.segmentType === "hadith" ||
+      nextSent.segmentType === "dua" ||
+      nextSent.segmentType === "arabic_quote"
+        ? false
+        : detectIsUrduScript(baseNormalized);
     const isArabic = !isUrdu;
     const voiceId = isArabic
       ? "arabic_hadith_charon"
@@ -1395,7 +1529,7 @@ class IntelligentAudioEngine {
     if (existing) return;
 
     try {
-      const res = await fetch("/api/reader/tts", {
+      const res = await fetch(apiUrl("/api/reader/tts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
