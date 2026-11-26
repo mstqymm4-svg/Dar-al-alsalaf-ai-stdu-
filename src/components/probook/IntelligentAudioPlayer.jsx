@@ -10,6 +10,8 @@ import {
   X,
   Loader2,
   AlertCircle,
+  AlertTriangle,
+  ShieldCheck,
   Clock,
 } from "lucide-react";
 import { intelligentAudioEngine } from "@/lib/intelligentReader/audioEngine";
@@ -79,6 +81,7 @@ export default function IntelligentAudioPlayer({
   const [settings, setSettings] = useState(
     () => readerSettingsProp || loadReaderSettings()
   );
+  const [showQaInspector, setShowQaInspector] = useState(false);
   const activeWordRef = useRef(null);
 
   useEffect(() => {
@@ -275,10 +278,79 @@ export default function IntelligentAudioPlayer({
                   >
                     {snap.currentSegmentInfo?.badgeLabel || segmentBadge.label}
                   </span>
-                  {snap.pendingPauseAfterSentence && (
+
+                  {/* Active Topic Badge (distinguishes original book headings from analytical generated titles) */}
+                  {(snap.currentTopic?.title || currentSentence.topicTitle) && (
+                    <span
+                      title={
+                        snap.currentTopic?.isGeneratedTitle ||
+                        currentSentence.isGeneratedTopicTitle
+                          ? "عنوان تحليلي مولد داخلياً (وليس جزءاً من نص الكتاب الأصلي)"
+                          : "عنوان الموضوع من الكتاب"
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/10 border border-white/15 text-slate-200 text-[10px] font-medium max-w-[230px] truncate"
+                    >
+                      <span className="text-amber-300 font-bold shrink-0">
+                        {snap.currentTopic?.isGeneratedTitle ||
+                        currentSentence.isGeneratedTopicTitle
+                          ? "موضوع تحليلي:"
+                          : "الموضوع:"}
+                      </span>
+                      <span className="truncate">
+                        {snap.currentTopic?.title || currentSentence.topicTitle}
+                      </span>
+                    </span>
+                  )}
+
+                  {/* Cross-page sentence continuation indicator */}
+                  {currentSentence.continuesToNextPage && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-cyan-500/20 border border-cyan-500/30 text-cyan-200 text-[10px] font-bold">
+                      متصل بالصفحة التالية
+                    </span>
+                  )}
+
+                  {/* 10-Point QA Layer Confidence & Warning Badge */}
+                  {(currentSentence.qaAudit?.hasQualityWarning ||
+                    pageData?.qaReport?.hasQualityWarning) && (
+                    <span
+                      title={
+                        currentSentence.qaAudit?.userWarningMessage ||
+                        pageData?.qaReport?.userWarningMessage ||
+                        "تنبيه مراجعة الجودة: يرجى التحقق البصري من النص"
+                      }
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-500/25 border border-rose-400/40 text-rose-200 text-[10px] font-bold"
+                    >
+                      <AlertTriangle className="w-3 h-3 text-rose-300 shrink-0" />
+                      <span>
+                        {currentSentence.qaAudit?.userWarningMessage ||
+                          pageData?.qaReport?.userWarningMessage ||
+                          "تنبيه دقة النص"}
+                      </span>
+                    </span>
+                  )}
+
+                  {/* Active Linguistic Completion Stop Status */}
+                  {snap.completionStopMode === "sentence" && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold animate-pulse">
                       <Clock className="w-3 h-3" />
-                      <span>سيتوقف بعد إكمال الجملة...</span>
+                      <span>سيتوقف بعد إكمال الجملة المكتملة...</span>
+                    </span>
+                  )}
+                  {snap.completionStopMode === "paragraph" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold animate-pulse">
+                      <Clock className="w-3 h-3" />
+                      <span>سيتوقف بعد إكمال الفقرة...</span>
+                    </span>
+                  )}
+                  {snap.completionStopMode === "topic" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[10px] font-bold animate-pulse">
+                      <Clock className="w-3 h-3" />
+                      <span>
+                        {snap.completionTopicIsApproximate ||
+                        currentSentence.topicConfidence === "approximate"
+                          ? "سيتوقف بعد إكمال الموضوع (تحديد الموضوع تقريبي • نهاية الفقرة)..."
+                          : "سيتوقف بعد إكمال الموضوع..."}
+                      </span>
                     </span>
                   )}
                 </div>
@@ -344,7 +416,10 @@ export default function IntelligentAudioPlayer({
 
           <div className="flex items-center gap-1.5 shrink-0">
             {hasSentences && (
-              <span className="px-2 py-0.5 rounded-md bg-white/10 text-[10px] font-bold text-amber-300 tabular-nums">
+              <span
+                title={`الفقرة ${(currentSentence?.paragraphIndex ?? 0) + 1} من ${snap.totalParagraphsOnPage || 1}`}
+                className="px-2 py-0.5 rounded-md bg-white/10 text-[10px] font-bold text-amber-300 tabular-nums"
+              >
                 {(snap.sentenceIndex || 0) + 1} / {totalSentenceCount}
               </span>
             )}
@@ -364,7 +439,7 @@ export default function IntelligentAudioPlayer({
           </div>
         </div>
 
-        {/* Bottom Row: Simple Automatic Transport Controls */}
+        {/* Bottom Row: Transport Controls + Linguistic Completion Modes + Quick Category Jumps */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-white/10">
           {/* Playback Controls: Prev, Play/Pause, Stop, Next */}
           <div className="flex items-center gap-1">
@@ -385,7 +460,7 @@ export default function IntelligentAudioPlayer({
               className="h-8 sm:h-9 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 shadow-md disabled:opacity-40 transition active:scale-95 cursor-pointer"
               title={
                 isPlaying
-                  ? t.smartReaderPause || "إيقاف مؤقت"
+                  ? t.smartReaderPause || "إيقاف مؤقت فوري"
                   : t.smartReaderPlay || "تشغيل القراءة"
               }
             >
@@ -427,7 +502,58 @@ export default function IntelligentAudioPlayer({
             </button>
           </div>
 
-          {/* Quick Category Navigation: Jump instantly between Quran Ayahs (Sudais), Hadiths, and Body Text */}
+          {/* Linguistic Completion Mode Controls: إكمال الجملة / إكمال الفقرة / إكمال الموضوع ثم التوقف */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <button
+              type="button"
+              disabled={!hasSentences || extracting}
+              onClick={() =>
+                intelligentAudioEngine.setCompletionStopMode("sentence")
+              }
+              title="إكمال الجملة المكتملة لغوياً ثم التوقف"
+              className={`px-2 py-1 rounded-lg border text-[10px] font-bold transition cursor-pointer disabled:opacity-35 ${
+                snap.completionStopMode === "sentence"
+                  ? "bg-amber-400 text-slate-950 border-amber-300 shadow-sm"
+                  : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
+              }`}
+            >
+              إكمال الجملة
+            </button>
+
+            <button
+              type="button"
+              disabled={!hasSentences || extracting}
+              onClick={() =>
+                intelligentAudioEngine.setCompletionStopMode("paragraph")
+              }
+              title="إكمال الفقرة الحالية حتى نهايتها ثم التوقف"
+              className={`px-2 py-1 rounded-lg border text-[10px] font-bold transition cursor-pointer disabled:opacity-35 ${
+                snap.completionStopMode === "paragraph"
+                  ? "bg-amber-400 text-slate-950 border-amber-300 shadow-sm"
+                  : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
+              }`}
+            >
+              إكمال الفقرة
+            </button>
+
+            <button
+              type="button"
+              disabled={!hasSentences || extracting}
+              onClick={() =>
+                intelligentAudioEngine.setCompletionStopMode("topic")
+              }
+              title="إكمال الموضوع الحالي (مع تجاوز فواصل الصفحات إن استمر الموضوع) ثم التوقف"
+              className={`px-2 py-1 rounded-lg border text-[10px] font-bold transition cursor-pointer disabled:opacity-35 ${
+                snap.completionStopMode === "topic"
+                  ? "bg-amber-400 text-slate-950 border-amber-300 shadow-sm"
+                  : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
+              }`}
+            >
+              إكمال الموضوع
+            </button>
+          </div>
+
+          {/* Quick Category Navigation: Jump instantly between Quran Ayahs (Shuraim), Hadiths, and Body Text */}
           <div className="flex items-center gap-1 flex-wrap">
             <button
               type="button"
@@ -441,7 +567,12 @@ export default function IntelligentAudioPlayer({
               }`}
             >
               <Volume2 className="w-3 h-3 text-emerald-400 shrink-0" />
-              <span>الآيات{sentences.filter((s) => s.segmentType === "quran").length > 0 ? ` (${sentences.filter((s) => s.segmentType === "quran").length})` : ""}</span>
+              <span>
+                الآيات
+                {sentences.filter((s) => s.segmentType === "quran").length > 0
+                  ? ` (${sentences.filter((s) => s.segmentType === "quran").length})`
+                  : ""}
+              </span>
             </button>
 
             <button
@@ -484,6 +615,28 @@ export default function IntelligentAudioPlayer({
               {activeSpeed}x
             </button>
 
+            {hasSentences && (
+              <button
+                type="button"
+                onClick={() => setShowQaInspector((prev) => !prev)}
+                title="مراجعة مراحل النص الأربعة وتقرير الجودة (QA) والوقف الذكي"
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-bold transition cursor-pointer ${
+                  showQaInspector
+                    ? "bg-emerald-500/30 border-emerald-400/60 text-emerald-200"
+                    : "bg-white/10 hover:bg-white/20 border-white/10 text-slate-200"
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>
+                  QA{" "}
+                  {currentSentence?.extractionConfidence ??
+                    pageData?.qaReport?.extractionConfidence ??
+                    100}
+                  %
+                </span>
+              </button>
+            )}
+
             {handleReExtract && (
               <button
                 type="button"
@@ -499,6 +652,87 @@ export default function IntelligentAudioPlayer({
             )}
           </div>
         </div>
+
+        {/* Collapsible 4-Stage Text Provenance & 10-Point QA Review Panel */}
+        {showQaInspector && currentSentence && (
+          <div
+            dir="rtl"
+            className="mt-2 pt-2 border-t border-white/15 bg-slate-900/90 rounded-xl p-2.5 text-[11px] space-y-2 max-h-56 overflow-y-auto"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 font-bold">
+                  ثقة الاستخراج:{" "}
+                  {currentSentence.extractionConfidence ??
+                    pageData?.qaReport?.extractionConfidence ??
+                    100}
+                  %
+                </span>
+                <span className="px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300 font-bold">
+                  {currentSentence.pauseLabelAr || "وقف متوسط"} (
+                  {currentSentence.pauseDurationMs ?? 350}ms)
+                </span>
+                <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/30 text-sky-300 font-bold">
+                  {currentSentence.isMeaningComplete !== false
+                    ? "المعنى مكتمل"
+                    : "مرتبط بما بعده"}
+                </span>
+                <span className="px-2 py-0.5 rounded bg-white/10 text-slate-300">
+                  الفقرة {(currentSentence.paragraphIndex ?? 0) + 1} من{" "}
+                  {snap.totalParagraphsOnPage ||
+                    pageData?.totalParagraphsOnPage ||
+                    1}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowQaInspector(false)}
+                className="text-slate-400 hover:text-white text-[10px] font-bold cursor-pointer"
+              >
+                إغلاق المراجعة
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+              <div className="p-1.5 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[10px] font-bold text-slate-400 mb-0.5">
+                  1. Original Extracted Text (النص الخام المستخرج):
+                </div>
+                <div className="text-slate-200 break-words">
+                  {currentSentence.originalExtractedText ||
+                    currentSentence.originalText}
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[10px] font-bold text-amber-300 mb-0.5">
+                  2. OCR Corrected Text (النص المطابق للكتاب):
+                </div>
+                <div className="text-slate-100 break-words">
+                  {currentSentence.ocrCorrectedText ||
+                    currentSentence.originalText}
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[10px] font-bold text-sky-300 mb-0.5">
+                  3. Linguistic Processing Text (المعالجة اللغوية):
+                </div>
+                <div className="text-slate-100 break-words">
+                  {currentSentence.linguisticProcessedText ||
+                    currentSentence.originalText}
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-[10px] font-bold text-emerald-300 mb-0.5">
+                  4. TTS Input Text (نص الإدخال لمحرك الصوت):
+                </div>
+                <div className="text-slate-100 break-words">
+                  {currentSentence.ttsInputText ||
+                    currentSentence.cleanedPronunciationText}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

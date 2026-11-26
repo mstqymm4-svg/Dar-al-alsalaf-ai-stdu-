@@ -29,6 +29,31 @@ import {
   TRAD_ARABIC_GID_TO_UNI,
   SALEEM_QURAN_GID_TO_UNI,
 } from "./nooriNastaliqGsubMap";
+import {
+  evaluateSemanticCompleteness,
+  refineSentencesLinguistically,
+  enrichPageWithLinguisticStructure,
+  PAUSE_TYPES,
+} from "./linguisticLinker";
+import {
+  processUrduLinguisticsAndPhonetics,
+  processArabicLinguisticsAndVocalization,
+  auditSentenceExtractionQuality,
+  applyLinguisticAccuracyAndQualityAssurance,
+  deduplicateShadowPdfTokens,
+} from "./linguisticAccuracyAndQA";
+
+export {
+  evaluateSemanticCompleteness,
+  refineSentencesLinguistically,
+  enrichPageWithLinguisticStructure,
+  PAUSE_TYPES,
+  processUrduLinguisticsAndPhonetics,
+  processArabicLinguisticsAndVocalization,
+  auditSentenceExtractionQuality,
+  applyLinguisticAccuracyAndQualityAssurance,
+  deduplicateShadowPdfTokens,
+};
 
 // ─── Structured Error Taxonomy ────────────────────────────────────────────────
 export const READER_ERROR_CODES = {
@@ -166,6 +191,7 @@ const KNOWN_URDU_ARABIC_WORDS_LIST = [
   "نیت", "نیتوں", "نیتیں", "اخلاص", "اعمال", "عمل", "عملوں", "مقصد", "مقاصد", "بندہ", "بندے", "بندوں",
   "ثواب", "اجر", "ہجرت", "دنیا", "آخرت", "حلال", "حرام", "مباح", "مستحب", "واجب", "سفر", "مقیم",
   "عذر", "جہاد", "غزوہ", "تبوک", "مدینہ", "شریک", "خرچ", "صدقہ", "نفقہ", "عورت", "شادی", "نکاح",
+  "چاہے", "بھلائی", "برائی", "پارٹی", "عیادت", "عبادت", "اطاعت", "محبت", "دشمنی", "دوستی",
 ];
 
 const KNOWN_WORDS_SET = new Set(KNOWN_URDU_ARABIC_WORDS_LIST);
@@ -2412,6 +2438,37 @@ export function polishDecodedNastaliqLine(rawLine) {
     .replace(/نیت\s+لیٰ\s+سے\s+لیتا\s+ہے\s*،?\s*تو\s+اللہ\s+تعا/g, "نیت سے لیتا ہے تو اللہ تعالیٰ")
     .replace(/تعا\s+بھی/g, "تعالیٰ بھی")
     .replace(/الْ عَبْدُ/g, "الْعَبْدُ")
+    .replace(/دَخَ\s+لَ/g, "دَخَلَ")
+    .replace(/الجَ\s+ن[\u064B-\u065F]*ةَ/g, "الجَنَّةَ")
+    .replace(/([كک]ُ)\s+(ل[\u064B-\u065F]*هَا)/g, "$1$2")
+    .replace(/إِن([\u064B-\u065F]*)ماال/g, "إِن$1مَا ال")
+    .replace(/([،؛])(?=[\u0621-\u065F\u0670-\u06D3«"“])/g, "$1 ")
+    .replace(/(^|\s)ا\s+گر(?=\s|محبت|کوئی|آپ|وہ|یہ)/g, "$1اگر ")
+    .replace(/(^|\s)درگسر/g, "$1درگزر ")
+    .replace(/(^|\s)ہر\s*گس(?=\s|$|[۔.،؛؟!:])/g, "$1ہرگز")
+    .replace(/د\s+شمن/g, "دشمن")
+    .replace(/بھائی\s+چار\s+گی/g, "بھائی چارگی")
+    .replace(/دو\s+ستیاں/g, "دوستیاں")
+    .replace(/اندر\s+ونی/g, "اندرونی")
+    .replace(/پوشید\s+[ہه]/g, "پوشیدہ")
+    .replace(/(کرنا|ہونا|دینا|لینا|آنا|جانا|کہنا|رہنا)جو(اللہ|الله)(?=\s|$|[۔.،؛؟!:])/g, "$1 جو $2")
+    .replace(/(کرنا|ہونا|دینا|لینا|آنا|جانا|کہنا|رہنا)جو(?=\s|$|[۔.،؛؟!:])/g, "$1 جو")
+    .replace(/(^|\s)جو(اللہ|الله|ہمارے|تمہارے|اپنے)(?=\s|$|[۔.،؛؟!:])/g, "$1جو $2")
+    .replace(/(^|\s)گویاکہ(?=\s|$|[۔.،؛؟!:])/g, "$1گویا کہ")
+    .replace(/(^|\s)ر?[كک]رہاہے(?=\s|$|[۔.،؛؟!:])/g, "$1کر رہا ہے")
+    .replace(/(^|\s)رہ(ا|ی|ے)(ہے|ہیں)(?=\s|$|[۔.،؛؟!:])/g, "$1رہ$2 $3")
+    .replace(/(^|\s)(عطا|ادا|جدا|پیدا|برباد|ارشاد|یا|درگزر|مدد|پسند|خیر)([كک]یا|[كک]ر|[كک]رے|[كک]ریں|[كک]رنے|[كک]رنا|فرمایا|فرماتے|فرمايا|دلایا)(لیا|دیا)?(جائے|جائیں|ہے|ہیں|گی|گا)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4 $5")
+    .replace(/(^|\s)([كک]ر|ہو|لے|دے)(لیا|دیا|جائے|جائیں|گیا|گئی|گئے|چکا|چکی|چکے|سکے|سکیں|پاتا|پاتی|لی|لیں)(جائے|جائیں|ہے|ہیں|تھا|تھے)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4")
+    .replace(/(^|\s)([كک]ر)(دیتا|دیتی|دیتے|لیتا|لیتی|لیتے)(ہے|ہیں|تھا|تھے)?(کیونکہ|تاکہ|بلکہ|کہ)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4 $5")
+    .replace(/([\u0621-\u06D3]{2,}?)(جاتا|جاتی|جاتے|رہتا|رہتی|رہتے|کرتا|کرتی|کرتے|كرتا|كرتی|كرتے|دیتا|دیتی|دیتے|لیتا|لیتی|لیتے|ہوتا|ہوتی|ہوتے|سکتا|سکتی|سکتے|ملتا|ملتی|ملتے)(ہے|ہیں|تھا|تھے|تھی)?(کیونکہ|تاکہ|بلکہ|لیکن|مگر|کہ|مثلاً|اگرچہ)?(?=\s|$|[۔.،؛؟!:])/g, "$1 $2 $3 $4")
+    .replace(/(^|\s)(جاتا|جاتی|جاتے|رہتا|رہتی|رہتے|کرتا|کرتی|کرتے|كرتا|كرتی|كرتے|دیتا|دیتی|دیتے|لیتا|لیتی|لیتے|ہوتا|ہوتی|ہوتے|سکتا|سکتی|سکتے|آتا|آتی|آتے|ملتا|ملتی|ملتے|چاہتا|چاہتی|چاہتے|کھولا|کہتا|کہتی|کہتے)(ہے|ہیں|تھا|تھے|تھی)(کیونکہ|تاکہ|بلکہ|لیکن|مگر|کہ|مثلاً|اگرچہ)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4")
+    .replace(/(^|\s)(کے|كے|کی|كی|کا|سے|پر|میں)(باوجود|مطابق|خلاف|ذریعے|ذریعہ|ساتھ|بعد|پہلے|تحت|متعلق|درمیان|اندر|باہر|علم)(بھی|ہی)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4")
+    .replace(/(^|\s)(بناپر)(ہے|ہیں)?(کہ)?(?=\s|$|[۔.،؛؟!:])/g, "$1بنا پر $3 $4")
+    .replace(/(^|\s)(ہے|ہیں|تھا|تھے|تھی|ہو)(کیونکہ|تاکہ|بلکہ|لیکن|مگر|کہ|تو|اور|اگرچہ|مثلاً)(ان|جو|وہ|یہ)?(ہمارے|تمہارے|اپنے)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4 $5")
+    .replace(/(^|\s)(کھلا|گرا|پھنسا|بندھا|لکھا|بنا|رکھا)ہوا([آ-ے]{2,})?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 ہوا $3")
+    .replace(/(^|\s)(گنہگار|فاسق|فاجر|دیندار|سعادت\s*مند)(اور|ہی|بھی|ہے)(کو|جو)?(?=\s|$|[۔.،؛؟!:])/g, "$1$2 $3 $4")
+    .replace(/(^|\s)حق\s*وصبر([كک]ی|[كک]ے)?(?=\s|$|[۔.،؛؟!:])/g, "$1حق و صبر $2")
+    .replace(/(^|\s)فاسق\s*وفاجر(ہی)?(?=\s|$|[۔.،؛؟!:])/g, "$1فاسق و فاجر $2")
     .replace(/مَا\s+كَا\s+نَ/g, "مَا كَانَ")
     .replace(/(^|\s)دو\s+الاب(?=\s|$|[۔.،؛؟!:])/g, "$1دوبالا")
     .replace(/(^|\s)مندرجہ\s+الاب(?=\s|$|[۔.،؛؟!:])/g, "$1مندرجہ بالا")
@@ -2634,14 +2691,37 @@ export async function extractAndProcessPdfPage({
     analysis.footnoteQuranMap
   );
 
-  // Peek adjacent page (N+1 or N-1) ONLY when a Quran verse ﴿...﴾ spans a page boundary so both halves verify 100%!
+  // Peek adjacent page (N+1 or N-1) when a Quran verse ﴿...﴾ OR an incomplete sentence spans a page boundary!
+  const crossPageInfo = {
+    continuesToNextPage: false,
+    isContinuationFromPrevPage: false,
+    nextPageFirstSentenceText: "",
+    combinedCrossPageText: null,
+  };
+
   if (pdfDoc && blocksFromNative.length > 0) {
     try {
       const lastBlk = blocksFromNative[blocksFromNative.length - 1];
-      const lastTxt = String(lastBlk?.originalText || "");
+      const lastTxt = String(lastBlk?.originalText || "").trim();
+      const strippedLastTxt = lastTxt
+        .replace(/\s*(?:[\(\[]\s*[\d٠-٩۰-۹]+\s*[\)\]]|\)\s*[\d٠-٩۰-۹]+\s*\()\s*$/, "")
+        .trim();
       const openCnt = (lastTxt.match(/﴿/g) || []).length;
       const closeCnt = (lastTxt.match(/﴾/g) || []).length;
-      if (openCnt > closeCnt && pageNumber < (pdfDoc.numPages || 9999)) {
+      const isUnclosedQuran = openCnt > closeCnt;
+      const lastComp = evaluateSemanticCompleteness(
+        strippedLastTxt,
+        lastBlk?.language || "ur"
+      );
+      const isSentenceContinuingAcrossPage =
+        lastBlk?.blockType !== "heading" &&
+        lastBlk?.blockType !== "footnote" &&
+        (isUnclosedQuran ||
+          !/[۔.؟!﴾»]$/.test(strippedLastTxt) ||
+          !lastComp.isComplete);
+
+      if (isSentenceContinuingAcrossPage && pageNumber < (pdfDoc.numPages || 9999)) {
+        crossPageInfo.continuesToNextPage = true;
         const nextPage = await pdfDoc.getPage(pageNumber + 1);
         const nextVp = nextPage.getViewport({ scale: 1.0 });
         const [nTc, nOp] = await Promise.all([
@@ -2652,13 +2732,23 @@ export async function extractAndProcessPdfPage({
         const nItems = recoverTrueGlyphTextItems(nTc?.items || [], nOp, nextPage?.commonObjs || null);
         const nAnalysis = analyzeNativePdfTextLayer(nItems, nextVp, nSepY);
         const firstNextLine = (nAnalysis.orderedLines || []).slice(0, 4).map((l) => l.text).join(" ");
-        const qTailMatch = firstNextLine.match(/^[^﴾]*﴾/);
-        const unclosedTail = lastTxt.slice(lastTxt.lastIndexOf("﴿"));
-        if (qTailMatch) {
-          lastBlk.crossPageQuranText = `${unclosedTail} ${qTailMatch[0]}`;
+        if (isUnclosedQuran) {
+          const qTailMatch = firstNextLine.match(/^[^﴾]*﴾/);
+          const unclosedTail = lastTxt.slice(lastTxt.lastIndexOf("﴿"));
+          if (qTailMatch) {
+            lastBlk.crossPageQuranText = `${unclosedTail} ${qTailMatch[0]}`;
+          }
+          if (nAnalysis.footnoteQuranMap && Object.keys(lastBlk.footnoteQuranMap || {}).length === 0) {
+            lastBlk.footnoteQuranMap = { ...nAnalysis.footnoteQuranMap };
+          }
         }
-        if (nAnalysis.footnoteQuranMap && Object.keys(lastBlk.footnoteQuranMap || {}).length === 0) {
-          lastBlk.footnoteQuranMap = { ...nAnalysis.footnoteQuranMap };
+        const firstNextSentMatch = firstNextLine.match(/^[^۔.؟!﴾»]+[۔.؟!﴾»]?/);
+        if (firstNextSentMatch) {
+          crossPageInfo.nextPageFirstSentenceText = firstNextSentMatch[0].trim();
+          const tailClause = strippedLastTxt.split(/[۔.؟!]/).pop()?.trim() || strippedLastTxt;
+          crossPageInfo.combinedCrossPageText = `${tailClause} ${crossPageInfo.nextPageFirstSentenceText}`
+            .replace(/\s+/g, " ")
+            .trim();
         }
       }
 
@@ -2666,21 +2756,30 @@ export async function extractAndProcessPdfPage({
       const firstTxt = String(firstBlk?.originalText || "");
       const fOpenCnt = (firstTxt.match(/﴿/g) || []).length;
       const fCloseCnt = (firstTxt.match(/﴾/g) || []).length;
-      if (fCloseCnt > fOpenCnt && pageNumber > 1) {
-        const prevPage = await pdfDoc.getPage(pageNumber - 1);
-        const prevVp = prevPage.getViewport({ scale: 1.0 });
-        const [pTc, pOp] = await Promise.all([
-          prevPage.getTextContent({ disableCombineTextItems: true }),
-          prevPage.getOperatorList().catch(() => null),
-        ]);
-        const pSepY = detectFootnoteSeparatorY(pOp);
-        const pItems = recoverTrueGlyphTextItems(pTc?.items || [], pOp, prevPage?.commonObjs || null);
-        const pAnalysis = analyzeNativePdfTextLayer(pItems, prevVp, pSepY);
-        const lastPrevLines = (pAnalysis.orderedLines || []).slice(-4).map((l) => l.text).join(" ");
-        const qHeadIdx = lastPrevLines.lastIndexOf("﴿");
-        const unclosedHead = firstTxt.slice(0, firstTxt.indexOf("﴾") + 1);
-        if (qHeadIdx >= 0) {
-          firstBlk.crossPageQuranText = `${lastPrevLines.slice(qHeadIdx)} ${unclosedHead}`;
+      if (pageNumber > 1) {
+        const cachedPrev = await getCachedPageOcr(bookId, pageNumber - 1).catch(() => null);
+        const prevSents = cachedPrev?.data?.sentences || [];
+        const prevLastSent = prevSents[prevSents.length - 1];
+        if (prevLastSent?.continuesToNextPage) {
+          crossPageInfo.isContinuationFromPrevPage = true;
+        }
+        if (fCloseCnt > fOpenCnt) {
+          const prevPage = await pdfDoc.getPage(pageNumber - 1);
+          const prevVp = prevPage.getViewport({ scale: 1.0 });
+          const [pTc, pOp] = await Promise.all([
+            prevPage.getTextContent({ disableCombineTextItems: true }),
+            prevPage.getOperatorList().catch(() => null),
+          ]);
+          const pSepY = detectFootnoteSeparatorY(pOp);
+          const pItems = recoverTrueGlyphTextItems(pTc?.items || [], pOp, prevPage?.commonObjs || null);
+          const pAnalysis = analyzeNativePdfTextLayer(pItems, prevVp, pSepY);
+          const lastPrevLines = (pAnalysis.orderedLines || []).slice(-4).map((l) => l.text).join(" ");
+          const qHeadIdx = lastPrevLines.lastIndexOf("﴿");
+          const unclosedHead = firstTxt.slice(0, firstTxt.indexOf("﴾") + 1);
+          if (qHeadIdx >= 0) {
+            firstBlk.crossPageQuranText = `${lastPrevLines.slice(qHeadIdx)} ${unclosedHead}`;
+            crossPageInfo.isContinuationFromPrevPage = true;
+          }
         }
       }
     } catch {
@@ -2723,6 +2822,8 @@ export async function extractAndProcessPdfPage({
           detectedAnomalies: ocrResult.detectedAnomalies || analysis.anomalies,
           rawPdfLayerText: analysis.rawText,
           reciterId,
+          bookMetadata,
+          crossPageInfo,
         });
         if (processed.sentences.length > 0) {
           await setCachedPageOcr(bookId, pageNumber, processed);
@@ -2769,7 +2870,7 @@ export async function extractAndProcessPdfPage({
     }
   }
 
-  const processed = await finalizeStructuredBlocks({
+  let processed = await finalizeStructuredBlocks({
     blocks: finalBlocks,
     pageNumber,
     bookId,
@@ -2783,7 +2884,53 @@ export async function extractAndProcessPdfPage({
     detectedAnomalies: analysis.anomalies,
     rawPdfLayerText: analysis.rawText,
     reciterId,
+    bookMetadata,
+    crossPageInfo,
   });
+
+  // Check 8 of QA Layer: Compare with Visual OCR if QA confidence on native layer is low (< 76)
+  if (
+    processed?.qaReport?.ocrComparisonNeeded &&
+    autoOcrEnabled &&
+    pdfPage &&
+    !shouldRunOcr
+  ) {
+    try {
+      const ocrResult = await runGeminiVisionOcrOnPdfPage(
+        pdfPage,
+        pageNumber,
+        analysis.isCorruptedLayer ? "" : analysis.rawText
+      );
+      if (
+        ocrResult &&
+        Array.isArray(ocrResult.blocks) &&
+        ocrResult.blocks.length > 0
+      ) {
+        const ocrProcessed = await finalizeStructuredBlocks({
+          blocks: ocrResult.blocks,
+          pageNumber,
+          bookId,
+          extractionSource: ocrResult.engine || "gemini-vision-ocr-reconciled",
+          qualityScore: ocrResult.qualityScore ?? 94,
+          hasOcrWarnings: Boolean(ocrResult.hasOcrWarnings),
+          ocrWarningMessage: ocrResult.ocrWarningMessage || "",
+          detectedAnomalies: ocrResult.detectedAnomalies || analysis.anomalies,
+          rawPdfLayerText: analysis.rawText,
+          reciterId,
+          bookMetadata,
+          crossPageInfo,
+        });
+        if (
+          (ocrProcessed?.qaReport?.extractionConfidence || 0) >
+          (processed?.qaReport?.extractionConfidence || 0)
+        ) {
+          processed = ocrProcessed;
+        }
+      }
+    } catch {
+      // Keep native processed result with QA warning badge if offline/OCR unavailable
+    }
+  }
 
   if (processed.sentences.length > 0) {
     await setCachedPageOcr(bookId, pageNumber, processed);
@@ -2920,6 +3067,16 @@ function coalesceRtlLineItems(sortedItems, hasRtl) {
       (KNOWN_WORDS_SET.has(prevLastWordBare) ||
         KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(prevLastWordBare, "ur")) ||
         KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(prevLastWordBare, "ar")));
+    const currIsStandaloneKnownWord =
+      currFirstWordBare.length >= 2 &&
+      (KNOWN_WORDS_SET.has(currFirstWordBare) ||
+        KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(currFirstWordBare, "ur")) ||
+        KNOWN_WORDS_SET.has(canonicalizeTextForLanguage(currFirstWordBare, "ar")));
+    const prevEndsWithCompleteUrduSuffix =
+      prevLastWordBare.length >= 3 &&
+      /(?:جاتا|جاتی|جاتے|رہتا|رہتی|رہتے|کرتا|کرتی|کرتے|دیتا|دیتی|دیتے|لیتا|لیتی|لیتے|ہوتا|ہوتی|ہوتے|سکتا|سکتی|سکتے|چڑھاتا|بڑھاتا|فرمایا|دلایا|کرنا|ہونا|دینا|لینا|ارشاد|برباد)$/.test(
+        prevLastWordBare
+      );
     const formsKnownWord =
       !hadExplicitSpaceToken &&
       rtlGap <= 6 &&
@@ -2932,6 +3089,7 @@ function coalesceRtlLineItems(sortedItems, hasRtl) {
     // Join adjacent Nastaleeq sub-word ligatures cleanly:
     // 1. Always attach standalone combining marks or isolated word-final endings (ں، ے)
     // 2. Join across a non-connector split (ا/د/ڈ/ذ/ر/ڑ/ز/ژ/و -> اہل، اپنی، دودھ، گوبر، سارے، بڑی، ملاوٹ) when tight (rtlGap <= 1.2)
+    //    ONLY when neither side is already a standalone known word or complete inflected word!
     // 3. Join when the merged candidate forms a dictionary word, or when merging a 1-char fragment across <= 2 gap
     // 4. NEVER glue separate words ending in dual-joiners (بھی عبادت، مفہوم بیان، خالص ہو، حدیث کی، عظیم الشان)
     const shouldJoinDirectly =
@@ -2944,6 +3102,8 @@ function coalesceRtlLineItems(sortedItems, hasRtl) {
         !currStartsWithPunctOrBracket &&
         prevIsNonConnectorEnd &&
         !prevIsStandaloneKnownWord &&
+        !currIsStandaloneKnownWord &&
+        !prevEndsWithCompleteUrduSuffix &&
         rtlGap <= 1.2) ||
       (!currentChunk.isSpatialWord &&
         !curr.isSpatialWord &&
@@ -3141,8 +3301,14 @@ export function analyzeNativePdfTextLayer(items, viewport, separatorY = null) {
       b.items.reduce((acc, it) => acc + (it.rawTy || 0), 0) /
       Math.max(1, b.items.length);
 
+    const rawLineStr = b.items
+      .map((it) => String(it.str || "").trim())
+      .filter(Boolean)
+      .join(" ");
+
     allDecodedLines.push({
       text: lineText,
+      rawExtractedText: rawLineStr || lineText,
       items: coalescedWordItems,
       box2d: [minY, minX, maxY, maxX],
       avgTy,
@@ -3352,9 +3518,17 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       isFootnote ? "footnote" : isHeading ? "heading" : ""
     );
 
+    const rawExtractedBlockText = currentLines
+      .map((l) => l.rawExtractedText || l.text)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
     blocks.push({
       blockType: cls.segmentType,
       language: cls.language,
+      originalExtractedText: rawExtractedBlockText || combinedText,
+      ocrCorrectedText: combinedText,
       originalText: combinedText,
       cleanedPronunciationText: normalizeUrduTextForPronunciation(
         combinedText,
@@ -3366,6 +3540,20 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
     });
     currentLines = [];
   };
+
+  // Compute typical RTL body margins so we distinguish true paragraph endings (short line / right-indent / vertical gap)
+  // from mid-paragraph lines that merely end with a period!
+  const bodyMinXs = orderedLines
+    .map((l) => Number(l.box2d?.[1] ?? 100))
+    .sort((a, b) => a - b);
+  const bodyMaxXs = orderedLines
+    .map((l) => Number(l.box2d?.[3] ?? 900))
+    .sort((a, b) => b - a);
+  const bodyLeftMarginMinX =
+    bodyMinXs.length > 0 ? bodyMinXs[Math.floor(bodyMinXs.length * 0.2)] : 100;
+  const bodyRightMarginMaxX =
+    bodyMaxXs.length > 0 ? bodyMaxXs[Math.floor(bodyMaxXs.length * 0.2)] : 900;
+  const paragraphGapThreshold = Math.max(18, Math.round(bodyMedianLineGap * 1.22));
 
   for (let i = 0; i < orderedLines.length; i++) {
     const line = orderedLines[i];
@@ -3386,9 +3574,22 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
 
     const prevIsUrdu = prev ? detectIsUrduScript(prev.text) : false;
     const currIsUrdu = detectIsUrduScript(line.text);
+    const prevStripped = prev
+      ? prev.text.replace(/\(\s*[\d٠-٩۰-۹]+\s*\)\s*$/, "").trim()
+      : "";
     const prevEndsWithCloseOrPunct = prev
-      ? /[۔؟!\.:﴾»]$/.test(prev.text.replace(/\(\s*[\d٠-٩۰-۹]+\s*\)\s*$/, "").trim())
+      ? /[۔؟!\.:﴾»]$/.test(prevStripped)
       : false;
+    const prevIsShortParagraphEndLine = prev
+      ? prevEndsWithCloseOrPunct &&
+        (prev.box2d[1] > bodyLeftMarginMinX + 55 ||
+          verticalGap >= paragraphGapThreshold)
+      : false;
+    const currHasParagraphRightIndentOrNumber =
+      line.box2d[3] < bodyRightMarginMaxX - 24 ||
+      /^\s*(?:[\(\[]?\s*[٠-٩۰-۹\d]{1,2}\s*[\)\]]|[٠-٩۰-۹\d]{1,2}\s*[۔\-–.]|أولاً|ثانياً|ثالثاً|رابعاً|پہلی\s+بات|دوسری\s+بات|تیسری\s+بات)/.test(
+        line.text
+      );
     const prevIsHeadingCandidate = prev
       ? !prev.text.includes("﴿") &&
         !isInsideUnclosedQuran &&
@@ -3415,10 +3616,11 @@ function buildBlocksFromNativeItems(orderedLines, pageViewport = null, footnoteQ
       (verticalGap > Math.max(24, distinctHeadingGapThreshold) ||
         line.isFootnoteArea !== prev.isFootnoteArea ||
         languageSwitched ||
-        (prevIsHeadingCandidate && verticalGap >= 12) ||
-        (currStartsHeadingCandidate && verticalGap >= 12) ||
-        /[۔؟!\.]$/.test(prev.text) ||
-        (/:$/.test(prev.text) && !line.text.includes("﴿")))
+        (prevIsHeadingCandidate && verticalGap >= 10) ||
+        (currStartsHeadingCandidate && verticalGap >= 10) ||
+        prevIsShortParagraphEndLine ||
+        (prevEndsWithCloseOrPunct && currHasParagraphRightIndentOrNumber) ||
+        (/:$/.test(prevStripped) && !line.text.includes("﴿")))
     ) {
       flushBlock(i - 1);
       blockStartLineIdx = i;
@@ -3582,6 +3784,8 @@ export async function finalizeStructuredBlocks({
   detectedAnomalies = [],
   rawPdfLayerText = "",
   reciterId = "ar.saoodshuraym",
+  bookMetadata = null,
+  crossPageInfo = null,
 }) {
   const preSentences = [];
   let totalWordsCount = 0;
@@ -3670,6 +3874,11 @@ export async function finalizeStructuredBlocks({
 
       preSentences.push({
         ...sent,
+        originalExtractedText:
+          sent.originalExtractedText ||
+          block.originalExtractedText ||
+          sent.originalText,
+        ocrCorrectedText: sent.originalText,
         box2d: sentenceBox2d,
         lineBoxes,
         bookId,
@@ -3767,7 +3976,7 @@ export async function finalizeStructuredBlocks({
     }
   }
 
-  const allSentences = preSentences.map((s, idx) => {
+  const stampedSentences = preSentences.map((s, idx) => {
     let engineId = "urdu_engine";
     if (s.segmentType === "quran" && s.quranMeta?.verified) {
       engineId = "quran_engine";
@@ -3785,21 +3994,77 @@ export async function finalizeStructuredBlocks({
     };
   });
 
+  // Apply linguistic clause refinement (merging incomplete syntactic splits & segmenting long unpunctuated paragraphs)
+  const refinedSentences = refineSentencesLinguistically(stampedSentences).map(
+    (s, idx) => {
+      let engineId = s.engineId || "urdu_engine";
+      if (s.segmentType === "quran" && s.quranMeta?.verified) {
+        engineId = "quran_engine";
+      } else if (s.segmentType === "hadith" || s.segmentType === "dua") {
+        engineId = "hadith_engine";
+      } else if (s.language === "ar") {
+        engineId = "arabic_general_engine";
+      } else {
+        engineId = "urdu_engine";
+      }
+      return {
+        ...s,
+        engineId,
+        sentenceIndex: idx,
+      };
+    }
+  );
+
+  // Enrich with Topic Detection, Semantic Completeness, Paragraph/Topic Boundaries, and 4-Level Pause Durations
+  const { sentences: linkedSentences, topics } = enrichPageWithLinguisticStructure({
+    sentences: refinedSentences,
+    pageNumber,
+    bookMetadata,
+    crossPageInfo,
+  });
+
+  // Apply 4-Stage Text Provenance Separation, Specialized Urdu & Arabic Linguistic Processing, and 10-Point Quality Assurance
+  const { sentences: allSentences, qaReport } =
+    applyLinguisticAccuracyAndQualityAssurance({
+      sentences: linkedSentences,
+      rawPdfLayerText:
+        rawPdfLayerText ||
+        (blocks || []).map((b) => b.originalExtractedText || b.originalText).join("\n\n"),
+      extractionSource,
+      pageNumber,
+    });
+
+  const uniqueParagraphs = new Set(allSentences.map((s) => s.paragraphIndex));
+  const effectiveQualityScore = Math.min(
+    qualityScore,
+    qaReport?.extractionConfidence ?? qualityScore
+  );
+  const effectiveHasWarnings = Boolean(
+    hasOcrWarnings || qaReport?.hasQualityWarning
+  );
+  const effectiveWarningMessage =
+    ocrWarningMessage || qaReport?.userWarningMessage || "";
+
   return {
     pipelineVersion: READER_PIPELINE_VERSION,
     bookId,
     pageNumber,
     extractionSource,
-    qualityScore,
-    hasOcrWarnings,
-    ocrWarningMessage,
+    qualityScore: effectiveQualityScore,
+    hasOcrWarnings: effectiveHasWarnings,
+    ocrWarningMessage: effectiveWarningMessage,
     detectedAnomalies,
+    qaReport,
     totalSentencesOnPage: allSentences.length,
+    totalParagraphsOnPage: uniqueParagraphs.size,
+    totalTopicsOnPage: topics.length,
     totalWordsOnPage: totalWordsCount,
     rawPdfLayerText:
       rawPdfLayerText ||
       (blocks || []).map((b) => b.originalText).join("\n\n"),
     blocks: blocks || [],
+    topics,
+    crossPageInfo,
     sentences: allSentences,
   };
 }

@@ -55,13 +55,21 @@ class IntelligentAudioEngine {
     // Restored position target (applied when pageData for that page finishes extracting)
     this._pendingRestoredPosition = null;
 
-    // Pause control ("immediate" | "complete_sentence")
+    // Pause & Linguistic Completion Control:
+    // completionStopMode: null | "sentence" | "paragraph" | "topic"
     this.pendingPauseAfterSentence = false;
+    this.completionStopMode = null;
+    this.completionTargetTopicId = null;
+    this.completionTargetTopicTitle = null;
+    this.completionTopicIsApproximate = false;
+    this._crossedPageInTopicMode = false;
+    this._completedBoundaryAdvancePending = false;
+    this._pauseTimerId = null;
     this.wasInterruptedBySystem = false;
 
-    // Active timings & multi-ayah Sudais queue
+    // Active timings & multi-ayah Shuraim queue
     this.currentWordTimings = [];
-    this.currentSegmentInfo = null; // { segmentType, language, quranMeta, provider, voiceId }
+    this.currentSegmentInfo = null; // { engineId, segmentType, language, quranMeta, provider, voiceId }
     this._activeQuranQueue = null;
     this._activeQuranAyahIdx = 0;
     this._activeQuranWordRanges = [];
@@ -223,12 +231,27 @@ class IntelligentAudioEngine {
 
   getSnapshot() {
     const sentences = this.pageData?.sentences || [];
+    const topics = this.pageData?.topics || [];
     const currentSentence = sentences[this.sentenceIndex] || null;
     const currentWords = currentSentence?.words || [];
     const currentWordObj = currentWords[this.wordIndex] || null;
     const totalWordsOnPage =
       this.pageData?.totalWordsOnPage ??
       sentences.reduce((sum, s) => sum + (s.words?.length || 0), 0);
+    const currentTopic =
+      topics.find(
+        (t) =>
+          this.sentenceIndex >= t.startSentenceIndex &&
+          this.sentenceIndex <= t.endSentenceIndex
+      ) ||
+      (currentSentence?.topicTitle
+        ? {
+            topicId: currentSentence.topicId,
+            title: currentSentence.topicTitle,
+            isGeneratedTitle: Boolean(currentSentence.isGeneratedTopicTitle),
+            confidence: currentSentence.topicConfidence || "approximate",
+          }
+        : null);
 
     return {
       book: this.book,
@@ -243,10 +266,14 @@ class IntelligentAudioEngine {
       sentenceIndex: this.sentenceIndex,
       paragraphIndex: currentSentence?.paragraphIndex ?? 0,
       totalSentencesOnPage: sentences.length,
+      totalParagraphsOnPage: this.pageData?.totalParagraphsOnPage ?? 1,
+      totalTopicsOnPage: topics.length,
       totalWordsOnPage,
       wordIndex: this.wordIndex,
       totalWordsInSentence: currentWords.length,
       currentSentence,
+      currentTopic,
+      topics,
       currentWord: currentWordObj?.word || "",
       currentWordRect: currentWordObj?.rect || null,
       hasExactWordCoords: Boolean(currentSentence?.hasExactWordCoords),
@@ -254,7 +281,16 @@ class IntelligentAudioEngine {
       durationSec: this.durationSec,
       playbackRate: this.playbackRate,
       volume: this.volume,
-      pendingPauseAfterSentence: this.pendingPauseAfterSentence,
+      pendingPauseAfterSentence:
+        this.pendingPauseAfterSentence || this.completionStopMode === "sentence",
+      completionStopMode: this.completionStopMode,
+      completionTopicIsApproximate:
+        this.completionTopicIsApproximate ||
+        currentTopic?.confidence === "approximate",
+      currentPauseType: currentSentence?.pauseTypeAfter || "medium_pause",
+      currentPauseLabelAr: currentSentence?.pauseLabelAr || "",
+      isMeaningComplete: currentSentence?.isMeaningComplete ?? true,
+      continuesToNextPage: Boolean(currentSentence?.continuesToNextPage),
       currentSegmentInfo: this.currentSegmentInfo,
       pageQualityScore: this.pageData?.qualityScore ?? 100,
       hasOcrWarnings: Boolean(this.pageData?.hasOcrWarnings),
@@ -263,12 +299,20 @@ class IntelligentAudioEngine {
     };
   }
 
+  _clearPauseTimer() {
+    if (this._pauseTimerId) {
+      clearTimeout(this._pauseTimerId);
+      this._pauseTimerId = null;
+    }
+  }
+
   /**
    * Immediately cancel active/pending audio during an explicit page change
    * so stale audio from a previous page never plays on the new page.
    */
   cancelCurrentAudioForPageTransition() {
     this._playSessionId++;
+    this._clearPauseTimer();
     if (this._abortController) {
       try {
         this._abortController.abort();
@@ -289,6 +333,7 @@ class IntelligentAudioEngine {
     this._activeClipEndMs = 0;
     this._clipEndTriggered = false;
     this._loadedSentenceKey = null;
+    this._completedBoundaryAdvancePending = false;
     this.sentenceIndex = 0;
     this.wordIndex = 0;
     this.currentTimeSec = 0;
@@ -420,9 +465,14 @@ class IntelligentAudioEngine {
   /**
    * Start or resume playback from a specific sentence & word index
    */
-  async playFrom({ sentenceIndex = null, wordIndex = null } = {}) {
+  async playFrom({ sentenceIndex = null, wordIndex = null, preserveCompletionMode = false } = {}) {
     this._clearError();
-    this.pendingPauseAfterSentence = false;
+    this._clearPauseTimer();
+    if (!preserveCompletionMode) {
+      this.pendingPauseAfterSentence = false;
+      this.completionStopMode = null;
+      this._crossedPageInTopicMode = false;
+    }
 
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       this._setError("NETWORK_OFFLINE");
@@ -462,6 +512,32 @@ class IntelligentAudioEngine {
       this._setError("TEXT_EXTRACTION_FAILED");
       return;
     }
+
+    // If paused right at the end of a completed sentence/paragraph/topic boundary and user clicks Play/Resume,
+    // advance cleanly to the next sentence (or next page)
+    if (
+      this._completedBoundaryAdvancePending &&
+      sentenceIndex === null &&
+      wordIndex === null
+    ) {
+      this._completedBoundaryAdvancePending = false;
+      if (this.sentenceIndex < sentences.length - 1) {
+        this.sentenceIndex++;
+        this.wordIndex = 0;
+        await this._loadAndPlayCurrentSentence(0);
+        return;
+      } else if (
+        this.pageNumber < this.totalPages &&
+        typeof this.onRequestPageTurn === "function"
+      ) {
+        this.onRequestPageTurn(this.pageNumber + 1, {
+          autoContinueAudio: true,
+          targetSentencePosition: "first",
+        });
+        return;
+      }
+    }
+    this._completedBoundaryAdvancePending = false;
 
     // If paused on the exact same sentence and no explicit jump requested, resume cleanly
     const clipMaxSec = this._activeClipEndMs > 0 ? this._activeClipEndMs / 1000 : this.durationSec;
@@ -536,6 +612,31 @@ class IntelligentAudioEngine {
     if (!sentence) {
       this.stop();
       return;
+    }
+
+    // If we just crossed a page boundary while in "complete_topic" mode and sentence 0 of the new page
+    // starts a brand-new explicit topic/heading, stop immediately before reading into the new topic!
+    if (
+      this.sentenceIndex === 0 &&
+      this.completionStopMode === "topic" &&
+      this._crossedPageInTopicMode
+    ) {
+      this._crossedPageInTopicMode = false;
+      const startsNewTopicOnNewPage =
+        sentence.segmentType === "heading" ||
+        (sentence.isTopicStart &&
+          !sentence.isGeneratedTopicTitle &&
+          this.completionTargetTopicTitle &&
+          sentence.topicTitle !== this.completionTargetTopicTitle);
+      if (startsNewTopicOnNewPage) {
+        this.completionStopMode = null;
+        this.pendingPauseAfterSentence = false;
+        this.playerState = "paused";
+        this.wordIndex = 0;
+        this._persistPosition();
+        this._emit();
+        return;
+      }
     }
 
     // Increment session ID & stop any current playback to prevent concurrent audio overlap
@@ -649,8 +750,21 @@ class IntelligentAudioEngine {
       }
 
       // ─── Case 2: Urdu Body, Hadith, Dua, Arabic Quote, Heading, or Footnote → Neural TTS Engine ───
+      // Check 9 of QA Layer: Never send severely distorted text to TTS!
+      if (sentence.blockTtsExecution || sentence.qaAudit?.blockTtsExecution) {
+        this._setError(
+          "INVALID_TEXT",
+          sentence.qaAudit?.userWarningMessage ||
+            "تم إيقاف قراءة هذا المقطع تلقائياً لوجود تشوه في استخراج النص — يرجى استخدام المسح البصري (OCR)."
+        );
+        return;
+      }
+
       const rawCandidate =
-        sentence.cleanedPronunciationText || sentence.originalText || "";
+        sentence.ttsInputText ||
+        sentence.cleanedPronunciationText ||
+        sentence.originalText ||
+        "";
       const validation = validateUrduArabicText(rawCandidate);
       const speakableCandidate = (
         validation.repairedText ||
@@ -1430,37 +1544,133 @@ class IntelligentAudioEngine {
 
   _handleSentenceEnded() {
     const sentences = this.pageData?.sentences || [];
+    const currentSentence = sentences[this.sentenceIndex] || null;
+    const activeStopMode =
+      this.completionStopMode ||
+      (this.pendingPauseAfterSentence ? "sentence" : null);
 
-    // Check if user requested "Complete current sentence then pause" (المشكلة السادسة)
-    if (this.pendingPauseAfterSentence) {
-      this.pendingPauseAfterSentence = false;
-      this.playerState = "paused";
-      if (this.sentenceIndex < sentences.length - 1) {
+    // ─── Evaluate Linguistic Completion Stop Modes (Sections 5, 6, 7, 8, 10) ───
+    if (activeStopMode && currentSentence) {
+      const continuesAcrossPage = Boolean(currentSentence.continuesToNextPage);
+
+      // 1. Complete Sentence Mode ("sentence"):
+      // Continues if the sentence is syntactically incomplete or spans across the page break.
+      if (activeStopMode === "sentence") {
+        const isLinguisticallyComplete =
+          currentSentence.isMeaningComplete !== false && !continuesAcrossPage;
+        if (isLinguisticallyComplete) {
+          this.completionStopMode = null;
+          this.pendingPauseAfterSentence = false;
+          this._completedBoundaryAdvancePending = true;
+          this.playerState = "paused";
+          this.wordIndex = Math.max(
+            0,
+            (currentSentence.words?.length || 1) - 1
+          );
+          this._persistPosition();
+          this._emit();
+          return;
+        }
+      }
+
+      // 2. Complete Paragraph Mode ("paragraph"):
+      // Continues through all sentences of the current paragraph (including across page breaks if incomplete).
+      if (activeStopMode === "paragraph") {
+        const isParagraphComplete =
+          Boolean(currentSentence.isParagraphEnd) &&
+          !currentSentence.paragraphContinuesToNextPage &&
+          !continuesAcrossPage;
+        if (isParagraphComplete) {
+          this.completionStopMode = null;
+          this.pendingPauseAfterSentence = false;
+          this._completedBoundaryAdvancePending = true;
+          this.playerState = "paused";
+          this.wordIndex = Math.max(
+            0,
+            (currentSentence.words?.length || 1) - 1
+          );
+          this._persistPosition();
+          this._emit();
+          return;
+        }
+      }
+
+      // 3. Complete Topic Mode ("topic"):
+      // Continues across sentences, paragraphs, and page breaks until the topic finishes.
+      // If topic detection is approximate ("approximate"), falls back to stopping at a complete paragraph boundary.
+      if (activeStopMode === "topic") {
+        const isExplicitTopicEnd =
+          Boolean(currentSentence.isTopicEnd) && !continuesAcrossPage;
+        const isApproximateTopicParagraphEnd =
+          (this.completionTopicIsApproximate ||
+            currentSentence.topicConfidence === "approximate") &&
+          Boolean(currentSentence.isParagraphEnd) &&
+          !continuesAcrossPage &&
+          this.sentenceIndex === sentences.length - 1;
+
+        if (isExplicitTopicEnd || isApproximateTopicParagraphEnd) {
+          this.completionStopMode = null;
+          this.pendingPauseAfterSentence = false;
+          this._crossedPageInTopicMode = false;
+          this._completedBoundaryAdvancePending = true;
+          this.playerState = "paused";
+          this.wordIndex = Math.max(
+            0,
+            (currentSentence.words?.length || 1) - 1
+          );
+          this._persistPosition();
+          this._emit();
+          return;
+        }
+      }
+    }
+
+    // ─── Advance to Next Sentence on Current Page with Intelligent Linguistic Pause ───
+    if (this.sentenceIndex < sentences.length - 1) {
+      const rawPauseMs = Number(currentSentence?.pauseDurationMs ?? 300);
+      const scaledPauseMs =
+        rawPauseMs > 0
+          ? Math.round(
+              Math.max(80, Math.min(1100, rawPauseMs / Math.max(0.75, this.playbackRate)))
+            )
+          : 0;
+      const sessionId = this._playSessionId;
+
+      const advanceNow = () => {
+        if (sessionId !== this._playSessionId) return;
         this.sentenceIndex++;
         this.wordIndex = 0;
+        this._persistPosition();
+        this._loadAndPlayCurrentSentence(0);
+      };
+
+      if (scaledPauseMs >= 80) {
+        this._clearPauseTimer();
+        this._pauseTimerId = setTimeout(advanceNow, scaledPauseMs);
+      } else {
+        advanceNow();
       }
-      this._persistPosition();
-      this._emit();
       return;
     }
 
-    // Advance to next sentence on current page
-    if (this.sentenceIndex < sentences.length - 1) {
-      this.sentenceIndex++;
-      this.wordIndex = 0;
-      this._persistPosition();
-      this._loadAndPlayCurrentSentence(0);
-      return;
-    }
-
-    // Current page finished — check if we should auto-advance to next page
+    // ─── Current Page Finished — Handle Cross-Page Continuity & Auto Page Turn ───
     const settings = loadReaderSettings();
+    const shouldCrossPageForCompletionOrContinuity =
+      Boolean(currentSentence?.continuesToNextPage) ||
+      activeStopMode === "topic" ||
+      activeStopMode === "paragraph" ||
+      activeStopMode === "sentence";
+
     if (
-      settings.pageTransitionMode === "auto" &&
+      (settings.pageTransitionMode === "auto" ||
+        shouldCrossPageForCompletionOrContinuity) &&
       this.pageNumber < this.totalPages &&
       typeof this.onRequestPageTurn === "function"
     ) {
       const nextPage = this.pageNumber + 1;
+      if (activeStopMode === "topic") {
+        this._crossedPageInTopicMode = true;
+      }
       this.sentenceIndex = 0;
       this.wordIndex = 0;
       this.onRequestPageTurn(nextPage, {
@@ -1468,6 +1678,8 @@ class IntelligentAudioEngine {
         targetSentencePosition: "first",
       });
     } else {
+      this.completionStopMode = null;
+      this.pendingPauseAfterSentence = false;
       this.playerState = "stopped";
       this._persistPosition();
       this._emit();
@@ -1475,22 +1687,88 @@ class IntelligentAudioEngine {
   }
 
   /**
+   * Set or toggle intelligent linguistic completion stop mode:
+   * - "sentence": إكمال الجملة المكتملة ثم التوقف
+   * - "paragraph": إكمال الفقرة الحالية ثم التوقف
+   * - "topic": إكمال الموضوع الحالي (عبر الصفحات) ثم التوقف
+   * - null: قراءة مستمرة
+   */
+  setCompletionStopMode(mode = null) {
+    const normalized =
+      mode === "sentence" || mode === "paragraph" || mode === "topic"
+        ? mode
+        : null;
+
+    if (normalized && this.completionStopMode === normalized) {
+      // Toggle off if user clicks the same completion button again
+      this.completionStopMode = null;
+      this.pendingPauseAfterSentence = false;
+      this._crossedPageInTopicMode = false;
+      this._emit();
+      return;
+    }
+
+    const sentences = this.pageData?.sentences || [];
+    const currentSentence = sentences[this.sentenceIndex] || null;
+
+    this.completionStopMode = normalized;
+    this.pendingPauseAfterSentence = normalized === "sentence";
+    this.completionTargetTopicId = currentSentence?.topicId || null;
+    this.completionTargetTopicTitle = currentSentence?.topicTitle || null;
+    this.completionTopicIsApproximate =
+      currentSentence?.topicConfidence === "approximate";
+    this._crossedPageInTopicMode = false;
+
+    // If currently paused or idle and user clicks a completion mode ("إكمال الجملة / الفقرة / الموضوع"),
+    // start/resume reading immediately until that linguistic unit finishes!
+    if (
+      normalized &&
+      this.playerState !== "playing" &&
+      this.playerState !== "loading"
+    ) {
+      this.playFrom({
+        sentenceIndex: this.sentenceIndex,
+        wordIndex: this.wordIndex,
+        preserveCompletionMode: true,
+      });
+      return;
+    }
+
+    this._emit();
+  }
+
+  /**
    * Pause playback with support for:
    * - "immediate": Pauses right away at the current word
-   * - "complete_sentence": Finishes speaking the current sentence then pauses automatically
+   * - "complete_sentence": Finishes speaking the current complete sentence then pauses
+   * - "complete_paragraph": Finishes speaking the current paragraph then pauses
+   * - "complete_topic": Finishes speaking the current topic then pauses
    */
   pause(modeOverride = null) {
     const settings = loadReaderSettings();
     const mode = modeOverride || settings.pauseBehavior || "immediate";
 
-    if (mode === "complete_sentence" && this.playerState === "playing") {
-      this.pendingPauseAfterSentence = true;
-      this._emit();
+    if (
+      (mode === "complete_sentence" ||
+        mode === "complete_paragraph" ||
+        mode === "complete_topic") &&
+      this.playerState === "playing"
+    ) {
+      const targetMode =
+        mode === "complete_paragraph"
+          ? "paragraph"
+          : mode === "complete_topic"
+          ? "topic"
+          : "sentence";
+      this.setCompletionStopMode(targetMode);
       return;
     }
 
     this._playSessionId++;
+    this._clearPauseTimer();
     this.pendingPauseAfterSentence = false;
+    this.completionStopMode = null;
+    this._crossedPageInTopicMode = false;
     if (this._abortController) {
       try {
         this._abortController.abort();
@@ -1507,7 +1785,11 @@ class IntelligentAudioEngine {
 
   stop() {
     this._playSessionId++;
+    this._clearPauseTimer();
     this.pendingPauseAfterSentence = false;
+    this.completionStopMode = null;
+    this._crossedPageInTopicMode = false;
+    this._completedBoundaryAdvancePending = false;
     if (this._abortController) {
       try {
         this._abortController.abort();
@@ -1593,6 +1875,67 @@ class IntelligentAudioEngine {
           this.playerState === "loading" ||
           this.playerState === "paused",
         targetSentencePosition: "last",
+      });
+    }
+  }
+
+  nextParagraph() {
+    const sentences = this.pageData?.sentences || [];
+    const currentPara = sentences[this.sentenceIndex]?.paragraphIndex ?? 0;
+    const nextIdx = sentences.findIndex(
+      (s, idx) => idx > this.sentenceIndex && s.paragraphIndex !== currentPara
+    );
+    if (nextIdx >= 0) {
+      this.playFrom({ sentenceIndex: nextIdx, wordIndex: 0 });
+    } else if (
+      this.pageNumber < this.totalPages &&
+      typeof this.onRequestPageTurn === "function"
+    ) {
+      this.onRequestPageTurn(this.pageNumber + 1, {
+        autoContinueAudio: true,
+        targetSentencePosition: "first",
+      });
+    }
+  }
+
+  prevParagraph() {
+    const sentences = this.pageData?.sentences || [];
+    const currentPara = sentences[this.sentenceIndex]?.paragraphIndex ?? 0;
+    // Find start of current paragraph or previous paragraph
+    let targetPara = currentPara;
+    const firstInCurrPara = sentences.findIndex((s) => s.paragraphIndex === currentPara);
+    if (this.sentenceIndex === firstInCurrPara && firstInCurrPara > 0) {
+      targetPara = sentences[firstInCurrPara - 1]?.paragraphIndex ?? 0;
+    }
+    const targetIdx = sentences.findIndex((s) => s.paragraphIndex === targetPara);
+    if (targetIdx >= 0 && targetIdx !== this.sentenceIndex) {
+      this.playFrom({ sentenceIndex: targetIdx, wordIndex: 0 });
+    } else if (
+      this.pageNumber > 1 &&
+      typeof this.onRequestPageTurn === "function"
+    ) {
+      this.onRequestPageTurn(this.pageNumber - 1, {
+        autoContinueAudio: true,
+        targetSentencePosition: "last",
+      });
+    }
+  }
+
+  nextTopic() {
+    const sentences = this.pageData?.sentences || [];
+    const currentTopicId = sentences[this.sentenceIndex]?.topicId;
+    const nextIdx = sentences.findIndex(
+      (s, idx) => idx > this.sentenceIndex && s.topicId !== currentTopicId
+    );
+    if (nextIdx >= 0) {
+      this.playFrom({ sentenceIndex: nextIdx, wordIndex: 0 });
+    } else if (
+      this.pageNumber < this.totalPages &&
+      typeof this.onRequestPageTurn === "function"
+    ) {
+      this.onRequestPageTurn(this.pageNumber + 1, {
+        autoContinueAudio: true,
+        targetSentencePosition: "first",
       });
     }
   }
