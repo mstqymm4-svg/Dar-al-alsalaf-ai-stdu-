@@ -32,8 +32,13 @@ dist-ssr
 base44/.app.jsonc
 *.env
 credentials.json
-*.pem
 *.key
-*.keystore
+!data-export/release.keystore
+!data-export/upload_certificate.pem
+!data-export/signing-keystore.json
+!data-export/.signing-keystore.json
+!artifacts/dar-al-tawhid.aab
+!artifacts/release.keystore
+!artifacts/upload_certificate.pem
 android/local.properties
 .credentials

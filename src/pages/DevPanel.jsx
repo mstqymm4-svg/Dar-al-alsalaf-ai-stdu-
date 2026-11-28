@@ -104,6 +104,11 @@ export default function DevPanel() {
   const [aabDownloading, setAabDownloading] = useState(false);
   const [aabProgress, setAabProgress]     = useState(0);
   const [aabCopied, setAabCopied]         = useState(false);
+  const [keystoreFile, setKeystoreFile]   = useState(null);
+  const [keystorePass, setKeystorePass]   = useState("");
+  const [keyAlias, setKeyAlias]           = useState("");
+  const [keyPass, setKeyPass]             = useState("");
+  const [resigningAab, setResigningAab]   = useState(false);
 
   const loadAabInfo = async () => {
     try {
@@ -245,6 +250,51 @@ export default function DevPanel() {
       setTimeout(() => setAabCopied(false), 3000);
     } catch {
       toast.info(url);
+    }
+  };
+
+  const handleResignAab = async (e) => {
+    e?.preventDefault?.();
+    if (!keystoreFile) {
+      toast.error("يرجى اختيار ملف المفتاح الأصلي (release.keystore أو .jks)");
+      return;
+    }
+    if (!keystorePass.trim()) {
+      toast.error("يرجى إدخال كلمة مرور المفتاح (Keystore Password)");
+      return;
+    }
+    setResigningAab(true);
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("تعذر قراءة ملف المفتاح"));
+        reader.readAsDataURL(keystoreFile);
+      });
+      const res = await fetch(apiUrl("/api/resign-aab"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keystoreBase64: base64,
+          keystorePassword: keystorePass.trim(),
+          keyAlias: keyAlias.trim(),
+          keyPassword: (keyPass || keystorePass).trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "فشل إعادة توقيع ملف AAB");
+      }
+      await loadAabInfo();
+      if (data.matchesExpectedKey) {
+        toast.success("تم توقيع حزمة AAB بالمفتاح الأصلي المطابق لـ Google Play بنجاح ✓");
+      } else {
+        toast.warning(`تم توقيع الحزمة ببصمة: ${data.sha1}`);
+      }
+    } catch (err) {
+      toast.error(err?.message || "تعذر توقيع الحزمة");
+    } finally {
+      setResigningAab(false);
     }
   };
 
@@ -490,13 +540,13 @@ export default function DevPanel() {
         </main>
       </div>
 
-      {/* AAB Download Modal */}
+      {/* AAB Download & Keystore Re-Signing Modal */}
       <Dialog open={aabDialogOpen} onOpenChange={setAabDialogOpen}>
-        <DialogContent className="max-w-md" dir="rtl">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" dir="rtl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Smartphone className="w-5 h-5 text-primary" />
-              حزمة التطبيق الموقّعة (AAB)
+              حزمة التطبيق الموقّعة (AAB) وتطابق مفتاح Google Play
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 mt-1">
@@ -515,13 +565,111 @@ export default function DevPanel() {
                     <span className="text-muted-foreground">الحجم:</span>
                     <span className="font-bold">{aabInfo.sizeMB} MB</span>
                   </div>
-                  {aabInfo.updatedAt && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">تاريخ البناء:</span>
-                      <span className="font-medium" dir="ltr">{new Date(aabInfo.updatedAt).toLocaleString()}</span>
+                  <div className="pt-1.5 border-t border-border/60 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">بصمة SHA-1 الحالية للملف:</span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          aabInfo.matchesExpectedKey
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                        }`}
+                      >
+                        {aabInfo.matchesExpectedKey ? "مطابق لـ Google Play ✓" : "مفتاح مؤقت (يتطلب مفتاحك الأصلي)"}
+                      </span>
                     </div>
-                  )}
+                    <div className="font-mono text-[10px] break-all bg-background/80 p-1.5 rounded border border-border/50" dir="ltr">
+                      {aabInfo.sha1 || "غير محدد"}
+                    </div>
+                    {!aabInfo.matchesExpectedKey && aabInfo.expectedSha1 && (
+                      <div className="space-y-0.5 pt-1">
+                        <span className="text-[10px] text-muted-foreground">البصمة المطلوبة في Google Play Console:</span>
+                        <div className="font-mono text-[10px] break-all text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 p-1.5 rounded border border-emerald-500/20" dir="ltr">
+                          {aabInfo.expectedSha1}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Option A: 1-Click Certificate Download for Google Play Upload Key Reset */}
+                <div className="p-3.5 rounded-xl border-2 border-emerald-500/40 bg-emerald-500/10 space-y-2.5 text-xs">
+                  <div className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center justify-between">
+                    <span>الحل النهائي لقبول الملف في Google Play (خطوة واحدة فقط) ✓</span>
+                  </div>
+                  <div className="text-[11px] text-foreground space-y-1 leading-relaxed bg-background/80 p-2.5 rounded-lg border border-emerald-500/20">
+                    <p className="font-bold text-emerald-700 dark:text-emerald-400">لماذا تظهر رسالة الخطأ في صفحة الصاروخ (🚀)؟</p>
+                    <p>لأن Google Play ما زال ينتظر المفتاح القديم. لتبديله بمفتاحنا الدائم على الآيباد:</p>
+                    <ol className="list-decimal list-inside space-y-1 pt-1 font-medium">
+                      <li>اضغط الزر الأخضر بالأسفل لتحميل ملف الشهادة (<span className="font-mono" dir="ltr">upload_certificate.pem</span>).</li>
+                      <li>في صفحة Google Play Console، اضغط على <strong>أيقونة الدرع (🛡️)</strong> الموجودة في القائمة اليسرى <strong>فوق أيقونة الصاروخ الأزرق (🚀) مباشرةً</strong>.</li>
+                      <li>اضغط على <strong>Settings / الإعدادات</strong> بجانب <strong>App signing</strong> ثم اختر <strong>Request upload key reset</strong>.</li>
+                      <li>اختر <strong>I lost my upload key</strong> وارفع ملف <span className="font-mono" dir="ltr">upload_certificate.pem</span> ثم اضغط <strong>Request</strong>.</li>
+                    </ol>
+                  </div>
+                  <a
+                    href={apiUrl("/api/download-upload-pem")}
+                    download="upload_certificate.pem"
+                    className="w-full h-10 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors flex items-center justify-center gap-1.5 text-xs font-bold shadow-sm"
+                  >
+                    <Download className="w-4 h-4" />
+                    1. تحميل ملف الشهادة (upload_certificate.pem)
+                  </a>
+                </div>
+
+                {/* Option B: Upload Original Keystore to Re-Sign AAB & Save Permanently */}
+                <form onSubmit={handleResignAab} className="p-3.5 rounded-xl border border-primary/30 bg-primary/5 space-y-2.5 text-xs">
+                  <div className="font-bold text-foreground flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-primary" />
+                    أو ارفع مفتاحك القديم مرة واحدة (سيُحفظ تلقائياً لكل المرات القادمة)
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    إذا كان ملف المفتاح القديم (<span className="font-mono" dir="ltr">C5:C3:CB...</span>) موجوداً لديك، ارفعه هنا مرة واحدة فقط وسيتم توقيع الحزمة وحفظه تلقائياً لكل الإصدارات المستقبلية:
+                  </p>
+                  <div className="space-y-2">
+                    <Input
+                      type="file"
+                      accept=".keystore,.jks,.p12,.pfx"
+                      onChange={(e) => setKeystoreFile(e.target.files?.[0] || null)}
+                      className="h-9 text-xs bg-background cursor-pointer"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Input
+                        type="password"
+                        placeholder="كلمة مرور الـ Keystore *"
+                        value={keystorePass}
+                        onChange={(e) => setKeystorePass(e.target.value)}
+                        className="h-9 text-xs bg-background"
+                        dir="ltr"
+                      />
+                      <Input
+                        type="text"
+                        placeholder="الـ Alias (اتركه فارغاً للكشف التلقائي)"
+                        value={keyAlias}
+                        onChange={(e) => setKeyAlias(e.target.value)}
+                        className="h-9 text-xs bg-background"
+                        dir="ltr"
+                      />
+                    </div>
+                    <Input
+                      type="password"
+                      placeholder="كلمة مرور الـ Key (اتركها فارغة إذا كانت مطابقة للـ Keystore)"
+                      value={keyPass}
+                      onChange={(e) => setKeyPass(e.target.value)}
+                      className="h-9 text-xs bg-background"
+                      dir="ltr"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    disabled={resigningAab || !keystoreFile || !keystorePass.trim()}
+                    variant="secondary"
+                    className="w-full h-9 rounded-lg text-xs font-bold gap-1.5 border border-primary/30"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${resigningAab ? "animate-spin" : ""}`} />
+                    {resigningAab ? "جاري توقيع ملف AAB بمفتاحك..." : "توقيع ملف AAB بالمفتاح المرفوع الآن"}
+                  </Button>
+                </form>
 
                 {aabDownloading && (
                   <div className="space-y-1.5">
@@ -535,7 +683,7 @@ export default function DevPanel() {
                   </div>
                 )}
 
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   <Button
                     onClick={handleDownloadAabBlob}
                     disabled={aabDownloading}
@@ -545,29 +693,27 @@ export default function DevPanel() {
                     {aabDownloading ? `جاري التنزيل (${aabProgress}%)...` : "تنزيل ملف AAB الآن"}
                   </Button>
 
-                  <a
-                    href={getDirectAabUrl()}
-                    download="dar-al-tawhid.aab"
-                    className="w-full h-10 rounded-xl border border-border bg-card hover:bg-muted transition-colors flex items-center justify-center gap-2 text-xs font-bold"
-                  >
-                    <Download className="w-3.5 h-3.5 text-primary" />
-                    تنزيل عبر المتصفح مباشرة
-                  </a>
+                  <div className="grid grid-cols-2 gap-2">
+                    <a
+                      href={getDirectAabUrl()}
+                      download="dar-al-tawhid.aab"
+                      className="h-9 rounded-xl border border-border bg-card hover:bg-muted transition-colors flex items-center justify-center gap-1.5 text-xs font-bold"
+                    >
+                      <Download className="w-3.5 h-3.5 text-primary" />
+                      تنزيل عبر المتصفح
+                    </a>
 
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleCopyAabUrl}
-                    className="w-full h-10 rounded-xl text-xs font-bold gap-2"
-                  >
-                    {aabCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    {aabCopied ? "تم نسخ الرابط ✓" : "نسخ رابط التحميل المباشر"}
-                  </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleCopyAabUrl}
+                      className="h-9 rounded-xl text-xs font-bold gap-1.5"
+                    >
+                      {aabCopied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      {aabCopied ? "تم النسخ ✓" : "نسخ الرابط المباشر"}
+                    </Button>
+                  </div>
                 </div>
-
-                <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  إذا لم يبدأ التنزيل داخل نافذة المعاينة، انسخ رابط التحميل المباشر والصقه في متصفح Chrome أو Safari وسيبدأ التحميل فوراً.
-                </p>
               </>
             ) : (
               <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-700 dark:text-amber-300 leading-relaxed">

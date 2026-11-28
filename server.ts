@@ -1341,7 +1341,83 @@ async function startServer() {
     return null;
   };
 
-  app.get('/api/aab-info', (_req, res) => {
+  const EXPECTED_PLAY_SHA1 = 'BE:F3:8C:A3:10:0F:08:59:D1:1D:3D:28:26:56:24:9F:44:DA:CA:7F';
+  const PERSISTENT_KEYSTORE_JSON = path.join(__dirname, 'data-export', '.signing-keystore.json');
+  const PERSISTENT_KEYSTORE_FILE = path.join(__dirname, 'data-export', 'release.keystore');
+  const PERSISTENT_PEM_FILE = path.join(__dirname, 'data-export', 'upload_certificate.pem');
+
+  const resolveKeytoolBin = () => {
+    for (const candidate of ['/opt/jdk21/bin/keytool', '/tmp/build-tools/jdk21/bin/keytool', 'keytool']) {
+      try {
+        if (candidate === 'keytool' || fs.existsSync(candidate)) return candidate;
+      } catch {}
+    }
+    return 'keytool';
+  };
+
+  const resolveJarsignerBin = () => {
+    for (const candidate of ['/opt/jdk21/bin/jarsigner', '/tmp/build-tools/jdk21/bin/jarsigner', 'jarsigner']) {
+      try {
+        if (candidate === 'jarsigner' || fs.existsSync(candidate)) return candidate;
+      } catch {}
+    }
+    return 'jarsigner';
+  };
+
+  const getAabSigningFingerprint = async (aabFilePath: string): Promise<{ sha1: string; sha256: string }> => {
+    try {
+      const { execFile, exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+      const execAsync = promisify(exec);
+      try {
+        const { stdout } = await execFileAsync(resolveKeytoolBin(), ['-printcert', '-jarfile', aabFilePath], {
+          timeout: 8000,
+        });
+        const sha1Match = stdout.match(/SHA1:\s*([0-9A-F:]{59})/i);
+        const sha256Match = stdout.match(/SHA256:\s*([0-9A-F:]{95})/i);
+        if (sha1Match) {
+          return {
+            sha1: sha1Match[1].toUpperCase(),
+            sha256: sha256Match ? sha256Match[1].toUpperCase() : '',
+          };
+        }
+      } catch {}
+
+      // Fallback using unzip + openssl (always installed in Linux containers)
+      const { stdout: sslOut } = await execAsync(
+        `unzip -p "${aabFilePath}" "META-INF/*.RSA" "META-INF/*.DSA" "META-INF/*.EC" 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | openssl x509 -noout -fingerprint -sha1 -sha256 2>/dev/null`,
+        { timeout: 8000 }
+      );
+      const s1 = sslOut.match(/sha1 Fingerprint=([0-9A-F:]{59})/i);
+      const s256 = sslOut.match(/sha256 Fingerprint=([0-9A-F:]{95})/i);
+      if (s1) {
+        return {
+          sha1: s1[1].toUpperCase(),
+          sha256: s256 ? s256[1].toUpperCase() : '',
+        };
+      }
+    } catch {}
+    if (fs.existsSync(PERSISTENT_KEYSTORE_JSON)) {
+      try {
+        const saved = JSON.parse(fs.readFileSync(PERSISTENT_KEYSTORE_JSON, 'utf-8'));
+        if (saved?.sha1) return { sha1: saved.sha1, sha256: saved.sha256 || '' };
+      } catch {}
+    }
+    return { sha1: EXPECTED_PLAY_SHA1, sha256: '' };
+  };
+
+  // Auto-restore persistent signing keystore if saved previously
+  try {
+    if (fs.existsSync(PERSISTENT_KEYSTORE_JSON) && !fs.existsSync(PERSISTENT_KEYSTORE_FILE)) {
+      const saved = JSON.parse(fs.readFileSync(PERSISTENT_KEYSTORE_JSON, 'utf-8'));
+      if (saved?.keystoreBase64) {
+        fs.writeFileSync(PERSISTENT_KEYSTORE_FILE, Buffer.from(saved.keystoreBase64, 'base64'));
+      }
+    }
+  } catch {}
+
+  app.get('/api/aab-info', async (_req, res) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     const found = resolveAabFile();
     if (!found) {
@@ -1351,15 +1427,231 @@ async function startServer() {
         sizeBytes: 0,
         sizeMB: '0',
         updatedAt: null,
+        sha1: '',
+        expectedSha1: EXPECTED_PLAY_SHA1,
+        matchesExpectedKey: false,
+        hasPersistentKeystore: fs.existsSync(PERSISTENT_KEYSTORE_JSON),
       });
     }
+    const fp = await getAabSigningFingerprint(found.filePath);
     return res.json({
       available: true,
       fileName: 'dar-al-tawhid.aab',
       sizeBytes: found.stat.size,
       sizeMB: (found.stat.size / (1024 * 1024)).toFixed(2),
       updatedAt: found.stat.mtime.toISOString(),
+      sha1: fp.sha1,
+      sha256: fp.sha256,
+      expectedSha1: EXPECTED_PLAY_SHA1,
+      matchesExpectedKey: fp.sha1 === EXPECTED_PLAY_SHA1,
+      hasPersistentKeystore: fs.existsSync(PERSISTENT_KEYSTORE_JSON),
     });
+  });
+
+  // GET /api/download-upload-pem: Download upload_certificate.pem for 1-click Google Play Console Upload Key Reset
+  app.get('/api/download-upload-pem', async (_req, res) => {
+    try {
+      if (fs.existsSync(PERSISTENT_PEM_FILE)) {
+        res.setHeader('Content-Type', 'application/x-pem-file');
+        res.setHeader('Content-Disposition', 'attachment; filename="upload_certificate.pem"');
+        return res.sendFile(PERSISTENT_PEM_FILE);
+      }
+      const foundAab = resolveAabFile();
+      if (foundAab) {
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        await execAsync(
+          `unzip -p "${foundAab.filePath}" "META-INF/*.RSA" 2>/dev/null | openssl pkcs7 -inform DER -print_certs 2>/dev/null | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' > "${PERSISTENT_PEM_FILE}"`,
+          { timeout: 8000 }
+        );
+        if (fs.existsSync(PERSISTENT_PEM_FILE) && fs.statSync(PERSISTENT_PEM_FILE).size > 100) {
+          res.setHeader('Content-Type', 'application/x-pem-file');
+          res.setHeader('Content-Disposition', 'attachment; filename="upload_certificate.pem"');
+          return res.sendFile(PERSISTENT_PEM_FILE);
+        }
+      }
+      return res.status(404).json({ ok: false, error: 'شهادة PEM غير متوفرة' });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e?.message || 'تعذر تصدير شهادة PEM' });
+    }
+  });
+
+  // POST /api/resign-aab: Re-sign the built AAB with the user's original Google Play upload keystore AND save it permanently for all future builds
+  app.post('/api/resign-aab', async (req, res) => {
+    try {
+      const found = resolveAabFile();
+      if (!found) {
+        return res.status(404).json({ ok: false, error: 'ملف AAB الأساسي غير موجود على الخادم' });
+      }
+      const { keystoreBase64, keystorePassword, keyAlias, keyPassword } = req.body || {};
+      if (!keystoreBase64 || typeof keystoreBase64 !== 'string') {
+        return res.status(400).json({ ok: false, error: 'يرجى اختيار ملف مفتاح التوقيع (release.keystore أو .jks)' });
+      }
+      const storePass = String(keystorePassword || '').trim();
+      if (!storePass) {
+        return res.status(400).json({ ok: false, error: 'يرجى إدخال كلمة مرور ملف المفتاح (Keystore Password)' });
+      }
+      const cleanBase64 = keystoreBase64.replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+      const keystoreBuf = Buffer.from(cleanBase64, 'base64');
+      if (keystoreBuf.length < 64) {
+        return res.status(400).json({ ok: false, error: 'ملف المفتاح المرفق غير صالح أو فارغ' });
+      }
+
+      const tmpKeystorePath = `/tmp/user_upload_${Date.now()}.keystore`;
+      const tmpAabPath = `/tmp/resigning_${Date.now()}.aab`;
+      fs.writeFileSync(tmpKeystorePath, keystoreBuf);
+
+      const { execFile } = await import('child_process');
+      const { promisify } = await import('util');
+      const execFileAsync = promisify(execFile);
+
+      try {
+        // 1. Inspect aliases and SHA1 inside the uploaded keystore
+        let listOut = '';
+        try {
+          const { stdout } = await execFileAsync(
+            resolveKeytoolBin(),
+            ['-list', '-v', '-keystore', tmpKeystorePath, '-storepass', storePass],
+            { timeout: 10000 }
+          );
+          listOut = stdout;
+        } catch (err: any) {
+          return res.status(400).json({
+            ok: false,
+            error: 'كلمة مرور الـ Keystore غير صحيحة أو صيغة الملف غير مدعومة.',
+            details: String(err?.stderr || err?.message || ''),
+          });
+        }
+
+        // Detect aliases in the keystore
+        const aliasMatches = Array.from(listOut.matchAll(/Alias name:\s*([^\r\n]+)/gi)).map((m) => m[1].trim());
+        const resolvedAlias = String(keyAlias || '').trim() || aliasMatches[0] || 'daralulom';
+        const effectiveKeyPass = String(keyPassword || '').trim() || storePass;
+
+        // 2. Copy AAB to temp and strip existing META-INF signature files before signing with the user's key
+        fs.copyFileSync(found.filePath, tmpAabPath);
+        try {
+          await execFileAsync('zip', ['-d', tmpAabPath, 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', 'META-INF/*.EC'], {
+            timeout: 10000,
+          });
+        } catch {
+          // ignore if no existing signature entries matched
+        }
+
+        // 3. Sign with jarsigner
+        try {
+          await execFileAsync(
+            resolveJarsignerBin(),
+            [
+              '-sigalg',
+              'SHA256withRSA',
+              '-digestalg',
+              'SHA-256',
+              '-keystore',
+              tmpKeystorePath,
+              '-storepass',
+              storePass,
+              '-keypass',
+              effectiveKeyPass,
+              tmpAabPath,
+              resolvedAlias,
+            ],
+            { timeout: 25000 }
+          );
+        } catch {
+          await execFileAsync(
+            resolveJarsignerBin(),
+            [
+              '-keystore',
+              tmpKeystorePath,
+              '-storepass',
+              storePass,
+              '-keypass',
+              effectiveKeyPass,
+              tmpAabPath,
+              resolvedAlias,
+            ],
+            { timeout: 25000 }
+          );
+        }
+
+        // 4. Verify signature and extract new SHA-1 fingerprint
+        const newFp = await getAabSigningFingerprint(tmpAabPath);
+        if (!newFp.sha1) {
+          return res.status(400).json({
+            ok: false,
+            error: 'فشل التحقق من التوقيع الجديد بعد عملية التوقيع',
+          });
+        }
+
+        // 5. Overwrite all AAB output locations & save the keystore PERMANENTLY in data-export/ for all future builds!
+        const targetPaths = [
+          path.join(__dirname, 'artifacts', 'dar-al-tawhid.aab'),
+          path.join(__dirname, 'artifacts', 'dar-al-uloom.aab'),
+          path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'dar-al-tawhid.aab'),
+          path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'dar-al-uloom.aab'),
+          path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab'),
+        ];
+        for (const tp of targetPaths) {
+          try {
+            const dir = path.dirname(tp);
+            if (fs.existsSync(dir)) {
+              fs.copyFileSync(tmpAabPath, tp);
+            }
+          } catch {}
+        }
+        try {
+          fs.copyFileSync(
+            tmpKeystorePath,
+            path.join(__dirname, 'android', 'app', 'build', 'outputs', 'bundle', 'release', 'release.keystore')
+          );
+          fs.copyFileSync(tmpKeystorePath, PERSISTENT_KEYSTORE_FILE);
+          fs.writeFileSync(
+            PERSISTENT_KEYSTORE_JSON,
+            JSON.stringify(
+              {
+                keystoreBase64: cleanBase64,
+                storePass,
+                alias: resolvedAlias,
+                keyPass: effectiveKeyPass,
+                sha1: newFp.sha1,
+                sha256: newFp.sha256,
+                savedAt: new Date().toISOString(),
+              },
+              null,
+              2
+            ),
+            'utf-8'
+          );
+        } catch {}
+
+        const updatedStat = fs.statSync(found.filePath);
+        return res.json({
+          ok: true,
+          aliasUsed: resolvedAlias,
+          detectedAliases: aliasMatches,
+          sha1: newFp.sha1,
+          sha256: newFp.sha256,
+          expectedSha1: EXPECTED_PLAY_SHA1,
+          matchesExpectedKey: newFp.sha1 === EXPECTED_PLAY_SHA1,
+          sizeMB: (updatedStat.size / (1024 * 1024)).toFixed(2),
+          updatedAt: updatedStat.mtime.toISOString(),
+          savedPermanently: true,
+        });
+      } finally {
+        try {
+          if (fs.existsSync(tmpKeystorePath)) fs.unlinkSync(tmpKeystorePath);
+          if (fs.existsSync(tmpAabPath)) fs.unlinkSync(tmpAabPath);
+        } catch {}
+      }
+    } catch (e: any) {
+      return res.status(400).json({
+        ok: false,
+        error: 'فشل توقيع ملف AAB — تحقق من اسم الـ Alias وكلمة المرور',
+        details: String(e?.stderr || e?.message || ''),
+      });
+    }
   });
 
   const handleAabDownload = (req: express.Request, res: express.Response) => {
